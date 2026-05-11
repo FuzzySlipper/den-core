@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
+  </PropertyGroup>
+
+  <!-- Build frontend during non-Release dev builds when node_modules exists. PublishClientApp handles Release publish and installs dev dependencies before building. -->
+  <Target Name="BuildClientApp" BeforeTargets="Build" Condition="'$(Configuration)' != 'Release' And Exists('ClientApp/node_modules')">
+    <Exec Command="npm run build" WorkingDirectory="ClientApp" />
+  </Target>
+
+  <!-- Always build frontend on publish -->
+  <Target Name="PublishClientApp" BeforeTargets="Publish">
+    <Exec Command="npm ci --include=dev &amp;&amp; npm run build" WorkingDirectory="ClientApp" />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DenMcp.Core\DenMcp.Core.csproj" />
+  </ItemGroup>
+
+  <!-- den-core is the canonical REST/API service and intentionally does not reference MCP packages. -->
+
+</Project>

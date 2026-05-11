@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DenMcp.Core/DenMcp.Core.csproj" />
+    <Project Path="src/DenMcp.Server/DenMcp.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DenMcp.Core.Tests/DenMcp.Core.Tests.csproj" />
+    <Project Path="tests/DenMcp.Server.Tests/DenMcp.Server.Tests.csproj" />
+  </Folder>
+</Solution>

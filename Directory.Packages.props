@@ -1,0 +1,29 @@
+<Project>
+
+  <ItemGroup>
+    <!-- Hosting/DI -->
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.4" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.4" />
+
+    <!-- Logging -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.4" />
+
+    <!-- Database -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />
+
+    <!-- CLI -->
+    <PackageVersion Include="Porta.Pty" Version="1.0.7" />
+    <PackageVersion Include="Terminal.Gui" Version="1.19.0" />
+
+    <!-- Serialization -->
+    <PackageVersion Include="System.Text.Json" Version="10.0.4" />
+
+    <!-- Testing -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+</Project>

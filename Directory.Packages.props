@@ -11,6 +11,10 @@
     <!-- Database -->
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.5" />
 
+    <!-- MCP -->
+    <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.2.0" />
+
     <!-- CLI -->
     <PackageVersion Include="Porta.Pty" Version="1.0.7" />
     <PackageVersion Include="Terminal.Gui" Version="1.19.0" />

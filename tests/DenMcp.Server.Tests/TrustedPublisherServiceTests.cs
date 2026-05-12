@@ -9,7 +9,7 @@ namespace DenMcp.Server.Tests;
 
 public class TrustedPublisherServiceTests : IDisposable
 {
-    private readonly string _root = Path.Combine("/tmp/den-mcp-tests", "trusted-publisher-tests", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"den-mcp-tests-{Environment.UserName}", "trusted-publisher-tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
     public async Task PublishWorkerBranch_ValidatesVerifiedWorkerRunAndAudits()

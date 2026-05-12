@@ -9,6 +9,7 @@ using DenMcp.Server;
 using DenMcp.Server.Realtime;
 using DenMcp.Server.Routes;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -115,6 +116,13 @@ builder.Services.AddSingleton<IDispatchDetectionService, DispatchDetectionServic
 builder.Services.AddSingleton<LibrarianGatherer>();
 builder.Services.AddSingleton<LibrarianService>();
 
+// MCP endpoint hosted by Core. den-mcp adapter mode proxies public /mcp here so
+// Core remains the sole SQLite owner/writer while preserving the existing MCP
+// tool surface for Hermes clients.
+builder.Services.AddMcpServer()
+    .WithHttpTransport()
+    .WithToolsFromAssembly();
+
 var app = builder.Build();
 
 // Initialize database on startup
@@ -156,6 +164,9 @@ app.MapGitInspectionRoutes();
 app.MapPiLaunchProfileRoutes();
 app.MapPiSessionRoutes();
 app.MapLibrarianRoutes();
+
+// MCP endpoint
+app.MapMcp("/mcp");
 
 // SPA fallback — serves index.html for unmatched routes
 app.MapFallbackToFile("index.html");

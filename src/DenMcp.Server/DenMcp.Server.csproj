@@ -18,6 +18,8 @@
     <ProjectReference Include="..\DenMcp.Core\DenMcp.Core.csproj" />
   </ItemGroup>
 
-  <!-- den-core is the canonical REST/API service and intentionally does not reference MCP packages. -->
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+  </ItemGroup>
 
 </Project>

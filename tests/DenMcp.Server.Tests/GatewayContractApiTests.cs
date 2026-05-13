@@ -109,19 +109,45 @@ public sealed class GatewayContractApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GatewayEndpoints_RequireConfiguredServiceToken()
+    public async Task GatewayEndpoints_EnforceConfiguredServiceTokenAcrossSupportedHeaders()
     {
         await using var authFactory = new GatewayContractAppFactory(serviceToken: "test-token");
         var initializer = new DatabaseInitializer(authFactory.DatabasePath, NullLogger<DatabaseInitializer>.Instance);
         await initializer.InitializeAsync();
         using var client = authFactory.CreateClient();
 
-        var unauthorized = await client.GetAsync("/api/gateway/readiness");
-        Assert.Equal(HttpStatusCode.Unauthorized, unauthorized.StatusCode);
+        var missingToken = await client.GetAsync("/api/gateway/readiness");
+        Assert.Equal(HttpStatusCode.Unauthorized, missingToken.StatusCode);
 
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "test-token");
-        var authorized = await client.GetAsync("/api/gateway/readiness");
-        authorized.EnsureSuccessStatusCode();
+        using var wrongBearerRequest = new HttpRequestMessage(HttpMethod.Get, "/api/gateway/readiness");
+        wrongBearerRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "wrong-token");
+        var wrongBearer = await client.SendAsync(wrongBearerRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongBearer.StatusCode);
+
+        using var emptyBearerRequest = new HttpRequestMessage(HttpMethod.Get, "/api/gateway/readiness");
+        emptyBearerRequest.Headers.TryAddWithoutValidation("Authorization", "Bearer ");
+        var emptyBearer = await client.SendAsync(emptyBearerRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, emptyBearer.StatusCode);
+
+        using var correctServiceHeaderRequest = new HttpRequestMessage(HttpMethod.Get, "/api/gateway/readiness");
+        correctServiceHeaderRequest.Headers.Add("X-Den-Service-Token", "test-token");
+        var correctServiceHeader = await client.SendAsync(correctServiceHeaderRequest);
+        correctServiceHeader.EnsureSuccessStatusCode();
+
+        using var correctServiceHeaderPayload = await JsonDocument.ParseAsync(await correctServiceHeader.Content.ReadAsStreamAsync());
+        var serviceAuth = correctServiceHeaderPayload.RootElement.GetProperty("checks").GetProperty("service_auth");
+        Assert.Equal("ready", serviceAuth.GetProperty("status").GetString());
+        Assert.True(serviceAuth.GetProperty("metadata").GetProperty("required").GetBoolean());
+
+        using var wrongServiceHeaderRequest = new HttpRequestMessage(HttpMethod.Get, "/api/gateway/readiness");
+        wrongServiceHeaderRequest.Headers.Add("X-Den-Service-Token", "wrong-token");
+        var wrongServiceHeader = await client.SendAsync(wrongServiceHeaderRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, wrongServiceHeader.StatusCode);
+
+        using var correctBearerRequest = new HttpRequestMessage(HttpMethod.Get, "/api/gateway/readiness");
+        correctBearerRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "test-token");
+        var correctBearer = await client.SendAsync(correctBearerRequest);
+        correctBearer.EnsureSuccessStatusCode();
     }
 
     [Fact]

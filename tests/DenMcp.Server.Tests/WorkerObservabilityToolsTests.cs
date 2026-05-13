@@ -268,6 +268,96 @@ public class WorkerObservabilityToolsTests
         Assert.Equal(0, service.CleanupCalls);
     }
 
+    [Fact]
+    public async Task CleanupWorkerRun_SpawnedHermesTerminalWithoutPiLaunchProfile_IsCleanedUp()
+    {
+        var service = new CapturingPiSessionService
+        {
+            Detail = CapturingPiSessionService.CreateDetail(
+                state: PiSessionStates.Completed,
+                launchProfileKind: "spawned_hermes",
+                includeLaunchProfile: false)
+        };
+
+        var json = await WorkerTools.CleanupWorkerRun(service, "proj", "run-1", "runner", reason: "synthetic done", verbose: true);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal("cleaned_up", doc.RootElement.GetProperty("cleanup").GetProperty("status").GetString());
+        Assert.Equal("cleaned_up", doc.RootElement.GetProperty("cleanup").GetProperty("state").GetString());
+        Assert.Equal("spawned_hermes", doc.RootElement.GetProperty("worker_run").GetProperty("substrate").GetString());
+        Assert.Equal(1, service.CleanupCalls);
+    }
+
+    [Fact]
+    public async Task AbortWorkerRun_SpawnedHermesActiveWithoutLocalProcessHandleReportsBlocked()
+    {
+        var service = new CapturingPiSessionService
+        {
+            Detail = CapturingPiSessionService.CreateDetail(
+                state: PiSessionStates.Launching,
+                launchProfileKind: "spawned_hermes",
+                includeLaunchProfile: false)
+        };
+
+        var json = await WorkerTools.AbortWorkerRun(service, "proj", "run-1", "runner", reason: "operator abort", verbose: true);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal("blocked", doc.RootElement.GetProperty("control").GetProperty("status").GetString());
+        Assert.Contains("local process handle", doc.RootElement.GetProperty("control").GetProperty("reason").GetString());
+        Assert.Equal("launching", doc.RootElement.GetProperty("worker_run").GetProperty("status").GetString());
+        Assert.Equal(0, service.TerminateCalls);
+    }
+
+    [Fact]
+    public async Task RerunWorkerRun_SpawnedHermesUsesStoredLaunchMetadataWithoutStaleProcessState()
+    {
+        var launchMetadataJson = """
+            {
+              "substrate":"spawned_hermes",
+              "host":"den-k8plus",
+              "workdir":"/home/dev/den-hermes",
+              "branch":"task/1378-demo",
+              "base_branch":"main",
+              "base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "head_commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "profile":"den-hermes-worker",
+              "provider":"openrouter",
+              "model":"anthropic/claude-sonnet-4",
+              "toolsets":"terminal,file,mcp",
+              "timeout_seconds":600,
+              "artifact_path":"/tmp/old/completion.json",
+              "log_path":"/tmp/old/worker.log",
+              "prompt_packet_message_id":5791,
+              "state_file_ref":"den-state://worker/run-1/startup.json"
+            }
+            """;
+        var service = new CapturingPiSessionService
+        {
+            Detail = CapturingPiSessionService.CreateDetail(
+                state: PiSessionStates.Completed,
+                launchProfileKind: "spawned_hermes",
+                launchProfileJson: launchMetadataJson,
+                includeLaunchProfile: false)
+        };
+
+        var json = await WorkerTools.RerunWorkerRun(service, "proj", "run-1", "runner", reason: "try again", verbose: true);
+        using var doc = JsonDocument.Parse(json);
+        var worker = doc.RootElement.GetProperty("worker_run");
+
+        Assert.Equal("spawned_hermes", worker.GetProperty("substrate").GetString());
+        Assert.Equal("run-1", worker.GetProperty("rerun_of_run_id").GetString());
+        Assert.NotEqual("run-1", worker.GetProperty("run_id").GetString());
+        Assert.Equal("registered", worker.GetProperty("status").GetString());
+        Assert.NotNull(service.CapturedRegistration);
+        Assert.Equal("/home/dev/den-hermes", service.CapturedRegistration!.Workdir);
+        Assert.Equal("task/1378-demo", service.CapturedRegistration.Branch);
+        Assert.Equal("openrouter", service.CapturedRegistration.Provider);
+        Assert.Equal("anthropic/claude-sonnet-4", service.CapturedRegistration.Model);
+        Assert.Equal(600, service.CapturedRegistration.TimeoutSeconds);
+        Assert.DoesNotContain("/tmp/old", worker.GetProperty("artifact_handles").GetRawText());
+        Assert.Equal(1, service.RegisterCalls);
+    }
+
     private sealed class CapturingPiSessionRepository(CapturingPiSessionService service) : IPiSessionRepository
     {
         public Task<PiSessionRecord> CreateAsync(PiSessionRecord record) => throw new NotSupportedException();
@@ -297,6 +387,8 @@ public class WorkerObservabilityToolsTests
                     State = state,
                     StateReason = stateReason,
                     LaunchProfileKind = currentSession.LaunchProfileKind,
+                    LaunchProfileId = currentSession.LaunchProfileId,
+                    LaunchProfileJson = currentSession.LaunchProfileJson,
                     CreatedAt = currentSession.CreatedAt,
                     StartedAt = currentSession.StartedAt,
                     LastActivityAt = lastActivityAt ?? currentSession.LastActivityAt,
@@ -328,7 +420,8 @@ public class WorkerObservabilityToolsTests
                 State = current.State,
                 StateReason = current.StateReason,
                 LaunchProfileKind = current.LaunchProfileKind ?? "spawned_hermes",
-                LaunchProfileJson = "{}",
+                LaunchProfileId = current.LaunchProfileId,
+                LaunchProfileJson = current.LaunchProfileJson ?? "{}",
                 LaunchCommandJson = "[]",
                 LaunchCommandDisplay = "hermes chat -q <bounded Den worker prompt>",
                 CreatedAt = current.CreatedAt,
@@ -364,7 +457,8 @@ public class WorkerObservabilityToolsTests
                 State = current.State,
                 StateReason = stateReason,
                 LaunchProfileKind = current.LaunchProfileKind ?? "spawned_hermes",
-                LaunchProfileJson = "{}",
+                LaunchProfileId = current.LaunchProfileId,
+                LaunchProfileJson = current.LaunchProfileJson ?? "{}",
                 LaunchCommandJson = "[]",
                 LaunchCommandDisplay = "hermes chat -q <bounded Den worker prompt>",
                 CreatedAt = current.CreatedAt,
@@ -399,6 +493,7 @@ public class WorkerObservabilityToolsTests
         public PiSessionRegistrationRequest? CapturedRegistration { get; private set; }
         public int RegisterCalls { get; private set; }
         public int CleanupCalls { get; private set; }
+        public int TerminateCalls { get; private set; }
         private PiSessionDetail? _detail;
         public PiSessionDetail Detail
         {
@@ -441,12 +536,24 @@ public class WorkerObservabilityToolsTests
             => Task.FromResult<PiSessionDetail?>(_detail is not null && _detail.Session.ProjectId == projectId && (_detail.Session.SessionId == sessionId || _detail.Session.RunId == sessionId) ? _detail : null);
 
         public Task<PiSessionDetail?> TerminateAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default)
-            => Task.FromResult<PiSessionDetail?>(Detail);
+        {
+            TerminateCalls++;
+            return Task.FromResult<PiSessionDetail?>(Detail);
+        }
 
         public Task<PiSessionDetail?> CleanupAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default)
         {
             CleanupCalls++;
-            Detail = CreateDetail(projectId, sessionId, Detail.Session.RunId ?? "run-1", Detail.Session.TaskId, PiSessionStates.Completed, cleanupCompleted: DateTime.UtcNow);
+            Detail = CreateDetail(
+                projectId,
+                sessionId,
+                Detail.Session.RunId ?? "run-1",
+                Detail.Session.TaskId,
+                PiSessionStates.Completed,
+                cleanupCompleted: DateTime.UtcNow,
+                launchProfileKind: Detail.Session.LaunchProfileKind ?? "pi_docker_compose",
+                launchProfileJson: Detail.Session.LaunchProfileJson,
+                includeLaunchProfile: Detail.LaunchProfile is not null);
             return Task.FromResult<PiSessionDetail?>(Detail);
         }
 
@@ -468,7 +575,9 @@ public class WorkerObservabilityToolsTests
             string hostId = "test-host",
             string toolProfile = "validator",
             string? model = null,
-            string? provider = null)
+            string? provider = null,
+            string? launchProfileJson = null,
+            bool includeLaunchProfile = true)
         {
             var env = new Dictionary<string, string>(StringComparer.Ordinal)
             {
@@ -497,29 +606,33 @@ public class WorkerObservabilityToolsTests
                     State = state,
                     StateReason = state == PiSessionStates.Completed ? "worker completion packet #1: completed" : null,
                     LaunchProfileKind = launchProfileKind,
+                    LaunchProfileId = "profile-1",
+                    LaunchProfileJson = launchProfileJson ?? "{}",
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
                     CleanupCompletedAt = cleanupCompleted,
                 },
-                LaunchProfile = new PiDockerLaunchProfile
-                {
-                    ProfileId = "profile-1",
-                    ProjectId = projectId,
-                    SessionId = sessionId,
-                    ComposeProjectName = "den-proj-session-1",
-                    ComposeFile = "/tmp/compose.yaml",
-                    Service = "pi",
-                    DevDir = "/tmp/dev",
-                    PiStateDir = "/tmp/pi-state",
-                    Image = "pi-sandbox:latest",
-                    PiVersion = "0.71.0",
-                    NodeVersion = "22",
-                    Environment = env,
-                    PromptPacketMessageId = promptPacketMessageId,
-                    StateFileRef = stateFileRef,
-                    StartupPrompt = startupPrompt,
-                    TimeoutSeconds = timeoutSeconds,
-                }
+                LaunchProfile = includeLaunchProfile
+                    ? new PiDockerLaunchProfile
+                    {
+                        ProfileId = "profile-1",
+                        ProjectId = projectId,
+                        SessionId = sessionId,
+                        ComposeProjectName = "den-proj-session-1",
+                        ComposeFile = "/tmp/compose.yaml",
+                        Service = "pi",
+                        DevDir = "/tmp/dev",
+                        PiStateDir = "/tmp/pi-state",
+                        Image = "pi-sandbox:latest",
+                        PiVersion = "0.71.0",
+                        NodeVersion = "22",
+                        Environment = env,
+                        PromptPacketMessageId = promptPacketMessageId,
+                        StateFileRef = stateFileRef,
+                        StartupPrompt = startupPrompt,
+                        TimeoutSeconds = timeoutSeconds,
+                    }
+                    : null
             };
         }
     }

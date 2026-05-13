@@ -290,6 +290,14 @@ public sealed class PiSessionService : IPiSessionService
         record = await _sessions.MarkCleanupRequestedAsync(projectId, sessionId, requestedBy, request.Reason).ConfigureAwait(false);
         await AuditAsync(record, "pi_session_cleanup_requested", requestedBy, request.Reason, null, cancellationToken).ConfigureAwait(false);
 
+        if (record.LaunchProfileKind == "spawned_hermes")
+        {
+            const string stateReason = "spawned-Hermes cleanup recorded; no server-side Pi/docker resources exist for this worker run";
+            record = await _sessions.MarkCleanupCompletedAsync(projectId, sessionId, stateReason).ConfigureAwait(false);
+            await AuditAsync(record, "spawned_hermes_worker_cleanup_completed", requestedBy, stateReason, null, cancellationToken).ConfigureAwait(false);
+            return ToDetail(record, profile: null);
+        }
+
         var profile = DeserializeProfile(record);
         var cleanup = await _host.CleanupAsync(record, profile, cancellationToken).ConfigureAwait(false);
         if (!cleanup.Succeeded)
@@ -534,6 +542,7 @@ public sealed class PiSessionService : IPiSessionService
         StateReason = record.StateReason,
         LaunchProfileKind = record.LaunchProfileKind,
         LaunchProfileId = record.LaunchProfileId,
+        LaunchProfileJson = record.LaunchProfileJson,
         LaunchCommand = DeserializeCommand(record.LaunchCommandJson),
         LaunchCommandDisplay = record.LaunchCommandDisplay,
         CreatedAt = record.CreatedAt,

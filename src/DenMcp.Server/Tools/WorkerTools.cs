@@ -304,6 +304,19 @@ public sealed class WorkerTools
                     control = new { status = "noop", reason = "worker is already terminal" }
                 }, verbose: true);
             }
+            if (IsSpawnedHermes(detail.Session))
+            {
+                return Serialize(new
+                {
+                    worker_run = ToWorkerRun(detail),
+                    control = new
+                    {
+                        status = "blocked",
+                        reason = "spawned-Hermes abort requires a live local process handle in the bridge process; this server-side run record has no local process handle to terminate.",
+                        recovery_guidance = "Have the bridge/local runner terminate the subprocess if still alive, then post a worker_failure_packet or completion packet to reconcile Den."
+                    }
+                }, verbose: true);
+            }
 
             var terminated = await service.TerminateAsync(project_id, detail.Session.SessionId, new PiSessionControlRequest
             {
@@ -338,12 +351,59 @@ public sealed class WorkerTools
             var original = await FindByRunOrSessionAsync(service, project_id, run_id).ConfigureAwait(false);
             if (original is null)
                 return Error($"Worker run {run_id} not found in project {project_id}.");
+            var newRunId = NewRunId();
+            var role = Role(original.Session);
+            if (IsSpawnedHermes(original.Session))
+            {
+                var metadata = ParseLaunchMetadata(original.Session.LaunchProfileJson);
+                var registered = await service.RegisterAsync(project_id, new PiSessionRegistrationRequest
+                {
+                    SessionId = null,
+                    TaskId = original.Session.TaskId,
+                    WorkspaceId = original.Session.WorkspaceId,
+                    RunId = newRunId,
+                    RequestedBy = requested_by,
+                    Role = role,
+                    Substrate = "spawned_hermes",
+                    Host = JsonString(metadata, "host"),
+                    Workdir = JsonString(metadata, "workdir"),
+                    Branch = JsonString(metadata, "branch"),
+                    BaseBranch = JsonString(metadata, "base_branch"),
+                    BaseCommit = JsonString(metadata, "base_commit"),
+                    HeadCommit = JsonString(metadata, "head_commit"),
+                    Profile = JsonString(metadata, "profile"),
+                    Provider = JsonString(metadata, "provider") ?? original.Session.Provider,
+                    Model = JsonString(metadata, "model") ?? original.Session.Model,
+                    Toolsets = JsonString(metadata, "toolsets"),
+                    TimeoutSeconds = JsonInt(metadata, "timeout_seconds"),
+                    PromptPacketMessageId = JsonInt(metadata, "prompt_packet_message_id"),
+                    StateFileRef = JsonString(metadata, "state_file_ref"),
+                }).ConfigureAwait(false);
+
+                return SerializeRegistrationResult(
+                    registered,
+                    role,
+                    "created",
+                    "spawned_hermes",
+                    JsonString(metadata, "branch"),
+                    JsonString(metadata, "base_branch"),
+                    JsonString(metadata, "base_commit"),
+                    JsonString(metadata, "head_commit"),
+                    JsonString(metadata, "profile"),
+                    JsonString(metadata, "toolsets"),
+                    JsonString(metadata, "workdir"),
+                    JsonString(metadata, "host"),
+                    JsonInt(metadata, "timeout_seconds"),
+                    artifactPath: null,
+                    logPath: null,
+                    promptPacketMessageId: JsonInt(metadata, "prompt_packet_message_id"),
+                    stateFileRef: JsonString(metadata, "state_file_ref"),
+                    verbose: verbose,
+                    rerunOfRunId: RunId(original.Session));
+            }
             var profile = original.LaunchProfile;
             if (profile is null)
                 return Error($"Worker run {run_id} has no durable launch profile; rerun is unavailable.");
-
-            var newRunId = NewRunId();
-            var role = Role(original.Session);
             var detail = await service.LaunchAsync(project_id, new PiSessionLaunchRequest
             {
                 SessionId = null,
@@ -406,7 +466,8 @@ public sealed class WorkerTools
         string? logPath,
         int? promptPacketMessageId,
         string? stateFileRef,
-        bool verbose)
+        bool verbose,
+        string? rerunOfRunId = null)
     {
         var worker = ToWorkerRun(
             detail,
@@ -420,6 +481,7 @@ public sealed class WorkerTools
             baseBranch: baseBranch,
             baseCommit: baseCommit,
             headCommit: headCommit,
+            rerunOfRunId: rerunOfRunId,
             substrateOverride: substrate,
             artifactPath: artifactPath,
             logPath: logPath,
@@ -502,6 +564,7 @@ public sealed class WorkerTools
         var status = statusOverride ?? ToWorkerStatus(s);
         var failureCategory = failureCategoryOverride ?? FailureCategory(s);
         var substrate = substrateOverride ?? (s.LaunchProfileKind == "spawned_hermes" ? "spawned_hermes" : "pi_docker_compose");
+        var storedLaunchMetadata = launchMetadata ?? ParseLaunchMetadata(s.LaunchProfileJson);
         var artifactHandles = substrate == "spawned_hermes"
             ? new[]
             {
@@ -550,7 +613,7 @@ public sealed class WorkerTools
                 container_name = substrate == "spawned_hermes" ? null : s.ContainerName,
                 compose_project = substrate == "spawned_hermes" ? null : detail.LaunchProfile?.ComposeProjectName,
             },
-            launch_metadata = launchMetadata,
+            launch_metadata = storedLaunchMetadata,
             artifact_handles = artifactHandles,
             safe_summary = new
             {
@@ -854,6 +917,40 @@ public sealed class WorkerTools
 
     private static string Role(PiSessionSummary session) => NormalizeRole(session.ToolProfile);
     private static string RunId(PiSessionSummary session) => string.IsNullOrWhiteSpace(session.RunId) ? session.SessionId : session.RunId!;
+    private static bool IsSpawnedHermes(PiSessionSummary session) => string.Equals(session.LaunchProfileKind, "spawned_hermes", StringComparison.Ordinal);
+
+    private static JsonElement? ParseLaunchMetadata(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? JsonString(JsonElement? metadata, string propertyName)
+    {
+        if (metadata is not { ValueKind: JsonValueKind.Object } element || !element.TryGetProperty(propertyName, out var value))
+            return null;
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+    }
+
+    private static int? JsonInt(JsonElement? metadata, string propertyName)
+    {
+        if (metadata is not { ValueKind: JsonValueKind.Object } element || !element.TryGetProperty(propertyName, out var value))
+            return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+            return number;
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out var parsed))
+            return parsed;
+        return null;
+    }
 
     private static string? NormalizeIdentifier(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

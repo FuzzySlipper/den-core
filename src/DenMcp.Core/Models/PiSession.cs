@@ -177,6 +177,7 @@ public sealed class PiSessionSummary
     public string? StateReason { get; init; }
     public string? LaunchProfileKind { get; init; }
     public string? LaunchProfileId { get; init; }
+    public string? LaunchProfileJson { get; init; }
     public IReadOnlyList<string> LaunchCommand { get; init; } = [];
     public string? LaunchCommandDisplay { get; init; }
     public DateTime CreatedAt { get; init; }

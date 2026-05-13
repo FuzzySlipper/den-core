@@ -87,6 +87,85 @@ public sealed class WorkerTools
         }
     }
 
+    [McpServerTool(Name = "register_worker_run"), Description("Register a tracked non-Pi Den worker run before an external/local substrate posts completion packets.")]
+    public static async Task<string> RegisterWorkerRun(
+        IPiSessionService service,
+        [Description("Project ID.")] string project_id,
+        [Description("Den task id.")] int task_id,
+        [Description("Agent/user registering the worker.")] string requested_by,
+        [Description("Worker role: coder, reviewer, validator, drift_checker, or packet_auditor.")] string role,
+        [Description("Worker substrate. Currently only spawned_hermes is accepted.")] string substrate = "spawned_hermes",
+        [Description("Optional explicit worker run id. Omit to allocate one.")] string? run_id = null,
+        [Description("Optional explicit session id. Omit to allocate or derive from dedupe_key.")] string? session_id = null,
+        [Description("Optional workspace id.")] string? workspace_id = null,
+        [Description("Optional requested branch.")] string? branch = null,
+        [Description("Optional base branch.")] string? base_branch = null,
+        [Description("Optional base commit.")] string? base_commit = null,
+        [Description("Optional requested/expected head commit.")] string? head_commit = null,
+        [Description("Optional Hermes profile name. Do not pass secrets or profile contents.")] string? profile = null,
+        [Description("Optional provider name. Do not pass API keys.")] string? provider = null,
+        [Description("Optional model name.")] string? model = null,
+        [Description("Optional comma-separated toolsets.")] string? toolsets = null,
+        [Description("Optional working directory for the worker process.")] string? workdir = null,
+        [Description("Optional host/runner identifier.")] string? host = null,
+        [Description("Optional timeout in seconds.")] int? timeout_seconds = null,
+        [Description("Optional expected completion artifact path.")] string? artifact_path = null,
+        [Description("Optional worker log path.")] string? log_path = null,
+        [Description("Optional Den task-thread prompt packet message id.")] int? prompt_packet_message_id = null,
+        [Description("Optional Den-managed state file reference.")] string? state_file_ref = null,
+        [Description("Optional idempotency key. When supplied, session identity is derived from it for retry-safe registration.")] string? dedupe_key = null,
+        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+    {
+        try
+        {
+            var normalizedSubstrate = NormalizeIdentifier(substrate) ?? "spawned_hermes";
+            if (!string.Equals(normalizedSubstrate, "spawned_hermes", StringComparison.Ordinal))
+                return Error("register_worker_run currently accepts only substrate='spawned_hermes'.");
+            var normalizedRole = NormalizeRole(role);
+            var sessionId = !string.IsNullOrWhiteSpace(dedupe_key)
+                ? DeriveSessionId(dedupe_key)
+                : NormalizeIdentifier(session_id);
+            var workerRunId = NormalizeIdentifier(run_id) ?? NewRunId();
+            var existing = !string.IsNullOrWhiteSpace(sessionId) || !string.IsNullOrWhiteSpace(workerRunId)
+                ? await TryGetBySessionOrRunAsync(service, project_id, sessionId, workerRunId, task_id).ConfigureAwait(false)
+                : null;
+            if (existing is not null)
+                return SerializeRegistrationResult(existing, normalizedRole, "existing", normalizedSubstrate, branch, base_branch, base_commit, head_commit, profile, toolsets, workdir, host, timeout_seconds, artifact_path, log_path, prompt_packet_message_id, state_file_ref, verbose);
+
+            var detail = await service.RegisterAsync(project_id, new PiSessionRegistrationRequest
+            {
+                SessionId = sessionId,
+                TaskId = task_id,
+                WorkspaceId = workspace_id,
+                RunId = workerRunId,
+                RequestedBy = requested_by,
+                Role = normalizedRole,
+                Substrate = normalizedSubstrate,
+                Host = host,
+                Workdir = workdir,
+                Branch = branch,
+                BaseBranch = base_branch,
+                BaseCommit = base_commit,
+                HeadCommit = head_commit,
+                Profile = profile,
+                Provider = provider,
+                Model = model,
+                Toolsets = toolsets,
+                TimeoutSeconds = timeout_seconds,
+                ArtifactPath = artifact_path,
+                LogPath = log_path,
+                PromptPacketMessageId = prompt_packet_message_id,
+                StateFileRef = state_file_ref,
+            }).ConfigureAwait(false);
+
+            return SerializeRegistrationResult(detail, normalizedRole, "created", normalizedSubstrate, branch, base_branch, base_commit, head_commit, profile, toolsets, workdir, host, timeout_seconds, artifact_path, log_path, prompt_packet_message_id, state_file_ref, verbose);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or ArgumentException)
+        {
+            return Error(ex.Message);
+        }
+    }
+
     [McpServerTool(Name = "get_worker_run"), Description("Get a raw Den Pi worker run by run id or session id.")]
     public static async Task<string> GetWorkerRun(
         IPiSessionService service,
@@ -309,6 +388,68 @@ public sealed class WorkerTools
         }, verbose: true);
     }
 
+    private static string SerializeRegistrationResult(
+        PiSessionDetail detail,
+        string role,
+        string idempotencyStatus,
+        string substrate,
+        string? branch,
+        string? baseBranch,
+        string? baseCommit,
+        string? headCommit,
+        string? profile,
+        string? toolsets,
+        string? workdir,
+        string? host,
+        int? timeoutSeconds,
+        string? artifactPath,
+        string? logPath,
+        int? promptPacketMessageId,
+        string? stateFileRef,
+        bool verbose)
+    {
+        var worker = ToWorkerRun(
+            detail,
+            roleOverride: role,
+            statusOverride: "registered",
+            sessionModeOverride: "fresh",
+            promptPacketMessageId: promptPacketMessageId,
+            stateFileRef: stateFileRef,
+            timeoutSeconds: timeoutSeconds,
+            branch: branch,
+            baseBranch: baseBranch,
+            baseCommit: baseCommit,
+            headCommit: headCommit,
+            substrateOverride: substrate,
+            artifactPath: artifactPath,
+            logPath: logPath,
+            launchMetadata: new
+            {
+                substrate,
+                host,
+                workdir,
+                branch,
+                base_branch = baseBranch,
+                base_commit = baseCommit,
+                head_commit = headCommit,
+                profile,
+                provider = detail.Session.Provider,
+                model = detail.Session.Model,
+                toolsets,
+                timeout_seconds = timeoutSeconds,
+                artifact_path = artifactPath,
+                log_path = logPath,
+                prompt_packet_message_id = promptPacketMessageId,
+                state_file_ref = stateFileRef,
+            });
+        return Serialize(new
+        {
+            summary = $"registered worker {worker.run_id} ({worker.status})",
+            idempotency = new { status = idempotencyStatus },
+            worker_run = worker,
+        }, verbose: true);
+    }
+
     private static async Task<PiSessionDetail?> TryGetBySessionOrRunAsync(IPiSessionService service, string projectId, string? sessionId, string? runId, int? taskId)
     {
         if (!string.IsNullOrWhiteSpace(sessionId))
@@ -350,12 +491,29 @@ public sealed class WorkerTools
         string? baseBranch = null,
         string? baseCommit = null,
         string? headCommit = null,
-        string? rerunOfRunId = null)
+        string? rerunOfRunId = null,
+        string? substrateOverride = null,
+        string? artifactPath = null,
+        string? logPath = null,
+        object? launchMetadata = null)
     {
         var s = detail.Session;
         var role = roleOverride ?? Role(s);
         var status = statusOverride ?? ToWorkerStatus(s);
         var failureCategory = failureCategoryOverride ?? FailureCategory(s);
+        var substrate = substrateOverride ?? (s.LaunchProfileKind == "spawned_hermes" ? "spawned_hermes" : "pi_docker_compose");
+        var artifactHandles = substrate == "spawned_hermes"
+            ? new[]
+            {
+                new { name = "completion_artifact", kind = "json", handle = artifactPath },
+                new { name = "worker_log", kind = "text", handle = logPath },
+            }.Where(h => !string.IsNullOrWhiteSpace(h.handle)).ToArray()
+            :
+            [
+                new { name = "status", kind = "json", handle = (string?)$"pi-session://{s.SessionId}/status" },
+                new { name = "recent_output", kind = "text", handle = (string?)$"pi-session://{s.SessionId}/recent-output" },
+                new { name = "events", kind = "jsonl", handle = (string?)$"pi-session://{s.SessionId}/events" },
+            ];
         return new
         {
             run_id = RunId(s),
@@ -363,6 +521,7 @@ public sealed class WorkerTools
             project_id = s.ProjectId,
             task_id = s.TaskId,
             workspace_id = s.WorkspaceId,
+            substrate,
             role,
             status,
             state = s.State,
@@ -385,18 +544,14 @@ public sealed class WorkerTools
             session = new
             {
                 host_id = s.HostId,
-                pi_session_id = s.SessionId,
-                tmux_session = s.TmuxSessionName,
-                container_id = s.ContainerId,
-                container_name = s.ContainerName,
-                compose_project = detail.LaunchProfile?.ComposeProjectName,
+                pi_session_id = substrate == "spawned_hermes" ? null : s.SessionId,
+                tmux_session = substrate == "spawned_hermes" ? null : s.TmuxSessionName,
+                container_id = substrate == "spawned_hermes" ? null : s.ContainerId,
+                container_name = substrate == "spawned_hermes" ? null : s.ContainerName,
+                compose_project = substrate == "spawned_hermes" ? null : detail.LaunchProfile?.ComposeProjectName,
             },
-            artifact_handles = new[]
-            {
-                new { name = "status", kind = "json", handle = $"pi-session://{s.SessionId}/status" },
-                new { name = "recent_output", kind = "text", handle = $"pi-session://{s.SessionId}/recent-output" },
-                new { name = "events", kind = "jsonl", handle = $"pi-session://{s.SessionId}/events" },
-            },
+            launch_metadata = launchMetadata,
+            artifact_handles = artifactHandles,
             safe_summary = new
             {
                 output_tail = s.OutputTail,

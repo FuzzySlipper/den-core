@@ -9,6 +9,7 @@ namespace DenMcp.Core.Services;
 public interface IPiSessionService
 {
     Task<PiSessionDetail> LaunchAsync(string projectId, PiSessionLaunchRequest request, CancellationToken cancellationToken = default);
+    Task<PiSessionDetail> RegisterAsync(string projectId, PiSessionRegistrationRequest request, CancellationToken cancellationToken = default);
     Task<List<PiSessionSummary>> ListAsync(PiSessionListOptions options, CancellationToken cancellationToken = default);
     Task<PiSessionDetail?> GetAsync(string projectId, string sessionId, CancellationToken cancellationToken = default);
     Task<PiSessionDetail?> TerminateAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default);
@@ -144,6 +145,71 @@ public sealed class PiSessionService : IPiSessionService
         return ToDetail(record, profile);
     }
 
+    public async Task<PiSessionDetail> RegisterAsync(string projectId, PiSessionRegistrationRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(projectId))
+            throw new InvalidOperationException("project_id is required.");
+        if (!string.Equals(NormalizeText(request.Substrate), "spawned_hermes", StringComparison.Ordinal))
+            throw new InvalidOperationException("Only substrate 'spawned_hermes' can be registered through this path.");
+        if (request.TaskId is null)
+            throw new InvalidOperationException("task_id is required for Den-owned spawned-Hermes worker runs.");
+        var task = await _tasks.GetByIdAsync(request.TaskId.Value).ConfigureAwait(false);
+        if (task is null || !string.Equals(task.ProjectId, projectId.Trim(), StringComparison.Ordinal))
+            throw new InvalidOperationException($"task_id {request.TaskId.Value} was not found in project {projectId.Trim()}.");
+
+        var sessionId = NormalizeIdentifier(request.SessionId) ?? PiSessionNaming.NewSessionId();
+        var requestedBy = NormalizeText(request.RequestedBy) ?? "den-api";
+        var now = _utcNow();
+        var launchMetadata = new
+        {
+            substrate = "spawned_hermes",
+            host = NormalizeText(request.Host) ?? _host.HostId,
+            workdir = NormalizeText(request.Workdir),
+            branch = NormalizeText(request.Branch),
+            base_branch = NormalizeText(request.BaseBranch),
+            base_commit = NormalizeText(request.BaseCommit),
+            head_commit = NormalizeText(request.HeadCommit),
+            profile = NormalizeText(request.Profile),
+            provider = NormalizeText(request.Provider),
+            model = NormalizeText(request.Model),
+            toolsets = NormalizeText(request.Toolsets),
+            timeout_seconds = request.TimeoutSeconds,
+            artifact_path = NormalizeText(request.ArtifactPath),
+            log_path = NormalizeText(request.LogPath),
+            prompt_packet_message_id = request.PromptPacketMessageId,
+            state_file_ref = NormalizeText(request.StateFileRef),
+        };
+        var launchCommand = new[] { "hermes", "chat", "-q", "<bounded Den worker prompt>" };
+        var record = new PiSessionRecord
+        {
+            SessionId = sessionId,
+            ProjectId = projectId.Trim(),
+            TaskId = request.TaskId,
+            WorkspaceId = NormalizeText(request.WorkspaceId),
+            RunId = NormalizeText(request.RunId),
+            Title = NormalizeText(request.Title) ?? $"Spawned Hermes {NormalizeText(request.Role) ?? "worker"} worker",
+            ToolProfile = NormalizeText(request.Role),
+            Model = NormalizeText(request.Model),
+            Provider = NormalizeText(request.Provider),
+            HostId = NormalizeText(request.Host) ?? _host.HostId,
+            TmuxSessionName = $"spawned-hermes-{sessionId}",
+            State = PiSessionStates.Launching,
+            StateReason = "registered spawned-Hermes worker run; waiting for bridge launch",
+            LaunchProfileKind = "spawned_hermes",
+            LaunchProfileId = sessionId,
+            LaunchProfileJson = JsonSerializer.Serialize(launchMetadata, PiSessionJson.Options),
+            LaunchCommandJson = JsonSerializer.Serialize(launchCommand, PiSessionJson.Options),
+            LaunchCommandDisplay = "hermes chat -q <bounded Den worker prompt>",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        record = await _sessions.CreateAsync(record).ConfigureAwait(false);
+        await AuditAsync(record, "spawned_hermes_worker_registered", requestedBy, null, launchMetadata, cancellationToken).ConfigureAwait(false);
+        return ToDetail(record, profile: null);
+    }
+
     public async Task<List<PiSessionSummary>> ListAsync(PiSessionListOptions options, CancellationToken cancellationToken = default)
     {
         var requestedLimit = Math.Clamp(options.Limit, 1, 200);
@@ -254,6 +320,8 @@ public sealed class PiSessionService : IPiSessionService
 
     private async Task<PiSessionRecord> RefreshIfActiveAsync(PiSessionRecord record, CancellationToken cancellationToken)
     {
+        if (record.LaunchProfileKind == "spawned_hermes")
+            return record;
         if (!PiSessionStates.IsActive(record.State))
             return record;
 

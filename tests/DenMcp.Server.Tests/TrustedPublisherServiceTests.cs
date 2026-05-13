@@ -396,6 +396,7 @@ public class TrustedPublisherServiceTests : IDisposable
         };
 
         public Task<PiSessionDetail> LaunchAsync(string projectId, PiSessionLaunchRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PiSessionDetail> RegisterAsync(string projectId, PiSessionRegistrationRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<List<PiSessionSummary>> ListAsync(PiSessionListOptions options, CancellationToken cancellationToken = default) => Task.FromResult(new List<PiSessionSummary> { Detail.Session });
         public Task<PiSessionDetail?> GetAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) => Task.FromResult<PiSessionDetail?>(sessionId is "session-1" or "run-1" ? Detail : null);
         public Task<PiSessionDetail?> TerminateAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

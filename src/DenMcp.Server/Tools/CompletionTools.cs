@@ -105,6 +105,17 @@ public sealed class CompletionTools
             detail.Session.SessionId,
             stateReason,
             lastActivityAt: DateTime.UtcNow).ConfigureAwait(false);
+        if (string.Equals(detail.Session.LaunchProfileKind, "spawned_hermes", StringComparison.Ordinal))
+        {
+            var terminalState = normalizedStatus == "completed" ? PiSessionStates.Completed : PiSessionStates.Failed;
+            await sessions.UpdateStateAsync(
+                project_id,
+                detail.Session.SessionId,
+                terminalState,
+                stateReason,
+                lastActivityAt: DateTime.UtcNow,
+                endedAt: DateTime.UtcNow).ConfigureAwait(false);
+        }
 
         return SerializeCompletionResult(message, "created", isMalformed ? "malformed" : "present", verbose);
     }

@@ -50,6 +50,33 @@ public sealed class PiSessionLaunchRequest
     public int? TimeoutSeconds { get; init; }
 }
 
+public sealed class PiSessionRegistrationRequest
+{
+    public string? SessionId { get; init; }
+    public int? TaskId { get; init; }
+    public string? WorkspaceId { get; init; }
+    public string? RunId { get; init; }
+    public string? Title { get; init; }
+    public string? RequestedBy { get; init; }
+    public string? Role { get; init; }
+    public required string Substrate { get; init; }
+    public string? Host { get; init; }
+    public string? Workdir { get; init; }
+    public string? Branch { get; init; }
+    public string? BaseBranch { get; init; }
+    public string? BaseCommit { get; init; }
+    public string? HeadCommit { get; init; }
+    public string? Profile { get; init; }
+    public string? Provider { get; init; }
+    public string? Model { get; init; }
+    public string? Toolsets { get; init; }
+    public int? TimeoutSeconds { get; init; }
+    public string? ArtifactPath { get; init; }
+    public string? LogPath { get; init; }
+    public int? PromptPacketMessageId { get; init; }
+    public string? StateFileRef { get; init; }
+}
+
 public sealed class PiSessionControlRequest
 {
     public string? RequestedBy { get; init; }

@@ -154,6 +154,7 @@ app.MapAgentGuidanceRoutes();
 app.MapAgentRoutes();
 app.MapDispatchRoutes();
 app.MapAgentStreamRoutes();
+app.MapChannelsContractRoutes();
 app.MapSubagentRunRoutes();
 app.MapAgentWorkspaceRoutes();
 app.MapDesktopSnapshotRoutes();

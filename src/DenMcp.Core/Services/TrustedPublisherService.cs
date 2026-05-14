@@ -9,8 +9,15 @@ namespace DenMcp.Core.Services;
 
 public sealed class TrustedPublisherOptions
 {
-    public string[] AllowedOrchestrators { get; set; } = ["den-mcp-runner"];
+    public string[] AllowedOrchestrators { get; set; } = [
+        "den-mcp-runner",
+        "den-channels-runner",
+        "den-gateway-runner",
+        "den-hermes-runner",
+        "den-desktop-runner",
+    ];
     public string[] AllowedTargetBranches { get; set; } = ["main"];
+    public string[] ProjectRootSearchPaths { get; set; } = ["/home/dev", "/data/dev", "/mnt/den-srv/dev"];
     public string CanonicalRemoteName { get; set; } = "origin";
     public string? CanonicalRemoteUrl { get; set; }
     public bool AllowFileProtocolRemote { get; set; }
@@ -87,6 +94,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
     private static readonly Regex SafeSha = new("^[0-9a-f]{40}$", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
     private static readonly Regex SafeBranch = new("^task/[0-9]+[A-Za-z0-9._/-]*$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex SafeRemoteName = new("^[A-Za-z0-9._-]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex SafeBareProjectRoot = new("^[A-Za-z0-9._-]+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IProjectRepository _projects;
@@ -127,7 +135,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             diagnostics.Add($"Branch '{request.ExpectedBranch}' is not a safe task-scoped branch for task {request.TaskId}.");
 
         var project = await _projects.GetByIdAsync(request.ProjectId).ConfigureAwait(false);
-        var rootPath = ProjectRoot(project, diagnostics);
+        var rootPath = ProjectRoot(project, _options, diagnostics);
         var run = await FindRunAsync(request.ProjectId, request.RunId, request.TaskId, cancellationToken).ConfigureAwait(false);
         if (run is null)
             diagnostics.Add($"Worker run/session '{request.RunId}' was not found for project '{request.ProjectId}'.");
@@ -247,7 +255,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             diagnostics.Add($"Branch '{request.Branch}' is not a safe task-scoped branch for task {request.TaskId}.");
 
         var project = await _projects.GetByIdAsync(request.ProjectId).ConfigureAwait(false);
-        var rootPath = ProjectRoot(project, diagnostics);
+        var rootPath = ProjectRoot(project, _options, diagnostics);
         var round = await _reviewRounds.GetByIdAsync(request.ReviewRoundId).ConfigureAwait(false);
         if (round is null)
         {
@@ -568,19 +576,52 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         return diagnostics;
     }
 
-    private static string? ProjectRoot(Project? project, List<string> diagnostics)
+    private static string? ProjectRoot(Project? project, TrustedPublisherOptions options, List<string> diagnostics)
     {
         if (project is null)
         {
             diagnostics.Add("Project was not found.");
             return null;
         }
-        if (string.IsNullOrWhiteSpace(project.RootPath) || !Directory.Exists(project.RootPath))
+
+        if (string.IsNullOrWhiteSpace(project.RootPath))
         {
-            diagnostics.Add($"Project root path is missing or unavailable: {project.RootPath ?? "<missing>"}.");
+            diagnostics.Add("Project root path is missing or unavailable: <missing>.");
             return null;
         }
-        return project.RootPath;
+
+        var configuredRoot = project.RootPath.Trim();
+        if (Path.IsPathFullyQualified(configuredRoot))
+        {
+            if (Directory.Exists(configuredRoot)) return Path.GetFullPath(configuredRoot);
+            diagnostics.Add($"Project root path is missing or unavailable: {configuredRoot}.");
+            return null;
+        }
+
+        if (!SafeBareProjectRoot.IsMatch(configuredRoot))
+        {
+            diagnostics.Add($"Project root path '{configuredRoot}' is not a safe bare project root.");
+            return null;
+        }
+
+        foreach (var searchRoot in options.ProjectRootSearchPaths.Where(p => !string.IsNullOrWhiteSpace(p)))
+        {
+            var basePath = Path.GetFullPath(searchRoot.Trim());
+            var candidate = Path.GetFullPath(Path.Combine(basePath, configuredRoot));
+            if (!IsWithinDirectory(candidate, basePath)) continue;
+            if (Directory.Exists(candidate)) return candidate;
+        }
+
+        diagnostics.Add($"Project root path is missing or unavailable: {configuredRoot}.");
+        return null;
+    }
+
+    private static bool IsWithinDirectory(string candidatePath, string basePath)
+    {
+        var normalizedBase = Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath));
+        var normalizedCandidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidatePath));
+        return string.Equals(normalizedCandidate, normalizedBase, StringComparison.Ordinal)
+            || normalizedCandidate.StartsWith(normalizedBase + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     private static bool SafeTaskBranch(string branch, int taskId) => !string.IsNullOrWhiteSpace(branch) && SafeBranch.IsMatch(branch) && branch.StartsWith($"task/{taskId}-", StringComparison.Ordinal);

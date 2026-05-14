@@ -80,6 +80,97 @@ public class TrustedPublisherServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishReviewedBranch_AllowsCurrentHermesRunnerDefaults()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var repos = BuildRepositories(fixture, includeCompletion: false);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions { AllowFileProtocolRemote = true });
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = fixture.RemotePath,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("validated", result.Status);
+        Assert.Empty(result.Diagnostics);
+        Assert.Contains(result.ValidationDecisions, d => d.Contains("allowed trusted orchestrator", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PublishReviewedBranch_ResolvesBareProjectRootThroughConfiguredDevRoots()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [_root],
+        });
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = fixture.RemotePath,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("validated", result.Status);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(fixture.RootPath, result.WorkspacePath);
+    }
+
+    [Fact]
+    public async Task PublishReviewedBranch_RejectsBareProjectRootThatEscapesConfiguredDevRoots()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: "../outside");
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [_root],
+        });
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = fixture.RemotePath,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("rejected", result.Status);
+        Assert.Contains(result.Diagnostics, d => d.Contains("not a safe bare project root", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PublishWorkerBranch_FailsClosedOnCompletionHeadMismatch()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
@@ -216,7 +307,7 @@ public class TrustedPublisherServiceTests : IDisposable
         catch { }
     }
 
-    private static TestRepositories BuildRepositories(GitFixture fixture, bool includeCompletion, string? completionHead = null, string sessionState = PiSessionStates.Completed)
+    private static TestRepositories BuildRepositories(GitFixture fixture, bool includeCompletion, string? completionHead = null, string sessionState = PiSessionStates.Completed, string? projectRootPath = null)
     {
         var messages = new FakeMessageRepository();
         if (includeCompletion)
@@ -249,21 +340,21 @@ public class TrustedPublisherServiceTests : IDisposable
 
         return new TestRepositories
         {
-            Projects = new FakeProjectRepository(new Project { Id = "proj", Name = "Proj", RootPath = fixture.RootPath }),
+            Projects = new FakeProjectRepository(new Project { Id = "proj", Name = "Proj", RootPath = projectRootPath ?? fixture.RootPath }),
             Sessions = new FakePiSessionService(fixture.WorkspacePath, sessionState),
             Messages = messages,
             Findings = new FakeReviewFindingRepository(),
         };
     }
 
-    private static TrustedPublisherService BuildService(TestRepositories repos) => new(
+    private static TrustedPublisherService BuildService(TestRepositories repos, TrustedPublisherOptions? options = null) => new(
         repos.Projects,
         repos.Sessions,
         repos.Messages,
         repos.Rounds,
         repos.Findings,
         new SystemProcessRunner(),
-        new TrustedPublisherOptions { AllowFileProtocolRemote = true, AllowedOrchestrators = ["den-mcp-runner"], AllowedTargetBranches = ["main"] },
+        options ?? new TrustedPublisherOptions { AllowFileProtocolRemote = true, AllowedOrchestrators = ["den-mcp-runner"], AllowedTargetBranches = ["main"] },
         NullLogger<TrustedPublisherService>.Instance);
 
     private static ReviewRound LooksGoodRound(GitFixture fixture) => new()

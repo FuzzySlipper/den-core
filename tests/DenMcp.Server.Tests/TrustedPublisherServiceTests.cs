@@ -217,6 +217,87 @@ public class TrustedPublisherServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishReviewedBranch_ImportsReviewedCommitFromAllowedBundleWhenRemoteBranchIsUnavailable()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var artifactRoot = Path.Combine(_root, "reviewed-artifacts");
+        var bundlePath = await fixture.CreateReviewedBundleAsync(artifactRoot, "reviewed.bundle", taskId: 1285);
+        await fixture.DeleteRemoteTaskBranchAsync(1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var managedRoot = Path.Combine(_root, "managed-git");
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [managedRoot],
+            ReviewedArtifactSearchPaths = [artifactRoot],
+        });
+        var remoteUrl = new Uri(fixture.RemotePath).AbsoluteUri;
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = remoteUrl,
+            ReviewedGitBundlePath = bundlePath,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("validated", result.Status);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(Path.Combine(managedRoot, bareRootName), result.WorkspacePath);
+        Assert.Contains(result.ValidationDecisions, d => d.Contains("reviewed git bundle", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PublishReviewedBranch_RejectsReviewedBundleOutsideConfiguredArtifactRoots()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var artifactRoot = Path.Combine(_root, "reviewed-artifacts");
+        var outsideRoot = Path.Combine(_root, "outside-artifacts");
+        var bundlePath = await fixture.CreateReviewedBundleAsync(outsideRoot, "reviewed.bundle", taskId: 1285);
+        await fixture.DeleteRemoteTaskBranchAsync(1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var managedRoot = Path.Combine(_root, "managed-git");
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [managedRoot],
+            ReviewedArtifactSearchPaths = [artifactRoot],
+        });
+        var remoteUrl = new Uri(fixture.RemotePath).AbsoluteUri;
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = remoteUrl,
+            ReviewedGitBundlePath = bundlePath,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("rejected", result.Status);
+        Assert.Contains(result.Diagnostics, d => d.Contains("reviewed git bundle", StringComparison.Ordinal) && d.Contains("configured artifact roots", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PublishReviewedBranch_RejectsBareProjectRootThatEscapesConfiguredDevRoots()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
@@ -527,6 +608,14 @@ public class TrustedPublisherServiceTests : IDisposable
 
         public Task DeleteRemoteTaskBranchAsync(int taskId)
             => Git(RootPath, "push", "origin", "--delete", $"task/{taskId}-trusted-publisher");
+
+        public async Task<string> CreateReviewedBundleAsync(string artifactRoot, string fileName, int taskId)
+        {
+            Directory.CreateDirectory(artifactRoot);
+            var bundlePath = Path.Combine(artifactRoot, fileName);
+            await Git(WorkspacePath, "bundle", "create", bundlePath, $"task/{taskId}-trusted-publisher");
+            return bundlePath;
+        }
     }
 
     private sealed class FakeProjectRepository(Project project) : IProjectRepository

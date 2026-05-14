@@ -20,6 +20,7 @@ public sealed class TrustedPublisherOptions
     public string[] ProjectRootSearchPaths { get; set; } = ["/home/dev", "/data/dev", "/mnt/den-srv/dev"];
     public string CanonicalRemoteName { get; set; } = "origin";
     public string? CanonicalRemoteUrl { get; set; }
+    public string[] ReviewedArtifactSearchPaths { get; set; } = [];
     public bool AllowFileProtocolRemote { get; set; }
     public bool RequireReviewTestsForMerge { get; set; }
 }
@@ -52,6 +53,7 @@ public sealed class PublishReviewedBranchRequest
     public string Operation { get; init; } = "push_branch";
     public string? RemoteName { get; init; }
     public string? ExpectedRemoteUrl { get; init; }
+    public string? ReviewedGitBundlePath { get; init; }
     public bool ValidateOnly { get; init; }
 }
 
@@ -294,7 +296,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             remoteUrl = await GitTrimAsync(rootPath, ["remote", "get-url", remoteName], cancellationToken).ConfigureAwait(false);
             VerifyRemote(remoteUrl, canonicalRemote, diagnostics, decisions);
             if (diagnostics.Count == 0)
-                await EnsureReviewedBranchAvailableAsync(rootPath, remoteName, request.Branch, request.ExpectedHeadCommit, diagnostics, decisions, cancellationToken).ConfigureAwait(false);
+                await EnsureReviewedBranchAvailableAsync(rootPath, remoteName, request.Branch, request.ExpectedHeadCommit, request.ReviewedGitBundlePath, diagnostics, decisions, cancellationToken).ConfigureAwait(false);
             var fetch = await RunGitAsync(rootPath, ["fetch", "--no-tags", remoteName, $"+refs/heads/{request.ExpectedBaseBranch}:refs/remotes/{remoteName}/{request.ExpectedBaseBranch}"], cancellationToken).ConfigureAwait(false);
             if (!fetch.Succeeded)
             {
@@ -679,7 +681,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         return true;
     }
 
-    private async Task EnsureReviewedBranchAvailableAsync(string rootPath, string remoteName, string branch, string expectedHead, List<string> diagnostics, List<string> decisions, CancellationToken cancellationToken)
+    private async Task EnsureReviewedBranchAvailableAsync(string rootPath, string remoteName, string branch, string expectedHead, string? reviewedGitBundlePath, List<string> diagnostics, List<string> decisions, CancellationToken cancellationToken)
     {
         var branchHead = await GitTrimAsync(rootPath, ["rev-parse", branch], cancellationToken).ConfigureAwait(false);
         if (ShaEquals(branchHead, expectedHead))
@@ -691,9 +693,16 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         var fetchBranch = await RunGitAsync(rootPath, ["fetch", "--no-tags", remoteName, $"+refs/heads/{branch}:refs/heads/{branch}"], cancellationToken).ConfigureAwait(false);
         if (fetchBranch.Succeeded)
         {
-            decisions.Add("imported reviewed branch into managed publisher workspace");
-            return;
+            var fetchedHead = await GitTrimAsync(rootPath, ["rev-parse", branch], cancellationToken).ConfigureAwait(false);
+            if (ShaEquals(fetchedHead, expectedHead))
+            {
+                decisions.Add("imported reviewed branch into managed publisher workspace");
+                return;
+            }
         }
+
+        if (await TryImportReviewedGitBundleAsync(rootPath, reviewedGitBundlePath, branch, expectedHead, diagnostics, decisions, cancellationToken).ConfigureAwait(false))
+            return;
 
         if (await CommitExistsAsync(rootPath, expectedHead, cancellationToken).ConfigureAwait(false))
         {
@@ -706,6 +715,85 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         }
 
         diagnostics.Add($"Could not import reviewed branch/object '{branch}' at {expectedHead} into publisher workspace: {SafeGitError(fetchBranch)}");
+    }
+
+    private async Task<bool> TryImportReviewedGitBundleAsync(string rootPath, string? reviewedGitBundlePath, string branch, string expectedHead, List<string> diagnostics, List<string> decisions, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(reviewedGitBundlePath)) return false;
+
+        var bundlePath = ResolveReviewedGitBundlePath(reviewedGitBundlePath, _options, diagnostics);
+        if (bundlePath is null) return false;
+
+        var verify = await RunGitAsync(rootPath, ["bundle", "verify", bundlePath], cancellationToken).ConfigureAwait(false);
+        if (!verify.Succeeded)
+        {
+            diagnostics.Add($"reviewed git bundle verification failed: {SafeGitError(verify)}");
+            return false;
+        }
+
+        var listHeads = await RunGitAsync(rootPath, ["bundle", "list-heads", bundlePath], cancellationToken).ConfigureAwait(false);
+        if (!listHeads.Succeeded)
+        {
+            diagnostics.Add($"reviewed git bundle heads could not be listed: {SafeGitError(listHeads)}");
+            return false;
+        }
+
+        var branchRef = $"refs/heads/{branch}";
+        var advertisedExpectedHead = listHeads.Stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Any(parts => parts.Length >= 2 && ShaEquals(parts[0], expectedHead) && string.Equals(parts[1], branchRef, StringComparison.Ordinal));
+        if (!advertisedExpectedHead)
+        {
+            diagnostics.Add($"reviewed git bundle does not advertise expected branch/head {branchRef} at {expectedHead}.");
+            return false;
+        }
+
+        var fetch = await RunGitAsync(rootPath, ["fetch", "--no-tags", bundlePath, $"+{branchRef}:{branchRef}"], cancellationToken).ConfigureAwait(false);
+        if (!fetch.Succeeded)
+        {
+            diagnostics.Add($"reviewed git bundle fetch failed: {SafeGitError(fetch)}");
+            return false;
+        }
+
+        var importedHead = await GitTrimAsync(rootPath, ["rev-parse", branch], cancellationToken).ConfigureAwait(false);
+        if (!ShaEquals(importedHead, expectedHead))
+        {
+            diagnostics.Add($"reviewed git bundle imported unexpected head for '{branch}': expected {expectedHead}, found {importedHead ?? "<missing>"}.");
+            return false;
+        }
+
+        decisions.Add("imported reviewed git bundle into managed publisher workspace");
+        return true;
+    }
+
+    private static string? ResolveReviewedGitBundlePath(string reviewedGitBundlePath, TrustedPublisherOptions options, List<string> diagnostics)
+    {
+        var requested = reviewedGitBundlePath.Trim();
+        if (!Path.IsPathFullyQualified(requested))
+        {
+            diagnostics.Add("reviewed git bundle path must be an absolute path within configured artifact roots.");
+            return null;
+        }
+
+        var fullPath = Path.GetFullPath(requested);
+        var roots = options.ReviewedArtifactSearchPaths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => Path.GetFullPath(p.Trim()))
+            .ToList();
+        if (roots.Count == 0 || !roots.Any(root => IsWithinDirectory(fullPath, root)))
+        {
+            diagnostics.Add("reviewed git bundle path is not within configured artifact roots.");
+            return null;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            diagnostics.Add($"reviewed git bundle path is missing or unavailable: {fullPath}.");
+            return null;
+        }
+
+        return fullPath;
     }
 
     private async Task<bool> IsGitCheckoutAsync(string path, CancellationToken cancellationToken)

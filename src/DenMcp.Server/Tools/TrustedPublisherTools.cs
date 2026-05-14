@@ -61,6 +61,7 @@ public sealed class TrustedPublisherTools
         [Description("Requested operation: push_branch or fast_forward_main.")] string operation = "push_branch",
         [Description("Optional remote name. Defaults to origin.")] string? remote_name = null,
         [Description("Optional expected canonical remote URL. If omitted, the project root origin URL is used.")] string? expected_remote_url = null,
+        [Description("Optional absolute path to a reviewed git bundle staged under configured trusted artifact roots. Used only when the reviewed branch is unavailable from the canonical remote.")] string? reviewed_git_bundle_path = null,
         [Description("If true, perform all validation and audit but do not push.")] bool validate_only = false,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
@@ -76,6 +77,7 @@ public sealed class TrustedPublisherTools
             Operation = operation,
             RemoteName = remote_name,
             ExpectedRemoteUrl = expected_remote_url,
+            ReviewedGitBundlePath = reviewed_git_bundle_path,
             ValidateOnly = validate_only,
         }).ConfigureAwait(false);
         return Serialize(result, verbose);

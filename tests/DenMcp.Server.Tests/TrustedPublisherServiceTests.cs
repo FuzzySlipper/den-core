@@ -140,6 +140,83 @@ public class TrustedPublisherServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishReviewedBranch_AutoCreatesManagedWorkspaceBeforeFallingBackToDevCheckout()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var managedRoot = Path.Combine(_root, "managed-git");
+        var legacyRoot = Path.Combine(_root, "legacy-dev");
+        await fixture.CloneRemoteMainAsync(legacyRoot, bareRootName);
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [managedRoot, legacyRoot],
+        });
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = fixture.RemotePath,
+            ValidateOnly = true,
+        });
+
+        var managedWorkspace = Path.Combine(managedRoot, bareRootName);
+        Assert.Equal("validated", result.Status);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(managedWorkspace, result.WorkspacePath);
+        Assert.True(Directory.Exists(Path.Combine(managedWorkspace, ".git")));
+        Assert.Contains(result.ValidationDecisions, d => d.Contains("managed publisher workspace", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PublishReviewedBranch_ManagedWorkspaceFailsClosedWhenReviewedCommitIsNotImportable()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        await fixture.DeleteRemoteTaskBranchAsync(1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var managedRoot = Path.Combine(_root, "managed-git");
+        var legacyRoot = Path.Combine(_root, "legacy-dev");
+        await fixture.CloneRemoteMainAsync(legacyRoot, bareRootName);
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [managedRoot, legacyRoot],
+        });
+        var remoteUrl = new Uri(fixture.RemotePath).AbsoluteUri;
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ExpectedRemoteUrl = remoteUrl,
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("rejected", result.Status);
+        Assert.Equal(Path.Combine(managedRoot, bareRootName), result.WorkspacePath);
+        Assert.Contains(result.Diagnostics, d => d.Contains("reviewed branch/object", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PublishReviewedBranch_RejectsBareProjectRootThatEscapesConfiguredDevRoots()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
@@ -439,6 +516,17 @@ public class TrustedPublisherServiceTests : IDisposable
             await Git(RootPath, "push", "origin", "main");
             await Git(RootPath, "checkout", "task/1285-trusted-publisher");
         }
+
+        public async Task CloneRemoteMainAsync(string parentDirectory, string repoName)
+        {
+            Directory.CreateDirectory(parentDirectory);
+            var target = Path.Combine(parentDirectory, repoName);
+            await Git(parentDirectory, "clone", RemotePath, target);
+            await Git(target, "checkout", "main");
+        }
+
+        public Task DeleteRemoteTaskBranchAsync(int taskId)
+            => Git(RootPath, "push", "origin", "--delete", $"task/{taskId}-trusted-publisher");
     }
 
     private sealed class FakeProjectRepository(Project project) : IProjectRepository

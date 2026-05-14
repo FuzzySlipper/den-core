@@ -135,7 +135,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             diagnostics.Add($"Branch '{request.ExpectedBranch}' is not a safe task-scoped branch for task {request.TaskId}.");
 
         var project = await _projects.GetByIdAsync(request.ProjectId).ConfigureAwait(false);
-        var rootPath = ProjectRoot(project, _options, diagnostics);
+        var rootPath = await ProjectRootAsync(project, _options, diagnostics, decisions, request.ExpectedRemoteUrl, cancellationToken).ConfigureAwait(false);
         var run = await FindRunAsync(request.ProjectId, request.RunId, request.TaskId, cancellationToken).ConfigureAwait(false);
         if (run is null)
             diagnostics.Add($"Worker run/session '{request.RunId}' was not found for project '{request.ProjectId}'.");
@@ -255,7 +255,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             diagnostics.Add($"Branch '{request.Branch}' is not a safe task-scoped branch for task {request.TaskId}.");
 
         var project = await _projects.GetByIdAsync(request.ProjectId).ConfigureAwait(false);
-        var rootPath = ProjectRoot(project, _options, diagnostics);
+        var rootPath = await ProjectRootAsync(project, _options, diagnostics, decisions, request.ExpectedRemoteUrl, cancellationToken).ConfigureAwait(false);
         var round = await _reviewRounds.GetByIdAsync(request.ReviewRoundId).ConfigureAwait(false);
         if (round is null)
         {
@@ -293,6 +293,8 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             var canonicalRemote = await ResolveCanonicalRemoteAsync(rootPath, request.ExpectedRemoteUrl, cancellationToken).ConfigureAwait(false);
             remoteUrl = await GitTrimAsync(rootPath, ["remote", "get-url", remoteName], cancellationToken).ConfigureAwait(false);
             VerifyRemote(remoteUrl, canonicalRemote, diagnostics, decisions);
+            if (diagnostics.Count == 0)
+                await EnsureReviewedBranchAvailableAsync(rootPath, remoteName, request.Branch, request.ExpectedHeadCommit, diagnostics, decisions, cancellationToken).ConfigureAwait(false);
             var fetch = await RunGitAsync(rootPath, ["fetch", "--no-tags", remoteName, $"+refs/heads/{request.ExpectedBaseBranch}:refs/remotes/{remoteName}/{request.ExpectedBaseBranch}"], cancellationToken).ConfigureAwait(false);
             if (!fetch.Succeeded)
             {
@@ -576,7 +578,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         return diagnostics;
     }
 
-    private static string? ProjectRoot(Project? project, TrustedPublisherOptions options, List<string> diagnostics)
+    private async Task<string?> ProjectRootAsync(Project? project, TrustedPublisherOptions options, List<string> diagnostics, List<string> decisions, string? expectedRemoteUrl, CancellationToken cancellationToken)
     {
         if (project is null)
         {
@@ -604,16 +606,112 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             return null;
         }
 
-        foreach (var searchRoot in options.ProjectRootSearchPaths.Where(p => !string.IsNullOrWhiteSpace(p)))
+        var searchRoots = options.ProjectRootSearchPaths.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => Path.GetFullPath(p.Trim())).ToList();
+        var bootstrapRemoteUrl = expectedRemoteUrl ?? options.CanonicalRemoteUrl;
+        for (var i = 0; i < searchRoots.Count; i++)
         {
-            var basePath = Path.GetFullPath(searchRoot.Trim());
+            var basePath = searchRoots[i];
             var candidate = Path.GetFullPath(Path.Combine(basePath, configuredRoot));
             if (!IsWithinDirectory(candidate, basePath)) continue;
+
+            if (i == 0 && !Directory.Exists(candidate) && !string.IsNullOrWhiteSpace(bootstrapRemoteUrl))
+            {
+                if (await EnsureManagedPublisherWorkspaceAsync(candidate, bootstrapRemoteUrl, options, diagnostics, decisions, cancellationToken).ConfigureAwait(false))
+                    return candidate;
+                return null;
+            }
+
+            if (i == 0 && Directory.Exists(candidate) && !await IsGitCheckoutAsync(candidate, cancellationToken).ConfigureAwait(false) && !string.IsNullOrWhiteSpace(bootstrapRemoteUrl))
+            {
+                if (await EnsureManagedPublisherWorkspaceAsync(candidate, bootstrapRemoteUrl, options, diagnostics, decisions, cancellationToken).ConfigureAwait(false))
+                    return candidate;
+                return null;
+            }
+
             if (Directory.Exists(candidate)) return candidate;
         }
 
         diagnostics.Add($"Project root path is missing or unavailable: {configuredRoot}.");
         return null;
+    }
+
+    private async Task<bool> EnsureManagedPublisherWorkspaceAsync(string workspacePath, string expectedRemoteUrl, TrustedPublisherOptions options, List<string> diagnostics, List<string> decisions, CancellationToken cancellationToken)
+    {
+        var normalizedRemote = NormalizeRemote(expectedRemoteUrl);
+        if (string.IsNullOrWhiteSpace(normalizedRemote))
+        {
+            diagnostics.Add("Cannot create managed publisher workspace without a canonical remote URL.");
+            return false;
+        }
+        if (IsFileRemote(normalizedRemote) && !options.AllowFileProtocolRemote)
+        {
+            diagnostics.Add("File protocol remotes are not allowed by trusted publisher policy.");
+            return false;
+        }
+
+        if (Directory.Exists(workspacePath))
+        {
+            if (await IsGitCheckoutAsync(workspacePath, cancellationToken).ConfigureAwait(false))
+            {
+                decisions.Add("using existing managed publisher workspace");
+                return true;
+            }
+
+            if (Directory.EnumerateFileSystemEntries(workspacePath).Any())
+            {
+                diagnostics.Add($"Managed publisher workspace path exists but is not an empty git checkout: {workspacePath}.");
+                return false;
+            }
+        }
+        else
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(workspacePath)!);
+        }
+
+        var clone = await _processes.RunAsync("git", ["clone", expectedRemoteUrl, workspacePath], GitTimeout, cancellationToken).ConfigureAwait(false);
+        if (!clone.Succeeded)
+        {
+            diagnostics.Add($"Could not create managed publisher workspace: {SafeGitError(clone)}");
+            return false;
+        }
+
+        decisions.Add("created managed publisher workspace from canonical remote");
+        return true;
+    }
+
+    private async Task EnsureReviewedBranchAvailableAsync(string rootPath, string remoteName, string branch, string expectedHead, List<string> diagnostics, List<string> decisions, CancellationToken cancellationToken)
+    {
+        var branchHead = await GitTrimAsync(rootPath, ["rev-parse", branch], cancellationToken).ConfigureAwait(false);
+        if (ShaEquals(branchHead, expectedHead))
+        {
+            decisions.Add("reviewed branch already available in publisher workspace");
+            return;
+        }
+
+        var fetchBranch = await RunGitAsync(rootPath, ["fetch", "--no-tags", remoteName, $"+refs/heads/{branch}:refs/heads/{branch}"], cancellationToken).ConfigureAwait(false);
+        if (fetchBranch.Succeeded)
+        {
+            decisions.Add("imported reviewed branch into managed publisher workspace");
+            return;
+        }
+
+        if (await CommitExistsAsync(rootPath, expectedHead, cancellationToken).ConfigureAwait(false))
+        {
+            var updateRef = await RunGitAsync(rootPath, ["update-ref", $"refs/heads/{branch}", expectedHead], cancellationToken).ConfigureAwait(false);
+            if (updateRef.Succeeded)
+            {
+                decisions.Add("materialized reviewed branch from existing expected commit object");
+                return;
+            }
+        }
+
+        diagnostics.Add($"Could not import reviewed branch/object '{branch}' at {expectedHead} into publisher workspace: {SafeGitError(fetchBranch)}");
+    }
+
+    private async Task<bool> IsGitCheckoutAsync(string path, CancellationToken cancellationToken)
+    {
+        var result = await RunGitAsync(path, ["rev-parse", "--is-inside-work-tree"], cancellationToken).ConfigureAwait(false);
+        return result.Succeeded && string.Equals(result.Stdout.Trim(), "true", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsWithinDirectory(string candidatePath, string basePath)

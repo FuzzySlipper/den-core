@@ -17,7 +17,7 @@ public sealed class TrustedPublisherOptions
         "den-desktop-runner",
     ];
     public string[] AllowedTargetBranches { get; set; } = ["main"];
-    public string[] ProjectRootSearchPaths { get; set; } = ["/home/dev", "/data/dev", "/mnt/den-srv/dev"];
+    public string[] ProjectRootSearchPaths { get; set; } = ["/data/services/den-core/git", "/data/dev", "/mnt/den-srv/dev"];
     public string CanonicalRemoteName { get; set; } = "origin";
     public string? CanonicalRemoteUrl { get; set; }
     public string[] ReviewedArtifactSearchPaths { get; set; } = [];

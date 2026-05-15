@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -299,11 +300,12 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                     Verdict = review.Verdict?.ToDbValue(),
                     Findings = findings.Select(f => new
                     {
-                        FindingId = f.Id,
-                        f.FindingKey,
-                        Category = f.Category.ToDbValue(),
-                        f.Summary,
-                        Status = f.Status.ToDbValue()
+                        FindingId = f.Id.ToString(CultureInfo.InvariantCulture),
+                        Blocking = IsBlockingFinding(f),
+                        Resolved = IsResolvedFinding(f),
+                        OverrideId = request.ScopeOverrides
+                            .FirstOrDefault(o => o.FindingIds.Contains(f.Id))
+                            ?.OverrideId,
                     }).ToArray(),
                 }
             }
@@ -397,10 +399,16 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
 
     private static bool IsUnresolvedBlocking(ReviewFinding finding)
     {
-        if (finding.Category is not (ReviewFindingCategory.BlockingBug or ReviewFindingCategory.AcceptanceGap))
+        if (!IsBlockingFinding(finding))
             return false;
-        return finding.Status is ReviewFindingStatus.Open or ReviewFindingStatus.ClaimedFixed or ReviewFindingStatus.NotFixed;
+        return !IsResolvedFinding(finding);
     }
+
+    private static bool IsBlockingFinding(ReviewFinding finding) =>
+        finding.Category is ReviewFindingCategory.BlockingBug or ReviewFindingCategory.AcceptanceGap;
+
+    private static bool IsResolvedFinding(ReviewFinding finding) =>
+        finding.Status is ReviewFindingStatus.VerifiedFixed or ReviewFindingStatus.Superseded or ReviewFindingStatus.SplitToFollowUp;
 
     private static bool HasStructuredOverride(IEnumerable<DenPublishScopeOverride> overrides, int findingId) =>
         overrides.Any(o =>

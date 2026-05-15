@@ -17,6 +17,19 @@ public sealed class DenPublishFacadeServiceTests
     public async Task DryRunPromotion_BuildsCamelCaseApiPayloadAndAuditsSuccess()
     {
         var repos = FakeRepositories.Success();
+        repos.Findings.Add(new ReviewFinding
+        {
+            Id = 55,
+            FindingKey = "R123-1",
+            TaskId = 123,
+            ReviewRoundId = 77,
+            ReviewRoundNumber = 1,
+            FindingNumber = 1,
+            CreatedBy = "reviewer",
+            Category = ReviewFindingCategory.AcceptanceGap,
+            Summary = "Resolved acceptance gap",
+            Status = ReviewFindingStatus.Superseded,
+        });
         var handler = new CapturingDenPublishHandler(HttpStatusCode.OK, """
             {
               "succeeded": true,
@@ -50,7 +63,16 @@ public sealed class DenPublishFacadeServiceTests
         Assert.True(payload.RootElement.GetProperty("decision").TryGetProperty("expectedHeadCommit", out _));
         Assert.True(payload.RootElement.GetProperty("decision").GetProperty("validateOnly").GetBoolean());
         Assert.True(payload.RootElement.GetProperty("submission").TryGetProperty("headCommit", out _));
-        Assert.True(payload.RootElement.GetProperty("submission").GetProperty("review").TryGetProperty("reviewRoundId", out _));
+        var reviewPayload = payload.RootElement.GetProperty("submission").GetProperty("review");
+        Assert.True(reviewPayload.TryGetProperty("reviewRoundId", out _));
+        var findingPayload = Assert.Single(reviewPayload.GetProperty("findings").EnumerateArray());
+        Assert.Equal("55", findingPayload.GetProperty("findingId").GetString());
+        Assert.True(findingPayload.GetProperty("blocking").GetBoolean());
+        Assert.True(findingPayload.GetProperty("resolved").GetBoolean());
+        Assert.False(findingPayload.TryGetProperty("overrideId", out _));
+        Assert.DoesNotContain("category", handler.RequestBodies[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("findingKey", handler.RequestBodies[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("summary", handler.RequestBodies[0], StringComparison.Ordinal);
         Assert.DoesNotContain("expected_head_commit", handler.RequestBodies[0], StringComparison.Ordinal);
         Assert.DoesNotContain("head_commit", handler.RequestBodies[0], StringComparison.Ordinal);
     }

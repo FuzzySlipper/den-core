@@ -217,6 +217,43 @@ public class TrustedPublisherServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PublishReviewedBranch_LegacyNonGitDevRootFailsClosedWithDiagnostic()
+    {
+        var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
+        var bareRootName = Path.GetFileName(fixture.RootPath);
+        var managedRoot = Path.Combine(_root, "managed-git");
+        var legacyRoot = Path.Combine(_root, "legacy-dev");
+        var legacyCandidate = Path.Combine(legacyRoot, bareRootName);
+        Directory.CreateDirectory(legacyCandidate);
+        await File.WriteAllTextAsync(Path.Combine(legacyCandidate, "not-a-checkout.txt"), "not git\n");
+        var repos = BuildRepositories(fixture, includeCompletion: false, projectRootPath: bareRootName);
+        repos.ReviewRound = LooksGoodRound(fixture);
+        var service = BuildService(repos, new TrustedPublisherOptions
+        {
+            AllowFileProtocolRemote = true,
+            AllowedOrchestrators = ["den-channels-runner"],
+            ProjectRootSearchPaths = [managedRoot, legacyRoot],
+        });
+
+        var result = await service.PublishReviewedBranchAsync(new PublishReviewedBranchRequest
+        {
+            ProjectId = "proj",
+            TaskId = 1285,
+            RequestedBy = "den-channels-runner",
+            Branch = "task/1285-trusted-publisher",
+            ExpectedHeadCommit = fixture.Head,
+            ExpectedBaseBranch = "main",
+            ReviewRoundId = 7,
+            Operation = "fast_forward_main",
+            ValidateOnly = true,
+        });
+
+        Assert.Equal("rejected", result.Status);
+        Assert.Null(result.WorkspacePath);
+        Assert.Contains(result.Diagnostics, d => d.Contains("not a git checkout", StringComparison.Ordinal) && d.Contains(legacyCandidate, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task PublishReviewedBranch_ImportsReviewedCommitFromAllowedBundleWhenRemoteBranchIsUnavailable()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);

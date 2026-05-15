@@ -630,7 +630,14 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
                 return null;
             }
 
-            if (Directory.Exists(candidate)) return candidate;
+            if (Directory.Exists(candidate))
+            {
+                if (await IsGitCheckoutAsync(candidate, cancellationToken).ConfigureAwait(false))
+                    return candidate;
+
+                diagnostics.Add($"Project root path exists but is not a git checkout: {candidate}.");
+                return null;
+            }
         }
 
         diagnostics.Add($"Project root path is missing or unavailable: {configuredRoot}.");

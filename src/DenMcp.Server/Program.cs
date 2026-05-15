@@ -30,6 +30,9 @@ builder.Services.AddSingleton(options.PiSessionHost);
 var trustedPublisherOptions = new TrustedPublisherOptions();
 builder.Configuration.GetSection("DenMcp:TrustedPublisher").Bind(trustedPublisherOptions);
 builder.Services.AddSingleton(trustedPublisherOptions);
+var denPublishFacadeOptions = new DenPublishFacadeOptions();
+builder.Configuration.GetSection("DenMcp:DenPublishFacade").Bind(denPublishFacadeOptions);
+builder.Services.AddSingleton(denPublishFacadeOptions);
 
 // LLM (librarian)
 var llmConfig = new LlmConfig();
@@ -101,6 +104,11 @@ builder.Services.AddSingleton<ISubagentRunService, SubagentRunService>();
 builder.Services.AddSingleton<IAttentionService, AttentionService>();
 builder.Services.AddSingleton<IGitInspectionService, GitInspectionService>();
 builder.Services.AddSingleton<ITrustedPublisherService, TrustedPublisherService>();
+builder.Services.AddHttpClient<IDenPublishFacadeService, DenPublishFacadeService>((services, client) =>
+{
+    var facadeOptions = services.GetRequiredService<DenPublishFacadeOptions>();
+    client.BaseAddress = new Uri(facadeOptions.Endpoint.TrimEnd('/'));
+});
 builder.Services.AddSingleton<IPiDockerLaunchProfileRenderer, PiDockerLaunchProfileRenderer>();
 builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddSingleton<IPiSessionHost, TmuxDockerPiSessionHost>();

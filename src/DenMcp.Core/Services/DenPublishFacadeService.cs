@@ -12,6 +12,9 @@ namespace DenMcp.Core.Services;
 public sealed class DenPublishFacadeOptions
 {
     public string Endpoint { get; set; } = "http://127.0.0.1:5090";
+    public List<string> TrustedOrchestrators { get; set; } = [];
+    public List<string> TrustedOrchestratorRoles { get; set; } = ["orchestrator"];
+    public string TrustedOrchestratorPolicyMode { get; set; } = "audit_warn";
 }
 
 public sealed class DenPublishDryRunRequest
@@ -40,6 +43,7 @@ public sealed class DenPublishDryRunRequest
     public IReadOnlyList<string> AllowedPathPrefixes { get; init; } = [];
     public IReadOnlyList<string> TestsRun { get; init; } = [];
     public IReadOnlyList<DenPublishScopeOverride> ScopeOverrides { get; init; } = [];
+    public DenPublishOrchestratorOverride? OrchestratorOverride { get; init; }
     public string Operation { get; init; } = "push_branch";
     public string TargetRemote { get; init; } = "canonical";
     public string? DecisionId { get; init; }
@@ -54,6 +58,15 @@ public sealed class DenPublishScopeOverride
     public required string ApprovedBy { get; init; }
 }
 
+public sealed class DenPublishOrchestratorOverride
+{
+    public required string UnclassifiedFailurePolicy { get; init; }
+    public required string Reason { get; init; }
+    public IReadOnlyList<string> ExpectedRiskCategories { get; init; } = [];
+}
+
+public sealed record DenPublishValidationWarning(string Code, string Message, string Reason);
+
 public sealed class DenPublishFacadeResult
 {
     public required string Status { get; init; }
@@ -67,6 +80,9 @@ public sealed class DenPublishFacadeResult
     public string? FetchedHeadCommit { get; init; }
     public string? LocalRef { get; init; }
     public int? AuditMessageId { get; init; }
+    public string CallerTrust { get; init; } = "worker";
+    public string EffectivePolicyMode { get; init; } = "strict";
+    public List<DenPublishValidationWarning> Warnings { get; init; } = [];
     public List<string> Diagnostics { get; init; } = [];
 }
 
@@ -88,6 +104,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
     private readonly IReviewRoundRepository _reviewRounds;
     private readonly IReviewFindingRepository _reviewFindings;
     private readonly IMessageRepository _messages;
+    private readonly IAgentInstanceBindingRepository _agentBindings;
     private readonly HttpClient _http;
     private readonly DenPublishFacadeOptions _options;
     private readonly ILogger<DenPublishFacadeService> _logger;
@@ -97,6 +114,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         IReviewRoundRepository reviewRounds,
         IReviewFindingRepository reviewFindings,
         IMessageRepository messages,
+        IAgentInstanceBindingRepository agentBindings,
         HttpClient http,
         DenPublishFacadeOptions options,
         ILogger<DenPublishFacadeService> logger)
@@ -105,6 +123,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         _reviewRounds = reviewRounds;
         _reviewFindings = reviewFindings;
         _messages = messages;
+        _agentBindings = agentBindings;
         _http = http;
         _options = options;
         _logger = logger;
@@ -116,6 +135,12 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         var decisionId = string.IsNullOrWhiteSpace(request.DecisionId)
             ? $"pub_{request.TaskId}_{request.SubmissionId}"
             : request.DecisionId;
+        var callerContext = await ResolveCallerContextAsync(request).ConfigureAwait(false);
+
+        if (request.OrchestratorOverride is not null && !callerContext.IsTrustedOrchestrator)
+        {
+            diagnostics.Add("Orchestrator override requires a trusted orchestrator resolved from Den Core configuration or an active allowlisted agent binding; requestedBy alone is not trusted.");
+        }
 
         var project = await _projects.GetByIdAsync(request.ProjectId).ConfigureAwait(false);
         if (project is null)
@@ -157,16 +182,26 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 Succeeded = false,
                 DecisionId = decisionId,
                 SubmissionId = request.SubmissionId,
+                CallerTrust = callerContext.CallerTrust,
+                EffectivePolicyMode = callerContext.PolicyMode,
                 Diagnostics = diagnostics,
             };
         }
 
-        var apiPayload = BuildApiPayload(request, review!, findings, decisionId);
+        var apiPayload = BuildApiPayload(request, review!, findings, decisionId, callerContext);
         HttpResponseMessage response;
         string responseText;
         try
         {
-            response = await _http.PostAsJsonAsync("/promotion/dry-run", apiPayload, ApiJsonOptions, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/promotion/dry-run")
+            {
+                Content = JsonContent.Create(apiPayload, options: ApiJsonOptions)
+            };
+            httpRequest.Headers.TryAddWithoutValidation("X-Den-Requested-By", request.RequestedBy);
+            httpRequest.Headers.TryAddWithoutValidation("X-Den-Caller-Trust", callerContext.CallerTrust);
+            httpRequest.Headers.TryAddWithoutValidation("X-Den-Promotion-Policy-Mode", callerContext.PolicyMode);
+
+            response = await _http.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             responseText = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -179,12 +214,14 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 Succeeded = false,
                 DecisionId = decisionId,
                 SubmissionId = request.SubmissionId,
+                CallerTrust = callerContext.CallerTrust,
+                EffectivePolicyMode = callerContext.PolicyMode,
                 Diagnostics = [$"den-publish request failed: {ex.GetType().Name}: {ex.Message}"],
             };
         }
 
         var parsed = ParseResponse(response, responseText, decisionId, request.SubmissionId);
-        var auditMessageId = await AuditAsync(request, parsed, response.StatusCode, cancellationToken).ConfigureAwait(false);
+        var auditMessageId = await AuditAsync(request, parsed, response.StatusCode, callerContext, cancellationToken).ConfigureAwait(false);
 
         return new DenPublishFacadeResult
         {
@@ -199,6 +236,9 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             FetchedHeadCommit = parsed.FetchedHeadCommit,
             LocalRef = parsed.LocalRef,
             AuditMessageId = auditMessageId,
+            CallerTrust = callerContext.CallerTrust,
+            EffectivePolicyMode = callerContext.PolicyMode,
+            Warnings = parsed.Warnings,
             Diagnostics = parsed.Diagnostics,
         };
     }
@@ -238,7 +278,8 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         DenPublishDryRunRequest request,
         ReviewRound review,
         IReadOnlyList<ReviewFinding> findings,
-        string decisionId)
+        string decisionId,
+        DenPublishCallerContext callerContext)
     {
         var usedScopeOverrides = request.ScopeOverrides.Select(o => new
         {
@@ -269,6 +310,14 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 ValidateOnly = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 ScopeOverrides = usedScopeOverrides,
+                OrchestratorOverride = callerContext.IsTrustedOrchestrator && request.OrchestratorOverride is not null
+                    ? new
+                    {
+                        request.OrchestratorOverride.UnclassifiedFailurePolicy,
+                        request.OrchestratorOverride.Reason,
+                        request.OrchestratorOverride.ExpectedRiskCategories,
+                    }
+                    : null,
             },
             Submission = new
             {
@@ -312,7 +361,12 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         };
     }
 
-    private async Task<int?> AuditAsync(DenPublishDryRunRequest request, ParsedDenPublishResponse parsed, System.Net.HttpStatusCode statusCode, CancellationToken cancellationToken)
+    private async Task<int?> AuditAsync(
+        DenPublishDryRunRequest request,
+        ParsedDenPublishResponse parsed,
+        System.Net.HttpStatusCode statusCode,
+        DenPublishCallerContext callerContext,
+        CancellationToken cancellationToken)
     {
         var metadata = JsonSerializer.SerializeToElement(new
         {
@@ -326,7 +380,26 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             local_ref = parsed.LocalRef,
             http_status = (int)statusCode,
             succeeded = parsed.Succeeded,
+            caller_trust = callerContext.CallerTrust,
+            effective_policy_mode = callerContext.PolicyMode,
+            warning_count = parsed.Warnings.Count,
+            warnings = parsed.Warnings.Select(warning => new
+            {
+                code = warning.Code,
+                message = warning.Message,
+                reason = warning.Reason,
+            }).ToArray(),
         }, ApiJsonOptions);
+
+        var content = parsed.Succeeded switch
+        {
+            true when parsed.Warnings.Count > 0 =>
+                $"den-publish dry-run allowed submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}` with {parsed.Warnings.Count} warning(s): {SummarizeWarnings(parsed.Warnings)}",
+            true =>
+                $"den-publish dry-run validated submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}`.",
+            _ =>
+                $"den-publish dry-run failed for submission `{request.SubmissionId}`: {parsed.Summary}"
+        };
 
         var message = await _messages.CreateAsync(new Message
         {
@@ -334,9 +407,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             TaskId = request.TaskId,
             Sender = request.RequestedBy,
             Intent = MessageIntent.StatusUpdate,
-            Content = parsed.Succeeded
-                ? $"den-publish dry-run validated submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}`."
-                : $"den-publish dry-run failed for submission `{request.SubmissionId}`: {parsed.Summary}",
+            Content = content,
             Metadata = metadata,
         }).ConfigureAwait(false);
         return message.Id;
@@ -357,20 +428,29 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             var responseDecisionId = GetNestedString(root, "audit", "decisionId") ?? decisionId;
             var validation = root.TryGetProperty("validation", out var validationElement) ? validationElement : default;
             var validationStatus = validation.ValueKind == JsonValueKind.Object ? GetString(validation, "status") : null;
+            var validationSummary = validation.ValueKind == JsonValueKind.Object ? GetString(validation, "summary") : null;
             var isPublishable = validation.ValueKind == JsonValueKind.Object ? GetBoolean(validation, "isPublishable") : null;
             var fetchedHead = validation.ValueKind == JsonValueKind.Object ? GetString(validation, "fetchedHeadCommit") : null;
             var localRef = validation.ValueKind == JsonValueKind.Object ? GetString(validation, "localRef") : null;
+            var warnings = validation.ValueKind == JsonValueKind.Object ? GetWarnings(validation) : [];
 
             if (response.IsSuccessStatusCode && publishStatus is null)
                 diagnostics.Add("den-publish response was missing publishStatus.");
             if (response.IsSuccessStatusCode && validationStatus is null)
                 diagnostics.Add("den-publish response was missing validation.status.");
 
+            var parsedStatus = ParseFacadeStatus(succeeded, diagnostics.Count == 0, validationStatus, warnings.Count);
+            var summary = parsedStatus switch
+            {
+                "allowed_with_warnings" => $"den-publish dry-run allowed submission {submissionId} with warning(s)",
+                "validated" => $"den-publish dry-run validated submission {submissionId}",
+                "rejected" => validationSummary ?? "den-publish dry-run response was rejected",
+                _ => validationSummary ?? "den-publish dry-run response was not publishable",
+            };
+
             return new ParsedDenPublishResponse(
-                Status: succeeded && diagnostics.Count == 0 ? publishStatus ?? "dry_run" : "failed",
-                Summary: succeeded && diagnostics.Count == 0
-                    ? $"den-publish dry-run {publishStatus ?? "validated"} for submission {submissionId}"
-                    : "den-publish dry-run response was not publishable",
+                Status: parsedStatus,
+                Summary: summary,
                 Succeeded: succeeded && diagnostics.Count == 0,
                 DecisionId: responseDecisionId,
                 PublishStatus: publishStatus,
@@ -378,6 +458,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 IsPublishable: isPublishable,
                 FetchedHeadCommit: fetchedHead,
                 LocalRef: localRef,
+                Warnings: warnings,
                 Diagnostics: diagnostics);
         }
         catch (JsonException ex)
@@ -393,9 +474,46 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 IsPublishable: null,
                 FetchedHeadCommit: null,
                 LocalRef: null,
+                Warnings: [],
                 Diagnostics: diagnostics);
         }
     }
+
+    private async Task<DenPublishCallerContext> ResolveCallerContextAsync(DenPublishDryRunRequest request)
+    {
+        if (IsConfiguredTrustedOrchestrator(request.RequestedBy))
+        {
+            return DenPublishCallerContext.Trusted(_options.TrustedOrchestratorPolicyMode, "configured_trusted_orchestrator");
+        }
+
+        try
+        {
+            var bindings = await _agentBindings.ListAsync(new AgentInstanceBindingListOptions
+            {
+                ProjectId = request.ProjectId,
+                AgentIdentity = request.RequestedBy,
+                Statuses = [AgentInstanceBindingStatus.Active, AgentInstanceBindingStatus.Degraded]
+            }).ConfigureAwait(false);
+
+            if (bindings.Any(binding => IsTrustedOrchestratorRole(binding.Role)))
+            {
+                return DenPublishCallerContext.Trusted(_options.TrustedOrchestratorPolicyMode, "active_agent_binding");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve Den publish caller binding for {RequestedBy}", request.RequestedBy);
+        }
+
+        return DenPublishCallerContext.Worker;
+    }
+
+    private bool IsConfiguredTrustedOrchestrator(string requestedBy) =>
+        _options.TrustedOrchestrators.Any(identity => string.Equals(identity, requestedBy, StringComparison.Ordinal));
+
+    private bool IsTrustedOrchestratorRole(string? role) =>
+        !string.IsNullOrWhiteSpace(role)
+        && _options.TrustedOrchestratorRoles.Any(trustedRole => string.Equals(trustedRole, role, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsUnresolvedBlocking(ReviewFinding finding)
     {
@@ -435,6 +553,46 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             ? value.GetBoolean()
             : null;
 
+    private static List<DenPublishValidationWarning> GetWarnings(JsonElement validation)
+    {
+        if (!validation.TryGetProperty("warnings", out var warningsElement) || warningsElement.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var warnings = new List<DenPublishValidationWarning>();
+        foreach (var warning in warningsElement.EnumerateArray())
+        {
+            warnings.Add(new DenPublishValidationWarning(
+                GetString(warning, "code") ?? "unknown_warning",
+                GetString(warning, "message") ?? string.Empty,
+                GetString(warning, "reason") ?? string.Empty));
+        }
+        return warnings;
+    }
+
+    private static string ParseFacadeStatus(bool succeeded, bool structurallyValid, string? validationStatus, int warningCount)
+    {
+        if (succeeded && structurallyValid)
+            return warningCount > 0 ? "allowed_with_warnings" : "validated";
+        if (validationStatus is "rejected")
+            return "rejected";
+        return "failed";
+    }
+
+    private static string SummarizeWarnings(IEnumerable<DenPublishValidationWarning> warnings) =>
+        string.Join("; ", warnings.Select(warning => $"{warning.Code}: {warning.Message}"));
+
+    private sealed record DenPublishCallerContext(
+        bool IsTrustedOrchestrator,
+        string CallerTrust,
+        string PolicyMode,
+        string ResolvedFrom)
+    {
+        public static DenPublishCallerContext Worker { get; } = new(false, "worker", "strict", "default_strict_worker");
+
+        public static DenPublishCallerContext Trusted(string policyMode, string resolvedFrom) =>
+            new(true, "trusted_orchestrator", string.IsNullOrWhiteSpace(policyMode) ? "audit_warn" : policyMode, resolvedFrom);
+    }
+
     private sealed record ParsedDenPublishResponse(
         string Status,
         string Summary,
@@ -445,5 +603,6 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
         bool? IsPublishable,
         string? FetchedHeadCommit,
         string? LocalRef,
+        List<DenPublishValidationWarning> Warnings,
         List<string> Diagnostics);
 }

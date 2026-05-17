@@ -49,8 +49,9 @@ public sealed class DenPublishFacadeServiceTests
 
         var result = await service.RequestDryRunAsync(DefaultRequest());
 
-        Assert.Equal("dry_run", result.Status);
+        Assert.Equal("validated", result.Status);
         Assert.True(result.Succeeded);
+        Assert.Equal("dry_run", result.PublishStatus);
         Assert.Equal("validated", result.ValidationStatus);
         Assert.Equal("pub_123_sub_123_1", result.DecisionId);
         Assert.Single(repos.Messages.Created);
@@ -75,6 +76,120 @@ public sealed class DenPublishFacadeServiceTests
         Assert.DoesNotContain("summary", handler.RequestBodies[0], StringComparison.Ordinal);
         Assert.DoesNotContain("expected_head_commit", handler.RequestBodies[0], StringComparison.Ordinal);
         Assert.DoesNotContain("head_commit", handler.RequestBodies[0], StringComparison.Ordinal);
+        Assert.Equal("worker", result.CallerTrust);
+        Assert.Equal("strict", result.EffectivePolicyMode);
+        Assert.Equal("worker", Assert.Single(handler.HeaderValues("X-Den-Caller-Trust")));
+        Assert.Equal("strict", Assert.Single(handler.HeaderValues("X-Den-Promotion-Policy-Mode")));
+    }
+
+    [Fact]
+    public async Task DryRunPromotion_SurfacesAuditWarnWarningsInResultAndAuditMessage()
+    {
+        var repos = FakeRepositories.Success();
+        var handler = new CapturingDenPublishHandler(HttpStatusCode.OK, """
+            {
+              "succeeded": true,
+              "publishStatus": "dry_run",
+              "validation": {
+                "status": "validated",
+                "isPublishable": true,
+                "summary": "allowed with warnings",
+                "warnings": [
+                  {
+                    "code": "unclassified_soft_failure",
+                    "message": "Packet completeness was downgraded to audit warning",
+                    "reason": "trusted orchestrator audit_warn policy"
+                  }
+                ],
+                "fetchedHeadCommit": "2222222222222222222222222222222222222222",
+                "localRef": "refs/den-publish/submissions/sub_123_1"
+              },
+              "audit": {
+                "decisionId": "pub_123_sub_123_1"
+              }
+            }
+            """);
+        var service = BuildService(repos, handler);
+
+        var result = await service.RequestDryRunAsync(DefaultRequest());
+
+        Assert.Equal("allowed_with_warnings", result.Status);
+        Assert.True(result.Succeeded);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Equal("unclassified_soft_failure", warning.Code);
+        Assert.Contains("audit warning", warning.Message, StringComparison.OrdinalIgnoreCase);
+        var message = Assert.Single(repos.Messages.Created);
+        Assert.Contains("with 1 warning", message.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, message.Metadata!.Value.GetProperty("warning_count").GetInt32());
+        Assert.Equal("unclassified_soft_failure", message.Metadata.Value.GetProperty("warnings")[0].GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task DryRunPromotion_ForwardsOrchestratorOverrideOnlyForConfiguredTrustedOrchestrator()
+    {
+        var repos = FakeRepositories.Success();
+        var handler = SuccessfulHandler();
+        var options = new DenPublishFacadeOptions
+        {
+            Endpoint = "http://127.0.0.1:5090",
+            TrustedOrchestrators = ["sysadmin"],
+            TrustedOrchestratorPolicyMode = "audit_warn"
+        };
+        var service = BuildService(repos, handler, options);
+        var request = WithOrchestratorOverride(DefaultRequest());
+
+        var result = await service.RequestDryRunAsync(request);
+
+        Assert.Equal("trusted_orchestrator", result.CallerTrust);
+        Assert.Equal("audit_warn", result.EffectivePolicyMode);
+        Assert.Equal("trusted_orchestrator", Assert.Single(handler.HeaderValues("X-Den-Caller-Trust")));
+        using var payload = JsonDocument.Parse(handler.RequestBodies[0]);
+        var orchestratorOverride = payload.RootElement.GetProperty("decision").GetProperty("orchestratorOverride");
+        Assert.Equal("audit_warn", orchestratorOverride.GetProperty("unclassifiedFailurePolicy").GetString());
+        Assert.Equal("operator approved audit-warn retry", orchestratorOverride.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task DryRunPromotion_RequestedByAloneCannotSpoofTrustedOrchestratorOverride()
+    {
+        var repos = FakeRepositories.Success();
+        var handler = SuccessfulHandler();
+        var service = BuildService(repos, handler);
+
+        var result = await service.RequestDryRunAsync(WithOrchestratorOverride(DefaultRequest()));
+
+        Assert.Equal("rejected", result.Status);
+        Assert.False(result.Succeeded);
+        Assert.Equal("worker", result.CallerTrust);
+        Assert.Contains(result.Diagnostics, d => d.Contains("requestedBy alone is not trusted", StringComparison.Ordinal));
+        Assert.Empty(handler.Requests);
+        Assert.Empty(repos.Messages.Created);
+    }
+
+    [Fact]
+    public async Task DryRunPromotion_ActiveTrustedOrchestratorRoleCanForwardOverride()
+    {
+        var repos = FakeRepositories.Success();
+        repos.AgentBindings.Bindings.Add(new AgentInstanceBinding
+        {
+            InstanceId = "sysadmin-orchestrator-1",
+            ProjectId = "den-channels",
+            AgentIdentity = "sysadmin",
+            AgentFamily = "hermes",
+            Role = "orchestrator",
+            TransportKind = "hermes",
+            Status = AgentInstanceBindingStatus.Active,
+        });
+        var handler = SuccessfulHandler();
+        var service = BuildService(repos, handler);
+
+        var result = await service.RequestDryRunAsync(WithOrchestratorOverride(DefaultRequest()));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("trusted_orchestrator", result.CallerTrust);
+        using var payload = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.True(payload.RootElement.GetProperty("decision").TryGetProperty("orchestratorOverride", out var orchestratorOverride));
+        Assert.Equal("audit_warn", orchestratorOverride.GetProperty("unclassifiedFailurePolicy").GetString());
     }
 
     [Fact]
@@ -140,7 +255,10 @@ public sealed class DenPublishFacadeServiceTests
         Assert.Empty(repos.Messages.Created);
     }
 
-    private static DenPublishFacadeService BuildService(FakeRepositories repos, HttpMessageHandler handler)
+    private static DenPublishFacadeService BuildService(
+        FakeRepositories repos,
+        CapturingDenPublishHandler handler,
+        DenPublishFacadeOptions? options = null)
     {
         var client = new HttpClient(handler)
         {
@@ -151,10 +269,65 @@ public sealed class DenPublishFacadeServiceTests
             repos.ReviewRounds,
             repos.ReviewFindings,
             repos.Messages,
+            repos.AgentBindings,
             client,
-            new DenPublishFacadeOptions { Endpoint = "http://127.0.0.1:5090" },
+            options ?? new DenPublishFacadeOptions { Endpoint = "http://127.0.0.1:5090" },
             NullLogger<DenPublishFacadeService>.Instance);
     }
+
+    private static CapturingDenPublishHandler SuccessfulHandler() => new(HttpStatusCode.OK, """
+        {
+          "succeeded": true,
+          "publishStatus": "dry_run",
+          "validation": {
+            "status": "validated",
+            "isPublishable": true,
+            "fetchedHeadCommit": "2222222222222222222222222222222222222222",
+            "localRef": "refs/den-publish/submissions/sub_123_1"
+          },
+          "audit": {
+            "decisionId": "pub_123_sub_123_1"
+          }
+        }
+        """);
+
+    private static DenPublishDryRunRequest WithOrchestratorOverride(DenPublishDryRunRequest request) => new()
+    {
+        ProjectId = request.ProjectId,
+        TaskId = request.TaskId,
+        SubmissionId = request.SubmissionId,
+        WorkerRunId = request.WorkerRunId,
+        RequestedBy = request.RequestedBy,
+        SubmittedBy = request.SubmittedBy,
+        Role = request.Role,
+        AttemptOrdinal = request.AttemptOrdinal,
+        ParentSubmissionId = request.ParentSubmissionId,
+        CodeGateInstance = request.CodeGateInstance,
+        CodeGateRepo = request.CodeGateRepo,
+        CodeGateRemoteUrl = request.CodeGateRemoteUrl,
+        IngressRef = request.IngressRef,
+        ConvenienceRef = request.ConvenienceRef,
+        BaseBranch = request.BaseBranch,
+        BaseCommit = request.BaseCommit,
+        HeadCommit = request.HeadCommit,
+        CanonicalRemoteUrl = request.CanonicalRemoteUrl,
+        TargetBranch = request.TargetBranch,
+        ReviewRoundId = request.ReviewRoundId,
+        ChangedFilesClaim = request.ChangedFilesClaim,
+        AllowedPathPrefixes = request.AllowedPathPrefixes,
+        TestsRun = request.TestsRun,
+        ScopeOverrides = request.ScopeOverrides,
+        Operation = request.Operation,
+        TargetRemote = request.TargetRemote,
+        DecisionId = request.DecisionId,
+        WorkspacePath = request.WorkspacePath,
+        OrchestratorOverride = new DenPublishOrchestratorOverride
+        {
+            UnclassifiedFailurePolicy = "audit_warn",
+            Reason = "operator approved audit-warn retry",
+            ExpectedRiskCategories = ["unclassified_soft_failure"]
+        }
+    };
 
     private static DenPublishDryRunRequest DefaultRequest() => new()
     {
@@ -185,11 +358,16 @@ public sealed class DenPublishFacadeServiceTests
     {
         public List<HttpRequestMessage> Requests { get; } = [];
         public List<string> RequestBodies { get; } = [];
+        public List<Dictionary<string, string[]>> RequestHeaders { get; } = [];
+
+        public IReadOnlyList<string> HeaderValues(string name) =>
+            RequestHeaders.SelectMany(headers => headers.TryGetValue(name, out var values) ? values : []).ToList();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
             RequestBodies.Add(request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken));
+            RequestHeaders.Add(request.Headers.ToDictionary(header => header.Key, header => header.Value.ToArray(), StringComparer.OrdinalIgnoreCase));
             return new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseBody)
@@ -203,6 +381,7 @@ public sealed class DenPublishFacadeServiceTests
         public FakeReviewRoundRepository ReviewRounds { get; } = new();
         public FakeReviewFindingRepository ReviewFindings { get; } = new();
         public FakeMessageRepository Messages { get; } = new();
+        public FakeAgentInstanceBindingRepository AgentBindings { get; } = new();
         public List<ReviewFinding> Findings => ReviewFindings.Findings;
         public ReviewRound? ReviewRound
         {
@@ -261,6 +440,35 @@ public sealed class DenPublishFacadeServiceTests
             Task.FromResult(Findings.Where(f => f.ReviewRoundId == reviewRoundId).ToList());
         public Task<ReviewFinding> RespondAsync(int id, RespondToReviewFindingInput input) => throw new NotSupportedException();
         public Task<ReviewFinding> SetStatusAsync(int id, UpdateReviewFindingStatusInput input) => throw new NotSupportedException();
+    }
+
+    private sealed class FakeAgentInstanceBindingRepository : IAgentInstanceBindingRepository
+    {
+        public List<AgentInstanceBinding> Bindings { get; } = [];
+
+        public Task<AgentInstanceBinding> UpsertAsync(AgentInstanceBinding binding) => throw new NotSupportedException();
+        public Task<bool> HeartbeatAsync(string instanceId) => throw new NotSupportedException();
+        public Task<bool> CheckOutAsync(string instanceId) => throw new NotSupportedException();
+        public Task<int> CheckOutBySessionAsync(string sessionId) => throw new NotSupportedException();
+        public Task<AgentInstanceBinding?> GetActiveByInstanceIdAsync(string instanceId, int timeoutMinutes = 5) => throw new NotSupportedException();
+
+        public Task<List<AgentInstanceBinding>> ListAsync(AgentInstanceBindingListOptions? options = null)
+        {
+            IEnumerable<AgentInstanceBinding> query = Bindings;
+            if (!string.IsNullOrWhiteSpace(options?.ProjectId))
+                query = query.Where(binding => binding.ProjectId == options.ProjectId);
+            if (!string.IsNullOrWhiteSpace(options?.AgentIdentity))
+                query = query.Where(binding => binding.AgentIdentity == options.AgentIdentity);
+            if (!string.IsNullOrWhiteSpace(options?.Role))
+                query = query.Where(binding => binding.Role == options.Role);
+            if (!string.IsNullOrWhiteSpace(options?.TransportKind))
+                query = query.Where(binding => binding.TransportKind == options.TransportKind);
+            if (options?.Statuses is { Length: > 0 } statuses)
+                query = query.Where(binding => statuses.Contains(binding.Status));
+            return Task.FromResult(query.ToList());
+        }
+
+        public Task<int> CleanupStaleAsync(int timeoutMinutes = 5) => Task.FromResult(0);
     }
 
     private sealed class FakeMessageRepository : IMessageRepository

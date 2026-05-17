@@ -40,6 +40,7 @@ public sealed class DenPublishFacadeTools
         [Description("Optional JSON array or comma-separated allowed changed-path prefixes.")] string? allowed_path_prefixes = null,
         [Description("Optional JSON array or newline-separated tests run.")] string? tests_run = null,
         [Description("Optional JSON array of structured overrides: [{override_id, finding_ids, reason, approved_by}].")] string? scope_overrides = null,
+        [Description("Optional JSON object for trusted-orchestrator soft-failure policy, e.g. {unclassified_failure_policy, reason, expected_risk_categories}.")] string? orchestrator_override = null,
         [Description("Optional decision id. Defaults to pub_<task_id>_<submission_id>.")] string? decision_id = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
@@ -69,6 +70,7 @@ public sealed class DenPublishFacadeTools
             AllowedPathPrefixes = ParseStringList(allowed_path_prefixes),
             TestsRun = ParseStringList(tests_run, splitNewlines: true),
             ScopeOverrides = ParseScopeOverrides(scope_overrides),
+            OrchestratorOverride = ParseOrchestratorOverride(orchestrator_override),
             DecisionId = decision_id,
         }).ConfigureAwait(false);
 
@@ -90,6 +92,9 @@ public sealed class DenPublishFacadeTools
             result.ValidationStatus,
             result.IsPublishable,
             result.AuditMessageId,
+            result.CallerTrust,
+            result.EffectivePolicyMode,
+            Warnings = result.Warnings.Count == 0 ? null : result.Warnings,
             Diagnostics = result.Diagnostics.Count == 0 ? null : result.Diagnostics,
         }, JsonOptions);
     }
@@ -135,10 +140,52 @@ public sealed class DenPublishFacadeTools
         return overrides;
     }
 
+
+    private static DenPublishOrchestratorOverride? ParseOrchestratorOverride(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        using var doc = JsonDocument.Parse(value);
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("orchestrator_override must be a JSON object.", nameof(value));
+
+        var policy = GetString(doc.RootElement, "unclassified_failure_policy") ?? GetString(doc.RootElement, "unclassifiedFailurePolicy");
+        var reason = GetString(doc.RootElement, "reason");
+        var risks = GetStringArray(doc.RootElement, "expected_risk_categories")
+            ?? GetStringArray(doc.RootElement, "expectedRiskCategories")
+            ?? [];
+        if (string.IsNullOrWhiteSpace(policy) || string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("orchestrator_override must include unclassified_failure_policy and reason.", nameof(value));
+
+        return new DenPublishOrchestratorOverride
+        {
+            UnclassifiedFailurePolicy = policy,
+            Reason = reason,
+            ExpectedRiskCategories = risks,
+        };
+    }
+
     private static string? GetString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+
+    private static IReadOnlyList<string>? GetStringArray(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return null;
+        var items = new List<string>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+                throw new ArgumentException($"{name} must contain string values.", name);
+            var parsed = item.GetString();
+            if (!string.IsNullOrWhiteSpace(parsed))
+                items.Add(parsed);
+        }
+        return items;
+    }
 
     private static IReadOnlyList<int>? GetIntArray(JsonElement element, string name)
     {

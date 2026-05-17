@@ -157,6 +157,7 @@ app.MapTopicClipQueueRoutes();
 app.MapTaskRoutes();
 app.MapMessageRoutes();
 app.MapDocumentRoutes();
+app.MapMemoryRoutes();
 app.MapBlackboardRoutes();
 app.MapAgentGuidanceRoutes();
 app.MapAgentRoutes();

@@ -98,7 +98,14 @@ public sealed class DenPublishFacadeServiceTests
                   {
                     "code": "unclassified_soft_failure",
                     "message": "Packet completeness was downgraded to audit warning",
-                    "reason": "trusted orchestrator audit_warn policy"
+                    "reason": "trusted orchestrator audit_warn policy",
+                    "severity": "warning",
+                    "strictAction": "reject",
+                    "permissiveAction": "allow_with_warning",
+                    "observedValues": {
+                      "policy_mode": "audit_warn",
+                      "caller_trust": "trusted_orchestrator"
+                    }
                   }
                 ],
                 "fetchedHeadCommit": "2222222222222222222222222222222222222222",
@@ -118,10 +125,23 @@ public sealed class DenPublishFacadeServiceTests
         var warning = Assert.Single(result.Warnings);
         Assert.Equal("unclassified_soft_failure", warning.Code);
         Assert.Contains("audit warning", warning.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("warning", warning.Severity);
+        Assert.Equal("reject", warning.StrictAction);
+        Assert.Equal("allow_with_warning", warning.PermissiveAction);
+        Assert.Equal("audit_warn", warning.ObservedValues["policy_mode"]);
+        Assert.Contains(result.HardeningHints, hint => hint.Contains("stricter policy", StringComparison.OrdinalIgnoreCase));
         var message = Assert.Single(repos.Messages.Created);
         Assert.Contains("with 1 warning", message.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Resolve warning(s) before canonical publish when practical", message.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("switch to a stricter policy", message.Content, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, message.Metadata!.Value.GetProperty("warning_count").GetInt32());
-        Assert.Equal("unclassified_soft_failure", message.Metadata.Value.GetProperty("warnings")[0].GetProperty("code").GetString());
+        var metadataWarning = message.Metadata.Value.GetProperty("warnings")[0];
+        Assert.Equal("unclassified_soft_failure", metadataWarning.GetProperty("code").GetString());
+        Assert.Equal("reject", metadataWarning.GetProperty("strict_action").GetString());
+        Assert.Equal("allow_with_warning", metadataWarning.GetProperty("permissive_action").GetString());
+        Assert.Equal("audit_warn", metadataWarning.GetProperty("observed_values").GetProperty("policy_mode").GetString());
+        var hints = message.Metadata.Value.GetProperty("hardening_hints").EnumerateArray().Select(item => item.GetString()).ToArray();
+        Assert.Contains(hints, hint => hint!.Contains("Resolve warning", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

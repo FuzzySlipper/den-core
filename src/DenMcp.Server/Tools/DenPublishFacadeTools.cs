@@ -95,6 +95,7 @@ public sealed class DenPublishFacadeTools
             result.CallerTrust,
             result.EffectivePolicyMode,
             Warnings = result.Warnings.Count == 0 ? null : result.Warnings,
+            HardeningHints = result.HardeningHints.Count == 0 ? null : result.HardeningHints,
             Diagnostics = result.Diagnostics.Count == 0 ? null : result.Diagnostics,
         }, JsonOptions);
     }

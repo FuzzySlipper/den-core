@@ -65,7 +65,17 @@ public sealed class DenPublishOrchestratorOverride
     public IReadOnlyList<string> ExpectedRiskCategories { get; init; } = [];
 }
 
-public sealed record DenPublishValidationWarning(string Code, string Message, string Reason);
+public sealed record DenPublishValidationWarning(
+    string Code,
+    string Message,
+    string Reason,
+    string Severity = "warning",
+    string StrictAction = "reject",
+    string PermissiveAction = "allow_with_warning",
+    IReadOnlyDictionary<string, string>? ObservedValues = null)
+{
+    public IReadOnlyDictionary<string, string> ObservedValues { get; init; } = ObservedValues ?? new Dictionary<string, string>();
+}
 
 public sealed class DenPublishFacadeResult
 {
@@ -83,6 +93,7 @@ public sealed class DenPublishFacadeResult
     public string CallerTrust { get; init; } = "worker";
     public string EffectivePolicyMode { get; init; } = "strict";
     public List<DenPublishValidationWarning> Warnings { get; init; } = [];
+    public List<string> HardeningHints { get; init; } = [];
     public List<string> Diagnostics { get; init; } = [];
 }
 
@@ -239,6 +250,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             CallerTrust = callerContext.CallerTrust,
             EffectivePolicyMode = callerContext.PolicyMode,
             Warnings = parsed.Warnings,
+            HardeningHints = parsed.Warnings.Count > 0 ? WarningHardeningHints.ToList() : [],
             Diagnostics = parsed.Diagnostics,
         };
     }
@@ -388,13 +400,18 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 code = warning.Code,
                 message = warning.Message,
                 reason = warning.Reason,
+                severity = warning.Severity,
+                strict_action = warning.StrictAction,
+                permissive_action = warning.PermissiveAction,
+                observed_values = warning.ObservedValues,
             }).ToArray(),
+            hardening_hints = parsed.Warnings.Count > 0 ? WarningHardeningHints : [],
         }, ApiJsonOptions);
 
         var content = parsed.Succeeded switch
         {
             true when parsed.Warnings.Count > 0 =>
-                $"den-publish dry-run allowed submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}` with {parsed.Warnings.Count} warning(s): {SummarizeWarnings(parsed.Warnings)}",
+                $"den-publish dry-run allowed submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}` with {parsed.Warnings.Count} warning(s): {SummarizeWarnings(parsed.Warnings)}\n\nHardening hints: {string.Join(" ", WarningHardeningHints)}",
             true =>
                 $"den-publish dry-run validated submission `{request.SubmissionId}` for `{request.TargetBranch}` at `{request.HeadCommit}`.",
             _ =>
@@ -538,6 +555,13 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
     private static bool ShaEquals(string? left, string? right) =>
         string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
+    private static readonly string[] WarningHardeningHints =
+    [
+        "Resolve warning(s) before canonical publish when practical.",
+        "If warning(s) are unexpected, switch to a stricter policy and re-run validation.",
+        "Preserve and inspect warning audit metadata before live promotion."
+    ];
+
     private static string? GetString(JsonElement element, string property) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
@@ -553,6 +577,20 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             ? value.GetBoolean()
             : null;
 
+    private static IReadOnlyDictionary<string, string> GetStringDictionary(JsonElement element, string property)
+    {
+        if (element.ValueKind != JsonValueKind.Object
+            || !element.TryGetProperty(property, out var value)
+            || value.ValueKind != JsonValueKind.Object)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        return value.EnumerateObject()
+            .Where(item => item.Value.ValueKind == JsonValueKind.String)
+            .ToDictionary(item => item.Name, item => item.Value.GetString() ?? string.Empty, StringComparer.Ordinal);
+    }
+
     private static List<DenPublishValidationWarning> GetWarnings(JsonElement validation)
     {
         if (!validation.TryGetProperty("warnings", out var warningsElement) || warningsElement.ValueKind != JsonValueKind.Array)
@@ -564,7 +602,11 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             warnings.Add(new DenPublishValidationWarning(
                 GetString(warning, "code") ?? "unknown_warning",
                 GetString(warning, "message") ?? string.Empty,
-                GetString(warning, "reason") ?? string.Empty));
+                GetString(warning, "reason") ?? string.Empty,
+                GetString(warning, "severity") ?? "warning",
+                GetString(warning, "strictAction") ?? "reject",
+                GetString(warning, "permissiveAction") ?? "allow_with_warning",
+                GetStringDictionary(warning, "observedValues")));
         }
         return warnings;
     }

@@ -284,7 +284,7 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
 
     private static bool IsAllowedTargetBranchForReview(string targetBranch, int taskId, ReviewRound review)
     {
-        if (targetBranch.StartsWith($"task/{taskId}", StringComparison.Ordinal))
+        if (IsTaskBranchForTask(targetBranch, taskId))
             return true;
 
         if (string.Equals(targetBranch, review.BaseBranch, StringComparison.Ordinal))
@@ -292,6 +292,16 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
 
         return !string.IsNullOrWhiteSpace(review.PreferredDiffBaseRef)
             && string.Equals(targetBranch, review.PreferredDiffBaseRef, StringComparison.Ordinal);
+    }
+
+    private static bool IsTaskBranchForTask(string targetBranch, int taskId)
+    {
+        var prefix = $"task/{taskId}";
+        if (!targetBranch.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+
+        return targetBranch.Length == prefix.Length
+            || targetBranch[prefix.Length] is '-' or '/' or '.' or '_';
     }
 
     private static void Require(string name, string? value, List<string> diagnostics)

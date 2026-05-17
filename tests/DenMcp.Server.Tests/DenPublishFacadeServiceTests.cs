@@ -289,13 +289,15 @@ public sealed class DenPublishFacadeServiceTests
         Assert.Equal("task/1461-den-memory-smoke", payload.RootElement.GetProperty("submission").GetProperty("targetBranch").GetString());
     }
 
-    [Fact]
-    public async Task DryRunPromotion_RejectsDifferentTaskBranchUnlessItIsReviewedBaseBranch()
+    [Theory]
+    [InlineData("task/999-unrelated-integration")]
+    [InlineData("task/15001-unrelated-integration")]
+    public async Task DryRunPromotion_RejectsDifferentTaskBranchUnlessItIsReviewedBaseBranch(string targetBranch)
     {
         var repos = FakeRepositories.Success();
         var handler = SuccessfulHandler();
         var service = BuildService(repos, handler);
-        var request = WithTargetBranch(DefaultRequest(), "task/999-unrelated-integration");
+        var request = WithTargetBranch(DefaultRequest(), targetBranch);
 
         var result = await service.RequestDryRunAsync(request);
 

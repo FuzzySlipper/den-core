@@ -247,6 +247,65 @@ public sealed class DenPublishFacadeServiceTests
     }
 
     [Fact]
+    public async Task DryRunPromotion_AllowsReviewedIntegrationBaseBranchTarget()
+    {
+        var repos = FakeRepositories.Success();
+        repos.ReviewRound!.TaskId = 1500;
+        repos.ReviewRound.Branch = "task/1500-den-memory-core-compat";
+        repos.ReviewRound.BaseBranch = "task/1461-den-memory-smoke";
+        var handler = SuccessfulHandler();
+        var service = BuildService(repos, handler);
+        var request = new DenPublishDryRunRequest
+        {
+            ProjectId = "den-channels",
+            TaskId = 1500,
+            SubmissionId = "sub_1500_1",
+            WorkerRunId = "run-1500",
+            RequestedBy = "sysadmin",
+            SubmittedBy = "coder",
+            AttemptOrdinal = 1,
+            CodeGateInstance = "den-code-gate",
+            CodeGateRepo = "den-channels/den-channels",
+            CodeGateRemoteUrl = "ssh://git@192.168.1.10:3022/den-channels/den-channels.git",
+            IngressRef = "refs/heads/submissions/den-channels/tasks/1500/runs/run-1500/attempt-001",
+            BaseBranch = "task/1461-den-memory-smoke",
+            BaseCommit = BaseSha,
+            HeadCommit = HeadSha,
+            CanonicalRemoteUrl = "git@github.com:FuzzySlipper/den-channels.git",
+            TargetBranch = "task/1461-den-memory-smoke",
+            ReviewRoundId = 77,
+            ChangedFilesClaim = ["src/Foo.cs"],
+            AllowedPathPrefixes = ["src/"],
+            TestsRun = ["dotnet test: passed"],
+        };
+
+        var result = await service.RequestDryRunAsync(request);
+
+        Assert.True(result.Succeeded);
+        var capturedRequest = Assert.Single(handler.Requests);
+        Assert.Equal("http://127.0.0.1:5090/promotion/dry-run", capturedRequest.RequestUri!.ToString());
+        using var payload = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Equal("task/1461-den-memory-smoke", payload.RootElement.GetProperty("decision").GetProperty("targetBranch").GetString());
+        Assert.Equal("task/1461-den-memory-smoke", payload.RootElement.GetProperty("submission").GetProperty("targetBranch").GetString());
+    }
+
+    [Fact]
+    public async Task DryRunPromotion_RejectsDifferentTaskBranchUnlessItIsReviewedBaseBranch()
+    {
+        var repos = FakeRepositories.Success();
+        var handler = SuccessfulHandler();
+        var service = BuildService(repos, handler);
+        var request = WithTargetBranch(DefaultRequest(), "task/999-unrelated-integration");
+
+        var result = await service.RequestDryRunAsync(request);
+
+        Assert.Equal("rejected", result.Status);
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, d => d.Contains("reviewed base branch", StringComparison.OrdinalIgnoreCase));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task DryRunPromotion_RejectsUnresolvedBlockingFindingWithoutStructuredOverride()
     {
         var repos = FakeRepositories.Success();
@@ -310,6 +369,39 @@ public sealed class DenPublishFacadeServiceTests
           }
         }
         """);
+
+    private static DenPublishDryRunRequest WithTargetBranch(DenPublishDryRunRequest request, string targetBranch) => new()
+    {
+        ProjectId = request.ProjectId,
+        TaskId = request.TaskId,
+        SubmissionId = request.SubmissionId,
+        WorkerRunId = request.WorkerRunId,
+        RequestedBy = request.RequestedBy,
+        SubmittedBy = request.SubmittedBy,
+        Role = request.Role,
+        AttemptOrdinal = request.AttemptOrdinal,
+        ParentSubmissionId = request.ParentSubmissionId,
+        CodeGateInstance = request.CodeGateInstance,
+        CodeGateRepo = request.CodeGateRepo,
+        CodeGateRemoteUrl = request.CodeGateRemoteUrl,
+        IngressRef = request.IngressRef,
+        ConvenienceRef = request.ConvenienceRef,
+        BaseBranch = request.BaseBranch,
+        BaseCommit = request.BaseCommit,
+        HeadCommit = request.HeadCommit,
+        CanonicalRemoteUrl = request.CanonicalRemoteUrl,
+        TargetBranch = targetBranch,
+        ReviewRoundId = request.ReviewRoundId,
+        ChangedFilesClaim = request.ChangedFilesClaim,
+        AllowedPathPrefixes = request.AllowedPathPrefixes,
+        TestsRun = request.TestsRun,
+        ScopeOverrides = request.ScopeOverrides,
+        Operation = request.Operation,
+        TargetRemote = request.TargetRemote,
+        DecisionId = request.DecisionId,
+        WorkspacePath = request.WorkspacePath,
+        OrchestratorOverride = request.OrchestratorOverride,
+    };
 
     private static DenPublishDryRunRequest WithOrchestratorOverride(DenPublishDryRunRequest request) => new()
     {

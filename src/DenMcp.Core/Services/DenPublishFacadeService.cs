@@ -172,6 +172,8 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
                 diagnostics.Add($"Review head mismatch: review round {request.ReviewRoundId} has {review.HeadCommit}, request has {request.HeadCommit}.");
             if (!string.Equals(review.BaseCommit, request.BaseCommit, StringComparison.OrdinalIgnoreCase))
                 diagnostics.Add($"Review base mismatch: review round {request.ReviewRoundId} has {review.BaseCommit}, request has {request.BaseCommit}.");
+            if (!IsAllowedTargetBranchForReview(request.TargetBranch, request.TaskId, review))
+                diagnostics.Add($"TargetBranch '{request.TargetBranch}' must either be a safe task-scoped branch for task {request.TaskId} or match the reviewed base branch for review round {request.ReviewRoundId}.");
         }
 
         var findings = review is null
@@ -273,11 +275,23 @@ public sealed class DenPublishFacadeService : IDenPublishFacadeService
             diagnostics.Add("BaseCommit must be a full 40-character SHA.");
         if (!SafeSha.IsMatch(request.HeadCommit))
             diagnostics.Add("HeadCommit must be a full 40-character SHA.");
-        if (!SafeTaskBranch.IsMatch(request.TargetBranch) || !request.TargetBranch.StartsWith($"task/{request.TaskId}", StringComparison.Ordinal))
-            diagnostics.Add($"TargetBranch '{request.TargetBranch}' must be a safe task-scoped branch for task {request.TaskId}.");
+        if (!SafeTaskBranch.IsMatch(request.TargetBranch))
+            diagnostics.Add($"TargetBranch '{request.TargetBranch}' must be a safe task-scoped branch.");
         if (request.AttemptOrdinal < 1)
             diagnostics.Add("AttemptOrdinal must be >= 1.");
         return diagnostics;
+    }
+
+    private static bool IsAllowedTargetBranchForReview(string targetBranch, int taskId, ReviewRound review)
+    {
+        if (targetBranch.StartsWith($"task/{taskId}", StringComparison.Ordinal))
+            return true;
+
+        if (string.Equals(targetBranch, review.BaseBranch, StringComparison.Ordinal))
+            return true;
+
+        return !string.IsNullOrWhiteSpace(review.PreferredDiffBaseRef)
+            && string.Equals(targetBranch, review.PreferredDiffBaseRef, StringComparison.Ordinal);
     }
 
     private static void Require(string name, string? value, List<string> diagnostics)

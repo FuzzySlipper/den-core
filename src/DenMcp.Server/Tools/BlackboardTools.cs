@@ -15,11 +15,11 @@ public sealed class BlackboardTools
         [Description("Unique blackboard slug, e.g. 'agent-handoff-note'.")] string slug,
         [Description("Entry title.")] string title,
         [Description("Markdown entry content.")] string content,
-        [Description("JSON array of string tags.")] string? tags = null,
+        [Description("JSON array of string tags. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? tags = null,
         [Description("Optional idle TTL in seconds. If set, the entry expires when not accessed for this many seconds.")] int? idle_ttl_seconds = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        var parsedTags = tags is not null ? JsonSerializer.Deserialize<List<string>>(tags) : null;
+        var parsedTags = ToolArgumentJson.ParseStringArray(tags, "tags");
         var entry = await repo.UpsertAsync(new BlackboardEntry
         {
             Slug = slug,

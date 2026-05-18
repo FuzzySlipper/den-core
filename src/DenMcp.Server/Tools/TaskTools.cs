@@ -21,13 +21,13 @@ public sealed class TaskTools
         [Description("Detailed description / acceptance criteria (markdown).")]
         string? description = null,
         [Description("Priority 1 (critical) to 5 (backlog). Default 3.")] int priority = 3,
-        [Description("JSON array of string tags, e.g. [\"core\",\"api\"].")] string? tags = null,
+        [Description("JSON array of string tags, e.g. [\"core\",\"api\"]. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? tags = null,
         [Description("Agent identity to assign this task to.")] string? assigned_to = null,
         [Description("Comma-separated task IDs this task depends on.")] string? depends_on = null,
         [Description("Parent task ID to create this as a subtask.")] int? parent_id = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        var parsedTags = tags is not null ? JsonSerializer.Deserialize<List<string>>(tags) : null;
+        var parsedTags = ToolArgumentJson.ParseStringArray(tags, "tags");
         var depIds = depends_on?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(int.Parse).ToArray();
 
@@ -60,7 +60,7 @@ public sealed class TaskTools
         [Description("New status: planned, in_progress, review, blocked, done, cancelled.")] string? status = null,
         [Description("New priority 1-5.")] int? priority = null,
         [Description("New assigned agent.")] string? assigned_to = null,
-        [Description("JSON array of string tags.")] string? tags = null,
+        [Description("JSON array of string tags. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? tags = null,
         [Description("New parent task ID.")] int? parent_id = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
@@ -73,7 +73,7 @@ public sealed class TaskTools
         if (status is not null) changes["status"] = EnumExtensions.ParseTaskStatus(status);
         if (priority is not null) changes["priority"] = priority.Value;
         if (assigned_to is not null) changes["assigned_to"] = assigned_to;
-        if (tags is not null) changes["tags"] = JsonSerializer.Deserialize<List<string>>(tags);
+        if (tags is not null) changes["tags"] = ToolArgumentJson.ParseStringArray(tags, "tags");
         if (parent_id is not null) changes["parent_id"] = parent_id.Value;
 
         var updated = await repo.UpdateAsync(task_id, changes, agent);
@@ -483,15 +483,13 @@ public sealed class TaskTools
         [Description("Optional parent task ID for the follow-up task.")] int? follow_up_parent_task_id = null,
         [Description("Priority for the follow-up task (1-5). Default: 3.")] int? follow_up_priority = null,
         [Description("Optional agent identity to assign the follow-up task to.")] string? follow_up_assigned_to = null,
-        [Description("Optional JSON array of string tags for the follow-up task.")] string? follow_up_tags = null,
+        [Description("Optional JSON array of string tags for the follow-up task. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? follow_up_tags = null,
         [Description("If true, include blocking findings in the split. Default: false.")] bool override_blocking = false,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var parsedFindingIds = JsonSerializer.Deserialize<List<int>>(finding_ids)
             ?? throw new ArgumentException("finding_ids must be a valid JSON array of integers.");
-        var parsedTags = follow_up_tags is not null
-            ? JsonSerializer.Deserialize<List<string>>(follow_up_tags)
-            : null;
+        var parsedTags = ToolArgumentJson.ParseStringArray(follow_up_tags, "follow_up_tags");
 
         var result = await triageService.SplitFindingsToFollowUpAsync(new SplitFindingsToFollowUpInput
         {

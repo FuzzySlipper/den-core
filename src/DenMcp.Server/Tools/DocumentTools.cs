@@ -17,11 +17,11 @@ public sealed class DocumentTools
         [Description("Document title.")] string title,
         [Description("Document content (markdown).")] string content,
         [Description("Document type: prd, spec, adr, convention, reference, note, memory. Default: spec.")] string doc_type = "spec",
-        [Description("JSON array of string tags.")] string? tags = null,
+        [Description("JSON array of string tags. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? tags = null,
         [Description("Optional short summary for indexing and listing.")] string? summary = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        var parsedTags = tags is not null ? JsonSerializer.Deserialize<List<string>>(tags) : null;
+        var parsedTags = ToolArgumentJson.ParseStringArray(tags, "tags");
         var doc = await repo.UpsertAsync(new Document
         {
             ProjectId = project_id,

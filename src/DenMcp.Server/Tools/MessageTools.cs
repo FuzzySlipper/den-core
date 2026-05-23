@@ -25,7 +25,14 @@ public sealed class MessageTools
         [Description("Optional canonical intent, e.g. review_feedback or handoff.")] string? intent = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        var parsedIntent = ParseIntent(intent);
+        var (parsedIntent, rawIntent) = ParseIntent(intent);
+        var normalizedMetadata = NormalizeMetadata(metadata);
+
+        if (rawIntent is not null)
+        {
+            normalizedMetadata = MergeRequestedIntentIntoMetadata(normalizedMetadata, rawIntent);
+        }
+
         var msg = new Message
         {
             ProjectId = project_id,
@@ -34,7 +41,7 @@ public sealed class MessageTools
             TaskId = task_id,
             ThreadId = thread_id,
             Intent = parsedIntent,
-            Metadata = NormalizeMetadata(metadata)
+            Metadata = normalizedMetadata
         };
 
         var created = await repo.CreateAsync(msg);
@@ -113,7 +120,7 @@ public sealed class MessageTools
         [Description("Optional canonical intent filter.")] string? intent = null)
     {
         DateTime? sinceDate = since is not null ? DateTime.Parse(since) : null;
-        var parsedIntent = ParseIntent(intent);
+        var (parsedIntent, _) = ParseIntent(intent);
         var messages = await repo.GetMessagesAsync(project_id, task_id, sinceDate, unread_for, limit, parsedIntent);
         return JsonSerializer.Serialize(messages, JsonOpts.Default);
     }
@@ -139,12 +146,32 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
     }
 
-    private static MessageIntent? ParseIntent(string? intent)
+    private static (MessageIntent? canonical, string? raw) ParseIntent(string? intent)
     {
         if (string.IsNullOrWhiteSpace(intent))
-            return null;
+            return (null, null);
 
-        return EnumExtensions.ParseMessageIntent(intent);
+        if (EnumExtensions.TryParseMessageIntent(intent, out var canonical))
+            return (canonical, null);
+
+        return (null, intent);
+    }
+
+    private static JsonElement? MergeRequestedIntentIntoMetadata(JsonElement? metadata, string requestedIntent)
+    {
+        var obj = new System.Text.Json.Nodes.JsonObject();
+
+        if (metadata.HasValue && metadata.Value.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in metadata.Value.EnumerateObject())
+            {
+                obj[property.Name] = System.Text.Json.Nodes.JsonNode.Parse(property.Value.GetRawText());
+            }
+        }
+
+        obj["requested_intent"] = requestedIntent;
+
+        return JsonSerializer.Deserialize<JsonElement>(obj.ToJsonString());
     }
 
     private static JsonElement? NormalizeMetadata(JsonElement? metadata)

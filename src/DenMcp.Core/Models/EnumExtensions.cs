@@ -96,6 +96,20 @@ public static class EnumExtensions
         _ => throw new ArgumentException($"Unknown message intent: {value}", nameof(value))
     };
 
+    public static bool TryParseMessageIntent(string value, out MessageIntent intent)
+    {
+        try
+        {
+            intent = ParseMessageIntent(value);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            intent = default;
+            return false;
+        }
+    }
+
     public static string ToDbValue(this AgentStreamKind kind) => kind switch
     {
         AgentStreamKind.Ops => "ops",

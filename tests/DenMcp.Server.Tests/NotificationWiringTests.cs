@@ -89,7 +89,7 @@ public class NotificationWiringTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RestMessageCreate_WithLegacyDispatchRouting_SendsDispatchNotification()
+    public async Task RestMessageCreate_WithLegacyDispatchRouting_DoesNotSendDispatchNotification()
     {
         await EnableLegacyDispatchRoutingAsync(_factory.Services);
 
@@ -102,10 +102,8 @@ public class NotificationWiringTests : IAsyncLifetime
 
         response.EnsureSuccessStatusCode();
 
-        var notification = Assert.Single(_factory.RecordingChannel.DispatchNotifications);
-        Assert.Equal(ProjectId, notification.ProjectId);
-        Assert.Equal("claude-code", notification.TargetAgent);
-        Assert.Contains("review feedback", notification.Summary, StringComparison.OrdinalIgnoreCase);
+        // Dispatch creation is retired per den-communication-surfaces-concept-map.
+        Assert.Empty(_factory.RecordingChannel.DispatchNotifications);
     }
 
     [Fact]

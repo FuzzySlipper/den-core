@@ -7,10 +7,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace DenMcp.Core.Tests.Services;
 
 /// <summary>
-/// Tests that legacy dispatch detection is a no-op after retirement.
+/// Tests that legacy dispatch creation and mutation are fully retired.
 /// See den-communication-surfaces-concept-map: dispatch has no unique live responsibility.
 /// </summary>
-public class DispatchDetectionServiceTests : IAsyncLifetime
+public class DispatchRetirementTests : IAsyncLifetime
 {
     private readonly TestDb _testDb = new();
     private DispatchDetectionService _detection = null!;
@@ -34,6 +34,8 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
 
         var projRepo = new ProjectRepository(_testDb.Db);
         await projRepo.CreateAsync(new Project { Id = "proj", Name = "Test" });
+        // Even with legacy dispatch explicitly enabled in a stale routing doc,
+        // creation must be hard-disabled.
         await EnableLegacyDispatchRoutingAsync("proj");
     }
 
@@ -77,8 +79,6 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
         public Task StartListeningAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    #region Retirement: no dispatch creation
-
     [Fact]
     public async Task OnMessageCreatedAsync_DoesNotCreateDispatch_EvenWithLegacyEnabled()
     {
@@ -121,112 +121,6 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
         Assert.Equal(DispatchStatus.Pending, (await _dispatches.GetByIdAsync(pending.Id))!.Status);
         Assert.Equal(DispatchStatus.Approved, (await _dispatches.GetByIdAsync(approved.Id))!.Status);
     }
-
-    [Fact]
-    public async Task OnMessageCreatedAsync_DoesNotExpireOlderTaskDispatches()
-    {
-        var task = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Review cleanup" });
-        var older = await CreateDispatchAsync(triggerId: 10, taskId: task.Id, targetAgent: "pi");
-
-        var msg = await _messages.CreateAsync(new Message
-        {
-            ProjectId = "proj",
-            TaskId = task.Id,
-            Sender = "patch-coder",
-            Content = "Please review the latest pass.",
-            Intent = MessageIntent.ReviewRequest,
-            Metadata = JsonSerializer.Deserialize<JsonElement>(
-                """{"recipient":"pi","handoff_kind":"review_request"}""")
-        });
-
-        await _detection.OnMessageCreatedAsync(msg);
-
-        var pending = await _dispatches.ListAsync("proj", "pi", [DispatchStatus.Pending]);
-        Assert.Single(pending);
-        Assert.Equal(older.Id, pending[0].Id);
-    }
-
-    #endregion
-
-    #region Retirement: pre-existing no-dispatch scenarios still no-op
-
-    [Fact]
-    public async Task TaskMovedToDone_NoDispatch()
-    {
-        var task = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Done task" });
-
-        await _detection.OnTaskStatusChangedAsync(task, "review", "done", "codex");
-
-        var pending = await _dispatches.ListAsync("proj", statuses: [DispatchStatus.Pending]);
-        Assert.Empty(pending);
-    }
-
-    [Fact]
-    public async Task SameAgentAsSender_NoDispatch()
-    {
-        var task = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Self-review" });
-
-        await _detection.OnTaskStatusChangedAsync(task, "in_progress", "review", "pi");
-
-        var pending = await _dispatches.ListAsync("proj", statuses: [DispatchStatus.Pending]);
-        Assert.Empty(pending);
-    }
-
-    [Fact]
-    public async Task MessageWithoutRecipientOrTargetRole_NoDispatch()
-    {
-        var msg = await _messages.CreateAsync(new Message
-        {
-            ProjectId = "proj",
-            Sender = "codex",
-            Content = "General comment, no recipient.",
-            Metadata = JsonSerializer.Deserialize<JsonElement>("""{"type":"comment"}""")
-        });
-
-        await _detection.OnMessageCreatedAsync(msg);
-
-        var pending = await _dispatches.ListAsync("proj", statuses: [DispatchStatus.Pending]);
-        Assert.Empty(pending);
-    }
-
-    [Fact]
-    public async Task MessageWithUnknownTargetRole_NoDispatch()
-    {
-        var msg = await _messages.CreateAsync(new Message
-        {
-            ProjectId = "proj",
-            Sender = "claude-code",
-            Content = "This should not route.",
-            Intent = MessageIntent.Handoff,
-            Metadata = JsonSerializer.Deserialize<JsonElement>(
-                """{"target_role":"coordinator","handoff_kind":"planning_summary"}""")
-        });
-
-        await _detection.OnMessageCreatedAsync(msg);
-
-        var pending = await _dispatches.ListAsync("proj", statuses: [DispatchStatus.Pending]);
-        Assert.Empty(pending);
-    }
-
-    [Fact]
-    public async Task MessageToSelf_NoDispatch()
-    {
-        var msg = await _messages.CreateAsync(new Message
-        {
-            ProjectId = "proj",
-            Sender = "claude-code",
-            Content = "Note to self",
-            Metadata = JsonSerializer.Deserialize<JsonElement>(
-                """{"type":"note","recipient":"claude-code"}""")
-        });
-
-        await _detection.OnMessageCreatedAsync(msg);
-
-        var pending = await _dispatches.ListAsync("proj", statuses: [DispatchStatus.Pending]);
-        Assert.Empty(pending);
-    }
-
-    #endregion
 
     private async Task<DispatchEntry> CreateDispatchAsync(
         int triggerId,

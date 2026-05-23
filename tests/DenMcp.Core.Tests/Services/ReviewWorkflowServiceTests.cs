@@ -27,13 +27,11 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
         _stream = new AgentStreamRepository(_testDb.Db);
         var docs = new DocumentRepository(_testDb.Db);
         var routing = new RoutingService(docs);
-        var prompts = new PromptGenerationService(_tasks, _messages, routing);
         var contexts = new DispatchContextService(_dispatches, _messages, _tasks, routing,
             NullLogger<DispatchContextService>.Instance);
         var detection = new DispatchDetectionService(
             routing,
             _dispatches,
-            prompts,
             contexts,
             NoOpNotifications.Instance,
             NullLogger<DispatchDetectionService>.Instance);
@@ -241,7 +239,7 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SetReviewVerdictAsync_ChangesRequested_PostsFeedbackHandoffAndResolvesReviewerDispatch()
+    public async Task SetReviewVerdictAsync_ChangesRequested_PostsFeedbackHandoffAndDoesNotResolveReviewerDispatch()
     {
         var task = await _tasks.CreateAsync(new ProjectTask
         {
@@ -318,17 +316,15 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
         Assert.Equal("review_feedback", result.HandoffMessage.Metadata!.Value.GetProperty("type").GetString());
         Assert.Equal("review_feedback", result.HandoffMessage.Metadata!.Value.GetProperty("handoff_kind").GetString());
         Assert.Equal("claude-code", result.HandoffMessage.Metadata!.Value.GetProperty("recipient").GetString());
-        Assert.Single(result.CompletedDispatches);
-        Assert.Equal(reviewDispatch.Id, result.CompletedDispatches[0].Id);
 
-        var implementerDispatches = await _dispatches.ListAsync("proj", "claude-code", [DispatchStatus.Pending]);
-        Assert.Empty(implementerDispatches);
+        // Dispatch resolution is retired; entries should remain untouched.
+        Assert.Empty(result.CompletedDispatches);
 
         var completedReviewerDispatch = await _dispatches.GetByIdAsync(reviewDispatch.Id);
-        Assert.Equal(DispatchStatus.Completed, completedReviewerDispatch!.Status);
+        Assert.Equal(DispatchStatus.Approved, completedReviewerDispatch!.Status);
 
         var expiredPendingReviewerDispatch = await _dispatches.GetByIdAsync(stalePendingDispatch.Id);
-        Assert.Equal(DispatchStatus.Expired, expiredPendingReviewerDispatch!.Status);
+        Assert.Equal(DispatchStatus.Pending, expiredPendingReviewerDispatch!.Status);
     }
 
     [Fact]

@@ -10,7 +10,7 @@ export function DispatchDetail({ dispatch, onClose, onOpenTask }: Props) {
   return (
     <div className="detail-overlay">
       <div className="detail-header">
-        <h2>Dispatch #{dispatch.id}</h2>
+        <h2>Dispatch #{dispatch.id} <span className="badge-archive">legacy/archive</span></h2>
         <button className="detail-close" onClick={onClose}>✕</button>
       </div>
       <div className="detail-body">

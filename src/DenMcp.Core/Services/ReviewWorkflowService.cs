@@ -556,34 +556,13 @@ public sealed class ReviewWorkflowService : IReviewWorkflowService
         return roundIdElement.TryGetInt32(out reviewRoundId);
     }
 
-    private async Task<List<DispatchEntry>> ResolveReviewerDispatchesAsync(
+    private Task<List<DispatchEntry>> ResolveReviewerDispatchesAsync(
         string projectId,
         int taskId,
         string reviewer)
     {
-        var open = await _dispatches.ListAsync(projectId, reviewer, [DispatchStatus.Pending, DispatchStatus.Approved]);
-        var completed = new List<DispatchEntry>();
-
-        foreach (var entry in open.Where(entry => entry.TaskId == taskId))
-        {
-            try
-            {
-                if (entry.Status == DispatchStatus.Approved)
-                {
-                    completed.Add(await _dispatches.CompleteAsync(entry.Id, "review-workflow"));
-                }
-                else
-                {
-                    await _dispatches.ExpireAsync(entry.Id);
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(ex, "Failed to resolve reviewer dispatch {DispatchId} after verdict", entry.Id);
-            }
-        }
-
-        return completed;
+        // Dispatch mutation is retired per den-communication-surfaces-concept-map.
+        return Task.FromResult(new List<DispatchEntry>());
     }
 
     private static string ResolveImplementer(ProjectTask task, ReviewRound round)

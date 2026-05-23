@@ -561,9 +561,9 @@ export type {
   ListDesktopSessionEventsOptions,
 };
 
-// Legacy dispatch helpers.
-// The default dashboard intentionally does not import these; keep them available
-// for historical dispatch detail links or a future explicit legacy/debug view.
+// Legacy dispatch archive helpers.
+// Dispatch is retired per den-communication-surfaces-concept-map.
+// Only read-only list/get remain for historical inspection.
 
 export interface ListDispatchesOpts {
   projectId?: string;
@@ -584,10 +584,3 @@ export function getDispatch(dispatchId: number): Promise<DispatchEntry> {
   return get(`/api/dispatch/${dispatchId}`);
 }
 
-export function approveDispatch(dispatchId: number, decidedBy: string): Promise<DispatchEntry> {
-  return post(`/api/dispatch/${dispatchId}/approve`, { decided_by: decidedBy });
-}
-
-export function rejectDispatch(dispatchId: number, decidedBy: string): Promise<DispatchEntry> {
-  return post(`/api/dispatch/${dispatchId}/reject`, { decided_by: decidedBy });
-}

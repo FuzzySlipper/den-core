@@ -100,8 +100,9 @@ public sealed class RoutingTrigger
 public sealed class RoutingDefaults
 {
     /// <summary>
-    /// Dispatch creation is retired from the default conductor workflow.
-    /// Projects must explicitly enable this for legacy bridges that still consume dispatch rows.
+    /// Dispatch creation is retired. This property is ignored and kept only
+    /// so that existing routing documents do not fail deserialization.
+    /// See den-communication-surfaces-concept-map.
     /// </summary>
     [JsonPropertyName("legacy_dispatch_enabled")]
     public bool LegacyDispatchEnabled { get; set; } = false;

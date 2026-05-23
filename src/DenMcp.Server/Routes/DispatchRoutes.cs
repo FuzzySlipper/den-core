@@ -1,15 +1,20 @@
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
-using DenMcp.Core.Services;
 
 namespace DenMcp.Server.Routes;
 
+/// <summary>
+/// Legacy dispatch archive routes. Dispatch is retired per
+/// den-communication-surfaces-concept-map. Only read-only list/get
+/// remain for historical inspection.
+/// </summary>
 public static class DispatchRoutes
 {
     public static void MapDispatchRoutes(this WebApplication app)
     {
         var group = app.MapGroup("/api/dispatch");
 
+        // Archive list — read-only
         group.MapGet("/", async (IDispatchRepository repo,
             string? projectId, string? targetAgent, string? status) =>
         {
@@ -27,6 +32,7 @@ public static class DispatchRoutes
             return Results.Ok(entries);
         });
 
+        // Archive detail — read-only
         group.MapGet("/{id:int}", async (IDispatchRepository repo, int id) =>
         {
             var entry = await repo.GetByIdAsync(id);
@@ -34,71 +40,5 @@ public static class DispatchRoutes
                 ? Results.Ok(entry)
                 : Results.NotFound(new { error = $"Dispatch {id} not found" });
         });
-
-        group.MapGet("/{id:int}/context", async (IDispatchContextService contexts, int id) =>
-        {
-            var context = await contexts.GetContextAsync(id);
-            return context is not null
-                ? Results.Ok(context)
-                : Results.NotFound(new { error = $"Dispatch {id} not found" });
-        });
-
-        group.MapPost("/{id:int}/approve", async (IDispatchRepository repo, int id, ApproveRequest req) =>
-        {
-            var existing = await repo.GetByIdAsync(id);
-            if (existing is null)
-                return Results.NotFound(new { error = $"Dispatch {id} not found" });
-            try
-            {
-                var entry = await repo.ApproveAsync(id, req.DecidedBy);
-                return Results.Ok(entry);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
-        });
-
-        group.MapPost("/{id:int}/reject", async (IDispatchRepository repo, int id, RejectRequest req) =>
-        {
-            var existing = await repo.GetByIdAsync(id);
-            if (existing is null)
-                return Results.NotFound(new { error = $"Dispatch {id} not found" });
-            try
-            {
-                var entry = await repo.RejectAsync(id, req.DecidedBy);
-                return Results.Ok(entry);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
-        });
-
-        group.MapPost("/{id:int}/complete", async (IDispatchRepository repo, int id, CompleteRequest? req) =>
-        {
-            var existing = await repo.GetByIdAsync(id);
-            if (existing is null)
-                return Results.NotFound(new { error = $"Dispatch {id} not found" });
-            try
-            {
-                var entry = await repo.CompleteAsync(id, req?.CompletedBy);
-                return Results.Ok(entry);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return Results.BadRequest(new { error = ex.Message });
-            }
-        });
-
-        group.MapGet("/pending/count", async (IDispatchRepository repo, string? projectId) =>
-        {
-            var count = await repo.GetPendingCountAsync(projectId);
-            return Results.Ok(new { count });
-        });
     }
 }
-
-public record ApproveRequest(string DecidedBy);
-public record RejectRequest(string DecidedBy);
-public record CompleteRequest(string? CompletedBy = null);

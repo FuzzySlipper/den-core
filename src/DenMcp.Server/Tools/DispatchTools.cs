@@ -2,15 +2,19 @@ using System.ComponentModel;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
-using DenMcp.Core.Services;
 using ModelContextProtocol.Server;
 
 namespace DenMcp.Server.Tools;
 
+/// <summary>
+/// Legacy dispatch archive tools. Dispatch is retired per
+/// den-communication-surfaces-concept-map. Only read-only list/get
+/// remain; mutation tools return an error indicating retirement.
+/// </summary>
 [McpServerToolType]
 public sealed class DispatchTools
 {
-    [McpServerTool(Name = "list_dispatches"), Description("List dispatch entries with optional filters. Returns newest first.")]
+    [McpServerTool(Name = "list_dispatches"), Description("List dispatch entries with optional filters. Returns newest first. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> ListDispatches(
         IDispatchRepository repo,
         [Description("Filter by project ID.")] string? project_id = null,
@@ -31,7 +35,7 @@ public sealed class DispatchTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
-    [McpServerTool(Name = "get_dispatch"), Description("Get a dispatch entry by ID with full details including generated prompt.")]
+    [McpServerTool(Name = "get_dispatch"), Description("Get a dispatch entry by ID with full details including generated prompt. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> GetDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID.")] int dispatch_id)
@@ -42,74 +46,42 @@ public sealed class DispatchTools
             : JsonSerializer.Serialize(new { error = $"Dispatch {dispatch_id} not found" }, JsonOpts.Default);
     }
 
-    [McpServerTool(Name = "get_dispatch_context"), Description("Get the structured handoff context for a dispatch entry. This is the machine-oriented source of truth for targeted wake-ups.")]
-    public static async Task<string> GetDispatchContext(
-        IDispatchContextService contexts,
-        [Description("Dispatch entry ID.")] int dispatch_id)
-    {
-        var context = await contexts.GetContextAsync(dispatch_id);
-        return context is not null
-            ? JsonSerializer.Serialize(context, JsonOpts.Default)
-            : JsonSerializer.Serialize(new { error = $"Dispatch {dispatch_id} not found" }, JsonOpts.Default);
-    }
-
-    [McpServerTool(Name = "approve_dispatch"), Description("Approve a pending dispatch entry. The target agent will be able to pick it up.")]
-    public static async Task<string> ApproveDispatch(
+    [McpServerTool(Name = "approve_dispatch"), Description("RETIRED: Dispatch approval is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    public static Task<string> ApproveDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to approve.")] int dispatch_id,
         [Description("Identity of who is approving (e.g. 'user').")] string decided_by,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        try
+        return Task.FromResult(JsonSerializer.Serialize(new
         {
-            var entry = await repo.ApproveAsync(dispatch_id, decided_by);
-            return verbose
-                ? JsonSerializer.Serialize(entry, JsonOpts.Default)
-                : ConciseResponse.ApprovedDispatch(entry);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message }, JsonOpts.Default);
-        }
+            error = "Dispatch approval is retired. Dispatch is a legacy primitive per den-communication-surfaces-concept-map."
+        }, JsonOpts.Default));
     }
 
-    [McpServerTool(Name = "reject_dispatch"), Description("Reject a pending dispatch entry.")]
-    public static async Task<string> RejectDispatch(
+    [McpServerTool(Name = "reject_dispatch"), Description("RETIRED: Dispatch rejection is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    public static Task<string> RejectDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to reject.")] int dispatch_id,
         [Description("Identity of who is rejecting (e.g. 'user').")] string decided_by,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        try
+        return Task.FromResult(JsonSerializer.Serialize(new
         {
-            var entry = await repo.RejectAsync(dispatch_id, decided_by);
-            return verbose
-                ? JsonSerializer.Serialize(entry, JsonOpts.Default)
-                : ConciseResponse.RejectedDispatch(entry);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message }, JsonOpts.Default);
-        }
+            error = "Dispatch rejection is retired. Dispatch is a legacy primitive per den-communication-surfaces-concept-map."
+        }, JsonOpts.Default));
     }
 
-    [McpServerTool(Name = "complete_dispatch"), Description("Mark an approved dispatch as completed by the agent.")]
-    public static async Task<string> CompleteDispatch(
+    [McpServerTool(Name = "complete_dispatch"), Description("RETIRED: Dispatch completion is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    public static Task<string> CompleteDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to complete.")] int dispatch_id,
         [Description("Identity of who completed (e.g. the agent identity).")] string? completed_by = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        try
+        return Task.FromResult(JsonSerializer.Serialize(new
         {
-            var entry = await repo.CompleteAsync(dispatch_id, completed_by);
-            return verbose
-                ? JsonSerializer.Serialize(entry, JsonOpts.Default)
-                : ConciseResponse.CompletedDispatch(entry);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return JsonSerializer.Serialize(new { error = ex.Message }, JsonOpts.Default);
-        }
+            error = "Dispatch completion is retired. Dispatch is a legacy primitive per den-communication-surfaces-concept-map."
+        }, JsonOpts.Default));
     }
 }

@@ -17,7 +17,7 @@ public sealed class WorkerTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    [McpServerTool(Name = "launch_pi_worker"), Description("Launch a raw Pi-backed Den worker run using a bounded prompt reference/state-file contract.")]
+    [McpServerTool(Name = "legacy_launch_pi_worker"), Description("LEGACY / ADMIN ONLY: Launch a raw Pi-backed Den worker run using a bounded prompt reference/state-file contract. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchPiWorker(
         IPiSessionService service,
         [Description("Project ID.")] string project_id,

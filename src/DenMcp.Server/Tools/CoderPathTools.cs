@@ -14,7 +14,7 @@ public sealed class CoderPathTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    [McpServerTool(Name = "start_coder_worker_path"), Description("Hermes-facing coder path helper: prepare/reference a coder packet and launch a coder Pi worker through Den state only.")]
+    [McpServerTool(Name = "legacy_start_coder_worker_path"), Description("LEGACY / ADMIN ONLY: Hermes-facing coder path helper: prepare/reference a coder packet and launch a coder Pi worker through Den state only. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> StartCoderWorkerPath(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -69,7 +69,7 @@ public sealed class CoderPathTools
         return JsonSerializer.Serialize(result, JsonOptions);
     }
 
-    [McpServerTool(Name = "verify_coder_worker_completion"), Description("Hermes-facing coder path verifier: decide whether a coder worker completion is sufficient to request review.")]
+    [McpServerTool(Name = "legacy_verify_coder_worker_completion"), Description("LEGACY / ADMIN ONLY: Hermes-facing coder path verifier: decide whether a coder worker completion is sufficient to request review.")]
     public static async Task<string> VerifyCoderWorkerCompletion(
         IMessageRepository messages,
         [Description("Project ID.")] string project_id,

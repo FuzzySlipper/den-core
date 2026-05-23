@@ -14,7 +14,7 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class DispatchTools
 {
-    [McpServerTool(Name = "list_dispatches"), Description("List dispatch entries with optional filters. Returns newest first. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
+    [McpServerTool(Name = "legacy_list_dispatches"), Description("LEGACY / ADMIN ONLY: List dispatch entries with optional filters. Returns newest first. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> ListDispatches(
         IDispatchRepository repo,
         [Description("Filter by project ID.")] string? project_id = null,
@@ -35,7 +35,7 @@ public sealed class DispatchTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
-    [McpServerTool(Name = "get_dispatch"), Description("Get a dispatch entry by ID with full details including generated prompt. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
+    [McpServerTool(Name = "legacy_get_dispatch"), Description("LEGACY / ADMIN ONLY: Get a dispatch entry by ID with full details including generated prompt. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> GetDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID.")] int dispatch_id)
@@ -46,7 +46,7 @@ public sealed class DispatchTools
             : JsonSerializer.Serialize(new { error = $"Dispatch {dispatch_id} not found" }, JsonOpts.Default);
     }
 
-    [McpServerTool(Name = "approve_dispatch"), Description("RETIRED: Dispatch approval is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    [McpServerTool(Name = "legacy_approve_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch approval is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> ApproveDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to approve.")] int dispatch_id,
@@ -59,7 +59,7 @@ public sealed class DispatchTools
         }, JsonOpts.Default));
     }
 
-    [McpServerTool(Name = "reject_dispatch"), Description("RETIRED: Dispatch rejection is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    [McpServerTool(Name = "legacy_reject_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch rejection is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> RejectDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to reject.")] int dispatch_id,
@@ -72,7 +72,7 @@ public sealed class DispatchTools
         }, JsonOpts.Default));
     }
 
-    [McpServerTool(Name = "complete_dispatch"), Description("RETIRED: Dispatch completion is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
+    [McpServerTool(Name = "legacy_complete_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch completion is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> CompleteDispatch(
         IDispatchRepository repo,
         [Description("Dispatch entry ID to complete.")] int dispatch_id,

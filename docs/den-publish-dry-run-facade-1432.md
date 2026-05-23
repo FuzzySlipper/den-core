@@ -29,10 +29,10 @@ Core must not regain Git workspace/push authority through this facade.
 Tool name:
 
 ```text
-request_den_publish_dry_run
+legacy_request_den_publish_dry_run
 ```
 
-The public Hermes tool is exposed with the usual MCP prefix, e.g. `mcp_den_request_den_publish_dry_run` once the Core/MCP server containing this change is deployed.
+The public Hermes tool is exposed with the usual MCP prefix, e.g. `mcp_den_legacy_request_den_publish_dry_run` once the Core/MCP server containing this change is deployed.
 
 The tool accepts explicit fields instead of a raw API payload:
 

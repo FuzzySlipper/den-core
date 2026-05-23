@@ -14,7 +14,7 @@ public sealed class RoleWorkerTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    [McpServerTool(Name = "launch_coder_worker"), Description("Prepare or accept a coder context packet reference, then launch a Pi worker with coder role defaults through Den raw worker lifecycle primitives.")]
+    [McpServerTool(Name = "legacy_launch_coder_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a coder context packet reference, then launch a Pi worker with coder role defaults through Den raw worker lifecycle primitives. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchCoderWorker(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -65,7 +65,7 @@ public sealed class RoleWorkerTools
         return MergeLaunchWithPacketRef(launchJson, packetRef, "coder");
     }
 
-    [McpServerTool(Name = "launch_reviewer_worker"), Description("Prepare or accept a reviewer context packet reference, then launch a Pi worker with reviewer role defaults through Den raw worker lifecycle primitives.")]
+    [McpServerTool(Name = "legacy_launch_reviewer_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a reviewer context packet reference, then launch a Pi worker with reviewer role defaults through Den raw worker lifecycle primitives. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchReviewerWorker(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -121,7 +121,7 @@ public sealed class RoleWorkerTools
 
 
 
-    [McpServerTool(Name = "launch_validator_worker"), Description("Prepare or accept a validator context packet reference, then launch a Pi worker with validator role defaults.")]
+    [McpServerTool(Name = "legacy_launch_validator_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a validator context packet reference, then launch a Pi worker with validator role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchValidatorWorker(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -152,7 +152,7 @@ public sealed class RoleWorkerTools
         return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "validator", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
     }
 
-    [McpServerTool(Name = "launch_drift_checker_worker"), Description("Prepare or accept a drift-checker context packet reference, then launch a Pi worker with drift_checker role defaults.")]
+    [McpServerTool(Name = "legacy_launch_drift_checker_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a drift-checker context packet reference, then launch a Pi worker with drift_checker role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchDriftCheckerWorker(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -183,7 +183,7 @@ public sealed class RoleWorkerTools
         return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "drift_checker", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
     }
 
-    [McpServerTool(Name = "launch_packet_auditor_worker"), Description("Prepare or accept a packet-auditor context packet reference, then launch a Pi worker with packet_auditor role defaults.")]
+    [McpServerTool(Name = "legacy_launch_packet_auditor_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a packet-auditor context packet reference, then launch a Pi worker with packet_auditor role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchPacketAuditorWorker(
         ITaskRepository tasks,
         IMessageRepository messages,

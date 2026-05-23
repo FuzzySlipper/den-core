@@ -14,7 +14,7 @@ public sealed class ReviewerPathTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    [McpServerTool(Name = "start_reviewer_worker_path"), Description("Hermes-facing reviewer path helper: prepare/reference a reviewer packet and launch an independent reviewer Pi worker through Den state only.")]
+    [McpServerTool(Name = "legacy_start_reviewer_worker_path"), Description("LEGACY / ADMIN ONLY: Hermes-facing reviewer path helper: prepare/reference a reviewer packet and launch an independent reviewer Pi worker through Den state only. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> StartReviewerWorkerPath(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -74,7 +74,7 @@ public sealed class ReviewerPathTools
         }, JsonOptions);
     }
 
-    [McpServerTool(Name = "verify_reviewer_worker_completion"), Description("Hermes-facing reviewer path verifier: decide whether reviewer output has enough Den state to drive the review loop.")]
+    [McpServerTool(Name = "legacy_verify_reviewer_worker_completion"), Description("LEGACY / ADMIN ONLY: Hermes-facing reviewer path verifier: decide whether reviewer output has enough Den state to drive the review loop.")]
     public static async Task<string> VerifyReviewerWorkerCompletion(
         IMessageRepository messages,
         [Description("Project ID.")] string project_id,

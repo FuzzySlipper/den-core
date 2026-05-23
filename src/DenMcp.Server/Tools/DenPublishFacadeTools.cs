@@ -13,7 +13,7 @@ public sealed class DenPublishFacadeTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
-    [McpServerTool(Name = "request_den_publish_dry_run"), Description("Den-native facade for den-publish validate-only promotion dry-run. Builds the camelCase den-publish payload from explicit Den/code-gate fields, verifies matching looks_good review state, calls den-publish, and records the result in the task thread.")]
+    [McpServerTool(Name = "legacy_request_den_publish_dry_run"), Description("LEGACY / ADMIN ONLY: Den-native facade for den-publish validate-only promotion dry-run. Builds the camelCase den-publish payload from explicit Den/code-gate fields, verifies matching looks_good review state, calls den-publish, and records the result in the task thread. Publisher-path-only.")]
     public static async Task<string> RequestDenPublishDryRun(
         IDenPublishFacadeService facade,
         [Description("Project ID, e.g. den-channels.")] string project_id,

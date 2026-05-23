@@ -583,4 +583,3 @@ export function listDispatches(opts: ListDispatchesOpts = {}): Promise<DispatchE
 export function getDispatch(dispatchId: number): Promise<DispatchEntry> {
   return get(`/api/dispatch/${dispatchId}`);
 }
-

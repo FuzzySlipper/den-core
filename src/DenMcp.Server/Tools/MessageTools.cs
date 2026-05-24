@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -11,6 +12,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class MessageTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
     [McpServerTool(Name = "send_message"), Description("Send a message in a project. Can be project-level, attached to a task, or a reply in a thread.")]
     public static async Task<string> SendMessage(
         IMessageRepository repo,
@@ -58,6 +61,8 @@ public sealed class MessageTools
             : ConciseResponse.SentMessage(created);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
     [McpServerTool(Name = "send_user_notification"), Description(
         "Send a user-facing notification message in a project. " +
         "Use this when you have noteworthy information for the user that should not require stopping the run or waiting for a final response. " +
@@ -109,6 +114,8 @@ public sealed class MessageTools
             : ConciseResponse.SentMessage(created);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
     [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first.")]
     public static async Task<string> GetMessages(
         IMessageRepository repo,
@@ -125,6 +132,8 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(messages, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
     [McpServerTool(Name = "get_thread"), Description("Get a complete message thread — the root message plus all replies in chronological order.")]
     public static async Task<string> GetThread(
         IMessageRepository repo,
@@ -134,6 +143,8 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(thread, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
     [McpServerTool(Name = "mark_read"), Description("Mark messages as read for an agent.")]
     public static async Task<string> MarkRead(
         IMessageRepository repo,

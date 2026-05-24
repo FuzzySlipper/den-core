@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class AgentGuidanceTools
 {
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("agent")]
     [McpServerTool(Name = "get_agent_guidance"), Description("Resolve the Den-native agent guidance packet for a project or space, combining _global and space-scoped guidance entries in deterministic order.")]
     public static async Task<string> GetAgentGuidance(
         IAgentGuidanceRepository repo,
@@ -18,6 +21,8 @@ public sealed class AgentGuidanceTools
         return JsonSerializer.Serialize(guidance, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("agent")]
     [McpServerTool(Name = "list_agent_guidance_entries"), Description("List first-class agent guidance entries for a project or space. Use include_global to also show inherited _global entries.")]
     public static async Task<string> ListAgentGuidanceEntries(
         IAgentGuidanceRepository repo,
@@ -28,6 +33,8 @@ public sealed class AgentGuidanceTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("agent")]
     [McpServerTool(Name = "add_agent_guidance_entry"), Description("Add or update a first-class agent guidance entry that points at an existing Den document.")]
     public static async Task<string> AddAgentGuidanceEntry(
         IAgentGuidanceRepository repo,
@@ -62,6 +69,8 @@ public sealed class AgentGuidanceTools
             : ConciseResponse.AddedAgentGuidanceEntry(entry);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("agent")]
     [McpServerTool(Name = "delete_agent_guidance_entry"), Description("Delete a first-class agent guidance entry by project or space scope and ID.")]
     public static async Task<string> DeleteAgentGuidanceEntry(
         IAgentGuidanceRepository repo,

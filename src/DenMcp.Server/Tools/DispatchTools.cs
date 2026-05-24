@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -14,6 +15,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class DispatchTools
 {
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_list_dispatches"), Description("LEGACY / ADMIN ONLY: List dispatch entries with optional filters. Returns newest first. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> ListDispatches(
         IDispatchRepository repo,
@@ -35,6 +38,8 @@ public sealed class DispatchTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_get_dispatch"), Description("LEGACY / ADMIN ONLY: Get a dispatch entry by ID with full details including generated prompt. Dispatch is a retired legacy primitive; this tool remains only for archive inspection.")]
     public static async Task<string> GetDispatch(
         IDispatchRepository repo,
@@ -46,6 +51,8 @@ public sealed class DispatchTools
             : JsonSerializer.Serialize(new { error = $"Dispatch {dispatch_id} not found" }, JsonOpts.Default);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_approve_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch approval is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> ApproveDispatch(
         IDispatchRepository repo,
@@ -59,6 +66,8 @@ public sealed class DispatchTools
         }, JsonOpts.Default));
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_reject_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch rejection is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> RejectDispatch(
         IDispatchRepository repo,
@@ -72,6 +81,8 @@ public sealed class DispatchTools
         }, JsonOpts.Default));
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_complete_dispatch"), Description("LEGACY / ADMIN ONLY: RETIRED: Dispatch completion is no longer supported. Dispatch is a retired legacy primitive per den-communication-surfaces-concept-map.")]
     public static Task<string> CompleteDispatch(
         IDispatchRepository repo,

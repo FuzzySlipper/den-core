@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class DocumentTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "store_document"), Description("Create or update a document. If a document with the same project_id + slug exists, it is overwritten.")]
     public static async Task<string> StoreDocument(
         IDocumentRepository repo,
@@ -37,6 +40,8 @@ public sealed class DocumentTools
             : ConciseResponse.StoredDocument(doc);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug.")]
     public static async Task<string> GetDocument(
         IDocumentRepository repo,
@@ -49,6 +54,8 @@ public sealed class DocumentTools
         return JsonSerializer.Serialize(doc, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Omit project_id to list across all projects and spaces.")]
     public static async Task<string> ListDocuments(
         IDocumentRepository repo,
@@ -62,6 +69,8 @@ public sealed class DocumentTools
         return JsonSerializer.Serialize(docs, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Supports AND, OR, NOT, and \"phrase\" queries.")]
     public static async Task<string> SearchDocuments(
         IDocumentRepository repo,
@@ -72,6 +81,8 @@ public sealed class DocumentTools
         return JsonSerializer.Serialize(results, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "delete_document"), Description("Delete a document by project or space ID and slug.")]
     public static async Task<string> DeleteDocument(
         IDocumentRepository repo,

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class BlackboardTools
 {
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("blackboard")]
     [McpServerTool(Name = "store_blackboard_entry"), Description("Create or update a cross-project shared blackboard Markdown entry. Entries are not scoped to a project.")]
     public static async Task<string> StoreBlackboardEntry(
         IBlackboardRepository repo,
@@ -33,6 +36,8 @@ public sealed class BlackboardTools
             : ConciseResponse.StoredBlackboardEntry(entry);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("blackboard")]
     [McpServerTool(Name = "get_blackboard_entry"), Description("Get a cross-project shared blackboard entry by slug. Access refreshes idle TTL.")]
     public static async Task<string> GetBlackboardEntry(
         IBlackboardRepository repo,
@@ -44,6 +49,8 @@ public sealed class BlackboardTools
             : JsonSerializer.Serialize(new { error = $"Blackboard entry '{slug}' not found." }, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("blackboard")]
     [McpServerTool(Name = "list_blackboard_entries"), Description("List cross-project shared blackboard entry summaries. Listing refreshes idle TTL for returned expiring entries.")]
     public static async Task<string> ListBlackboardEntries(
         IBlackboardRepository repo,
@@ -54,6 +61,8 @@ public sealed class BlackboardTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("blackboard")]
     [McpServerTool(Name = "delete_blackboard_entry"), Description("Delete a cross-project shared blackboard entry by slug.")]
     public static async Task<string> DeleteBlackboardEntry(
         IBlackboardRepository repo,
@@ -65,6 +74,8 @@ public sealed class BlackboardTools
             : JsonSerializer.Serialize(new { error = $"Blackboard entry '{slug}' not found." }, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("blackboard")]
     [McpServerTool(Name = "cleanup_blackboard_entries"), Description("Delete expired cross-project shared blackboard entries and return the number removed.")]
     public static async Task<string> CleanupBlackboardEntries(IBlackboardRepository repo)
     {

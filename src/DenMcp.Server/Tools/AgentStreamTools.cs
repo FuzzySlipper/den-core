@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -10,6 +11,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class AgentStreamTools
 {
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner")]
+    [McpToolBundle("agent-stream")]
     [McpServerTool(Name = "list_agent_stream"), Description("List agent stream entries with optional global or project-scoped filters. Returns newest first.")]
     public static async Task<string> ListAgentStream(
         IAgentStreamRepository repo,
@@ -60,6 +63,8 @@ public sealed class AgentStreamTools
         return JsonSerializer.Serialize(entries, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner")]
+    [McpToolBundle("agent-stream")]
     [McpServerTool(Name = "get_agent_stream_entry"), Description("Get a single agent stream entry by id, optionally scoped to a project.")]
     public static async Task<string> GetAgentStreamEntry(
         IAgentStreamRepository repo,
@@ -73,6 +78,8 @@ public sealed class AgentStreamTools
         return JsonSerializer.Serialize(entry, JsonOpts.Default);
     }
 
+    [McpToolProfile("diagnostics", "legacy-full")]
+    [McpToolBundle("diagnostics")]
     [McpServerTool(Name = "send_agent_stream_message"), Description(
         "Append a targeted agent-stream message entry for clarification or nudge flows. " +
         "Use this for question, answer, note, or nudge entries; detailed work context should stay in task-thread messages.")]

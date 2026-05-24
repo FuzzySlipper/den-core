@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Services;
 using ModelContextProtocol.Server;
@@ -13,6 +14,8 @@ public sealed class TrustedPublisherTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_publish_worker_branch"), Description("LEGACY / ADMIN ONLY: Trusted publisher Mode A: publish a verified Pi worker branch without exposing Git credentials to the worker sandbox. Publisher-path-only.")]
     public static async Task<string> PublishWorkerBranch(
         ITrustedPublisherService publisher,
@@ -48,6 +51,8 @@ public sealed class TrustedPublisherTools
         return Serialize(result, verbose);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_publish_reviewed_branch"), Description("LEGACY / ADMIN ONLY: Trusted publisher Mode B: let an allowed Hermes orchestrator publish or fast-forward reviewed work after Den review checks pass. Publisher-path-only.")]
     public static async Task<string> PublishReviewedBranch(
         ITrustedPublisherService publisher,

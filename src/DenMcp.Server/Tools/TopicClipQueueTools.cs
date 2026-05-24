@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class TopicClipQueueTools
 {
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "append_topic_clip"), Description("Append a conversation clip to the topic clipping queue for later curation. Topic tags are validated against the registry.")]
     public static async Task<string> AppendTopicClip(
         ITopicClipQueueRepository queueRepo,
@@ -40,6 +43,8 @@ public sealed class TopicClipQueueTools
             : ConciseResponse.AppendedTopicClip(result);
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "list_topic_clips"), Description("List topic clip queue items.")]
     public static async Task<string> ListTopicClips(
         ITopicClipQueueRepository queueRepo,
@@ -56,6 +61,8 @@ public sealed class TopicClipQueueTools
         return JsonSerializer.Serialize(items, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "claim_topic_clip_batch"), Description("Claim a batch of pending topic clips for curation.")]
     public static async Task<string> ClaimTopicClipBatch(
         ITopicClipQueueRepository queueRepo,
@@ -74,6 +81,8 @@ public sealed class TopicClipQueueTools
         return JsonSerializer.Serialize(result, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "complete_topic_clips"), Description("Mark topic clips as processed with an audit decision.")]
     public static async Task<string> CompleteTopicClips(
         ITopicClipQueueRepository queueRepo,
@@ -88,6 +97,8 @@ public sealed class TopicClipQueueTools
         return ConciseResponse.UpdatedTopicClipStatus(result, "processed");
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "discard_topic_clips"), Description("Mark topic clips as discarded with an audit decision.")]
     public static async Task<string> DiscardTopicClips(
         ITopicClipQueueRepository queueRepo,
@@ -102,6 +113,8 @@ public sealed class TopicClipQueueTools
         return ConciseResponse.UpdatedTopicClipStatus(result, "discarded");
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "escalate_topic_clips"), Description("Mark topic clips as escalated with an audit decision.")]
     public static async Task<string> EscalateTopicClips(
         ITopicClipQueueRepository queueRepo,
@@ -116,6 +129,8 @@ public sealed class TopicClipQueueTools
         return ConciseResponse.UpdatedTopicClipStatus(result, "escalated");
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "list_curation_decisions"), Description("List curation decisions (audit trail).")]
     public static async Task<string> ListCurationDecisions(
         ITopicClipQueueRepository queueRepo,
@@ -126,6 +141,8 @@ public sealed class TopicClipQueueTools
         return JsonSerializer.Serialize(decisions, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "cleanup_topic_clip_raw_content"), Description("Redact raw content for processed clips older than a cutoff. Preserves metadata and audit trail.")]
     public static async Task<string> CleanupTopicClipRawContent(
         ITopicClipQueueRepository queueRepo,

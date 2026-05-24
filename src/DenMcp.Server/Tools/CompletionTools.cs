@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -29,6 +30,8 @@ public sealed class CompletionTools
 
     private static readonly Regex ShellSyntaxPattern = new(@"(\$\(|`|\$\{|\bdate\b|\burandom\b|\bxxd\b)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("worker")]
     [McpServerTool(Name = "post_worker_completion_packet"), Description("Post an idempotent structured Den Pi worker completion packet and update the durable worker/session status.")]
     public static async Task<string> PostWorkerCompletionPacket(
         IPiSessionService service,
@@ -120,6 +123,8 @@ public sealed class CompletionTools
         return SerializeCompletionResult(message, "created", isMalformed ? "malformed" : "present", verbose);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("worker")]
     [McpServerTool(Name = "get_latest_worker_completion"), Description("Get the latest structured completion packet for a worker run/task/role, or report missing_packet when none exists.")]
     public static async Task<string> GetLatestWorkerCompletion(
         IMessageRepository messages,

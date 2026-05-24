@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Services;
@@ -14,6 +15,8 @@ public sealed class ReviewerPathTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_start_reviewer_worker_path"), Description("LEGACY / ADMIN ONLY: Hermes-facing reviewer path helper: prepare/reference a reviewer packet and launch an independent reviewer Pi worker through Den state only. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> StartReviewerWorkerPath(
         ITaskRepository tasks,
@@ -74,6 +77,8 @@ public sealed class ReviewerPathTools
         }, JsonOptions);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_verify_reviewer_worker_completion"), Description("LEGACY / ADMIN ONLY: Hermes-facing reviewer path verifier: decide whether reviewer output has enough Den state to drive the review loop.")]
     public static async Task<string> VerifyReviewerWorkerCompletion(
         IMessageRepository messages,

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -13,6 +14,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class TaskTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "create_task"), Description("Create a new task or subtask in a project.")]
     public static async Task<string> CreateTask(
         ITaskRepository repo,
@@ -47,6 +50,8 @@ public sealed class TaskTools
             : ConciseResponse.CreatedTask(task);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "update_task"), Description("Update a task's fields. Records changes in audit history.")]
     public static async Task<string> UpdateTask(
         ITaskRepository repo,
@@ -95,6 +100,8 @@ public sealed class TaskTools
             : ConciseResponse.UpdatedTask(updated, changes);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "get_task"), Description("Get full task details including dependencies, subtasks, and recent messages.")]
     public static async Task<string> GetTask(
         ITaskRepository repo,
@@ -104,6 +111,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(detail, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "get_task_workflow_summary"), Description("Get a compact task workflow summary for orchestrator startup/drain. Returns task status, current review state, latest packet headers (without full bodies), unresolved findings/actions, and links/message IDs. Use get_task for full detail.")]
     public static async Task<string> GetTaskWorkflowSummary(
         ITaskRepository repo,
@@ -113,6 +122,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(summary, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "list_tasks"), Description("List tasks in a project with optional filters. Returns summaries without descriptions.")]
     public static async Task<string> ListTasks(
         ITaskRepository repo,
@@ -134,6 +145,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(tasks, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "create_review_round"), Description("Create a review round for a task with explicit branch and commit metadata.")]
     public static async Task<string> CreateReviewRound(
         IReviewRoundRepository repo,
@@ -190,6 +203,8 @@ public sealed class TaskTools
             : ConciseResponse.CreatedReviewRound(round);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "list_review_rounds"), Description("List review rounds for a task in chronological order.")]
     public static async Task<string> ListReviewRounds(
         IReviewRoundRepository repo,
@@ -199,6 +214,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(rounds, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "set_review_verdict"), Description("Set the verdict for a review round.")]
     public static async Task<string> SetReviewVerdict(
         IReviewWorkflowService workflow,
@@ -225,6 +242,8 @@ public sealed class TaskTools
             : ConciseResponse.SetReviewVerdict(result.ReviewRound);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "create_review_finding"), Description("Create a structured finding for a review round.")]
     public static async Task<string> CreateReviewFinding(
         IReviewFindingRepository repo,
@@ -259,6 +278,8 @@ public sealed class TaskTools
             : ConciseResponse.CreatedReviewFinding(finding);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "list_review_findings"), Description("List review findings for a task or a specific review round.")]
     public static async Task<string> ListReviewFindings(
         IReviewFindingRepository repo,
@@ -284,6 +305,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(findings, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "respond_to_review_finding"), Description("Add implementer response notes to a review finding and optionally mark it claimed_fixed or otherwise update status. response_notes record the implementer response; status_notes record evidence for the status transition. Use follow_up_task_id only with split_to_follow_up.")]
     public static async Task<string> RespondToReviewFinding(
         IReviewFindingRepository repo,
@@ -318,6 +341,8 @@ public sealed class TaskTools
             : ConciseResponse.RespondedToReviewFinding(updated);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "set_review_finding_status"), Description("Update the status for a review finding. Notes are status/verification evidence and do not replace implementer response_notes. Use follow_up_task_id only with split_to_follow_up; non-split status transitions clear any old follow-up link.")]
     public static async Task<string> SetReviewFindingStatus(
         IReviewFindingRepository repo,
@@ -350,6 +375,8 @@ public sealed class TaskTools
             : ConciseResponse.UpdatedReviewFindingStatus(updated);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "request_review"), Description("Create a review round and post a standardized review request or rereview packet to the task thread.")]
     public static async Task<string> RequestReview(
         IReviewWorkflowService workflow,
@@ -411,6 +438,8 @@ public sealed class TaskTools
             : ConciseResponse.RequestedReview(result);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "post_review_findings"), Description("Post a standardized reviewer findings packet for a review round back to the task thread.")]
     public static async Task<string> PostReviewFindings(
         IReviewWorkflowService workflow,
@@ -440,6 +469,8 @@ public sealed class TaskTools
             : ConciseResponse.PostedReviewFindings(result);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "next_task"), Description("Get the next unblocked task to work on. Checks subtasks of in-progress parents first, then top-level planned tasks. Ranks by priority, then fewer dependencies, then lower ID.")]
     public static async Task<string> NextTask(
         ITaskRepository repo,
@@ -452,6 +483,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(next, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "add_dependency"), Description("Add a dependency between tasks. Rejects if it would create a cycle.")]
     public static async Task<string> AddDependency(
         ITaskRepository repo,
@@ -462,6 +495,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(new { message = $"Task {task_id} now depends on task {depends_on}." }, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("task")]
     [McpServerTool(Name = "remove_dependency"), Description("Remove a dependency between tasks.")]
     public static async Task<string> RemoveDependency(
         ITaskRepository repo,
@@ -472,6 +507,8 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(new { message = $"Removed dependency: task {task_id} no longer depends on task {depends_on}." }, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "runner", "worker-reviewer")]
+    [McpToolBundle("review")]
     [McpServerTool(Name = "split_review_findings_to_follow_up"), Description("Split selected non-blocking review findings into a follow-up task. Creates a follow-up task with generated description and marks each finding split_to_follow_up. Blocking findings are skipped unless override_blocking=true.")]
     public static async Task<string> SplitReviewFindingsToFollowUp(
         IReviewFindingTriageService triageService,

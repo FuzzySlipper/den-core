@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Services;
@@ -14,6 +15,8 @@ public sealed class RoleWorkerTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_launch_coder_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a coder context packet reference, then launch a Pi worker with coder role defaults through Den raw worker lifecycle primitives. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchCoderWorker(
         ITaskRepository tasks,
@@ -65,6 +68,8 @@ public sealed class RoleWorkerTools
         return MergeLaunchWithPacketRef(launchJson, packetRef, "coder");
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_launch_reviewer_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a reviewer context packet reference, then launch a Pi worker with reviewer role defaults through Den raw worker lifecycle primitives. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchReviewerWorker(
         ITaskRepository tasks,
@@ -121,6 +126,8 @@ public sealed class RoleWorkerTools
 
 
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_launch_validator_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a validator context packet reference, then launch a Pi worker with validator role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchValidatorWorker(
         ITaskRepository tasks,
@@ -152,6 +159,8 @@ public sealed class RoleWorkerTools
         return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "validator", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_launch_drift_checker_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a drift-checker context packet reference, then launch a Pi worker with drift_checker role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchDriftCheckerWorker(
         ITaskRepository tasks,
@@ -183,6 +192,8 @@ public sealed class RoleWorkerTools
         return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "drift_checker", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_launch_packet_auditor_worker"), Description("LEGACY / ADMIN ONLY: Prepare or accept a packet-auditor context packet reference, then launch a Pi worker with packet_auditor role defaults. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> LaunchPacketAuditorWorker(
         ITaskRepository tasks,

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class TopicTools
 {
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "create_topic"), Description("Create a new consolidation topic in the registry.")]
     public static async Task<string> CreateTopic(
         ITopicRepository repo,
@@ -41,6 +44,8 @@ public sealed class TopicTools
         }
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "list_topics"), Description("List consolidation topics. Defaults to active topics only.")]
     public static async Task<string> ListTopics(
         ITopicRepository repo,
@@ -51,6 +56,8 @@ public sealed class TopicTools
         return JsonSerializer.Serialize(topics, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "get_topic"), Description("Get a consolidation topic by slug.")]
     public static async Task<string> GetTopic(
         ITopicRepository repo,
@@ -62,6 +69,8 @@ public sealed class TopicTools
             : $"{{\"error\":\"Topic '{slug}' not found\"}}";
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "update_topic"), Description("Update a consolidation topic by id.")]
     public static async Task<string> UpdateTopic(
         ITopicRepository repo,
@@ -95,6 +104,8 @@ public sealed class TopicTools
         }
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "delete_topic"), Description("Delete a consolidation topic by id.")]
     public static async Task<string> DeleteTopic(
         ITopicRepository repo,
@@ -106,6 +117,8 @@ public sealed class TopicTools
             : $"{{\"error\":\"Topic {id} not found\"}}";
     }
 
+    [McpToolProfile("admin-current", "curator")]
+    [McpToolBundle("topics")]
     [McpServerTool(Name = "validate_topic_tags"), Description("Validate topic tags against the registry. Resolves aliases to canonical slugs.")]
     public static async Task<string> ValidateTopicTags(
         ITopicRepository repo,

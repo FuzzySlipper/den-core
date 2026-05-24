@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -17,6 +18,8 @@ public sealed class OrchestratorStateMachineTools
         Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
     };
 
+    [McpToolProfile("admin-current", "planner", "runner")]
+    [McpToolBundle("orchestrator")]
     [McpServerTool(Name = "determine_orchestrator_next_action"), Description("Evaluate Den task, worker completion packets, and real review state to pick the next fail-closed orchestrator action.")]
     public static async Task<string> DetermineOrchestratorNextAction(
         ITaskRepository tasks,

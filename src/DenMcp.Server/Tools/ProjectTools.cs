@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class ProjectTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "create_project"), Description("Register a new project for task management, messaging, and document storage.")]
     public static async Task<string> CreateProject(
         IProjectRepository repo,
@@ -30,6 +33,8 @@ public sealed class ProjectTools
             : ConciseResponse.CreatedProject(project);
     }
 
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "list_projects"), Description("List registered projects. Defaults to normal project-kind spaces only, excluding hidden or archived spaces.")]
     public static async Task<string> ListProjects(IProjectRepository repo)
     {
@@ -37,6 +42,8 @@ public sealed class ProjectTools
         return JsonSerializer.Serialize(projects, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "get_project"), Description("Get a project by ID with summary stats (task counts by status, unread messages).")]
     public static async Task<string> GetProject(
         IProjectRepository repo,

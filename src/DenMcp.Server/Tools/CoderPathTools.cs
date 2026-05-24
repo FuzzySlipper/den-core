@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Services;
@@ -14,6 +15,8 @@ public sealed class CoderPathTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_start_coder_worker_path"), Description("LEGACY / ADMIN ONLY: Hermes-facing coder path helper: prepare/reference a coder packet and launch a coder Pi worker through Den state only. Prefer register_worker_run for spawned-Hermes workers.")]
     public static async Task<string> StartCoderWorkerPath(
         ITaskRepository tasks,
@@ -69,6 +72,8 @@ public sealed class CoderPathTools
         return JsonSerializer.Serialize(result, JsonOptions);
     }
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_verify_coder_worker_completion"), Description("LEGACY / ADMIN ONLY: Hermes-facing coder path verifier: decide whether a coder worker completion is sufficient to request review.")]
     public static async Task<string> VerifyCoderWorkerCompletion(
         IMessageRepository messages,

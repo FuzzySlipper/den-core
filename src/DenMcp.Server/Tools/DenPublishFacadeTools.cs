@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Services;
 using ModelContextProtocol.Server;
@@ -13,6 +14,8 @@ public sealed class DenPublishFacadeTools
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    [McpToolProfile("legacy-full")]
+    [McpToolBundle("legacy")]
     [McpServerTool(Name = "legacy_request_den_publish_dry_run"), Description("LEGACY / ADMIN ONLY: Den-native facade for den-publish validate-only promotion dry-run. Builds the camelCase den-publish payload from explicit Den/code-gate fields, verifies matching looks_good review state, calls den-publish, and records the result in the task thread. Publisher-path-only.")]
     public static async Task<string> RequestDenPublishDryRun(
         IDenPublishFacadeService facade,

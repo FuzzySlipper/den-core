@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Llm;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class LibrarianTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
     [McpServerTool(Name = "query_librarian"), Description(
         "Ask the librarian for context relevant to your current work. " +
         "Returns relevant tasks, documents, and messages with source attribution and recommendations. " +

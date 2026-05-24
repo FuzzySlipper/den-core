@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class AgentTools
 {
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "list_active_agents"), Description(
         "List agents currently active on a project (or all projects). " +
         "Shows who else is working, useful for coordination.")]
@@ -20,6 +23,8 @@ public sealed class AgentTools
         return JsonSerializer.Serialize(sessions, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "diagnostics", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "list_agent_instance_bindings"), Description(
         "List agent instance bindings used for role-aware delivery resolution. Defaults to active/degraded bindings.")]
     public static async Task<string> ListAgentInstanceBindings(

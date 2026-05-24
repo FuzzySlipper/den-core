@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DenMcp.Core.Mcp;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -9,6 +10,8 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class SpaceTools
 {
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "create_space"), Description("Create a new space. Can be any kind (project, personal, assistant, knowledge_base, system).")]
     public static async Task<string> CreateSpace(
         IProjectRepository repo,
@@ -38,6 +41,8 @@ public sealed class SpaceTools
             : ConciseResponse.CreatedSpace(project);
     }
 
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "list_spaces"), Description("List spaces with optional kind and visibility filters.")]
     public static async Task<string> ListSpaces(
         IProjectRepository repo,
@@ -49,6 +54,8 @@ public sealed class SpaceTools
         return JsonSerializer.Serialize(spaces, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
     [McpServerTool(Name = "get_space"), Description("Get a space by ID with summary stats (task counts by status, unread messages).")]
     public static async Task<string> GetSpace(
         IProjectRepository repo,

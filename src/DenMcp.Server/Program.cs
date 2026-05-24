@@ -5,11 +5,13 @@ using DenMcp.Core.Data;
 using DenMcp.Core.Llm;
 using DenMcp.Core.Models;
 using DenMcp.Core.Services;
+using DenMcp.Core.Mcp;
 using DenMcp.Server;
 using DenMcp.Server.Realtime;
 using DenMcp.Server.Routes;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
+using ModelContextProtocol.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -126,8 +128,17 @@ builder.Services.AddSingleton<LibrarianService>();
 // MCP endpoint hosted by Core. den-mcp adapter mode proxies public /mcp here so
 // Core remains the sole SQLite owner/writer while preserving the existing MCP
 // tool surface for Hermes clients.
+builder.Services.AddSingleton(McpToolProfileRegistry.CreateDefault());
 builder.Services.AddMcpServer()
-    .WithHttpTransport()
+    .WithHttpTransport(options =>
+    {
+        options.ConfigureSessionOptions = (httpContext, mcpServerOptions, cancellationToken) =>
+        {
+            var registry = httpContext.RequestServices.GetRequiredService<McpToolProfileRegistry>();
+            mcpServerOptions.ApplyToolFiltering(registry, httpContext);
+            return Task.CompletedTask;
+        };
+    })
     .WithToolsFromAssembly();
 
 var app = builder.Build();

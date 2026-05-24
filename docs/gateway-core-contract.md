@@ -2,6 +2,12 @@
 
 Den Core owns canonical Den state, persistence, and REST contracts. `den-gateway` owns local routing, delivery state, adapter retry policy, and sentinel-local durability. This contract gives Gateway stable Core-owned surfaces without requiring Gateway to read Core internals or the old `den-mcp` SQLite layout.
 
+## Communication-surface naming
+
+Gateway/Core communication contracts should use the vocabulary in `docs/communication-api-surface-naming.md` and the Den document `den-core/den-communication-surfaces-concept-map`.
+
+Core-owned durable work records are `project_message` / `task_message` records and user-facing attention items are `user_notification` records. Gateway delivery control state is separate: `delivery_request` / `delivery_attempt` records are routing/control-plane state, `delivery_activity_event` records are non-waking progress, and `gateway_delivery_final_message` is the final visible channel reply that terminalizes a delivery. Do not describe all of these as generic "messages" in new Gateway/Core contracts.
+
 ## Source summaries and event outbox
 
 Shared with Channels via task #1362:

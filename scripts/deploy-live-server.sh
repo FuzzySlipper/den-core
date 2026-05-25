@@ -277,7 +277,17 @@ sudo -n rsync -a --delete --chown="$REMOTE_SERVICE_USER:$REMOTE_SERVICE_GROUP" \
   --exclude 'appsettings.Development.json' \
   "$publish_stage/" "$new_app/"
 
+# Preserve live-local configuration/state that is intentionally excluded from
+# the publish output. The live app tree remains the source of truth for these
+# paths unless operators move them to systemd environment files or another
+# external config location.
 if sudo -n test -d "$REMOTE_APP_DIR"; then
+  for preserved_path in appsettings.json appsettings.Development.json env data .net; do
+    if sudo -n test -e "$REMOTE_APP_DIR/$preserved_path"; then
+      sudo -n rsync -a --chown="$REMOTE_SERVICE_USER:$REMOTE_SERVICE_GROUP" \
+        "$REMOTE_APP_DIR/$preserved_path" "$new_app/"
+    fi
+  done
   sudo -n mv "$REMOTE_APP_DIR" "$backup_app"
 fi
 sudo -n mv "$new_app" "$REMOTE_APP_DIR"
@@ -298,7 +308,7 @@ fi
 echo "Restart failed; rolling back to previous app tree." >&2
 sudo -n systemctl stop "$SERVICE_NAME" || true
 sudo -n mv "$REMOTE_APP_DIR" "$failed_app" || true
-if [[ -d "$backup_app" ]]; then
+if sudo -n test -d "$backup_app"; then
   sudo -n mv "$backup_app" "$REMOTE_APP_DIR"
   sudo -n systemctl restart "$SERVICE_NAME" || true
 fi

@@ -37,6 +37,25 @@ public class DispatchRepositoryTests : IAsyncLifetime
         ExpiresAt = DateTime.UtcNow.AddHours(24)
     };
 
+    /// <summary>
+    /// Set a dispatch entry to 'approved' status directly via SQL.
+    /// Used by tests that need an approved entry for expiry scenarios
+    /// after the ApproveAsync method was removed from the repository.
+    /// </summary>
+    private async Task SetApprovedDirectlyAsync(int dispatchId, string decidedBy = "user")
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dispatch_entries
+            SET status = 'approved', decided_at = datetime('now'), decided_by = @decidedBy
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", dispatchId);
+        cmd.Parameters.AddWithValue("@decidedBy", decidedBy);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     [Fact]
     public async Task CreateIfAbsent_NewEntry_ReturnsCreatedTrue()
     {
@@ -63,7 +82,8 @@ public class DispatchRepositoryTests : IAsyncLifetime
     public async Task CreateIfAbsent_DedupKeyAllowedAfterResolution()
     {
         var (first, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.RejectAsync(first.Id, "user");
+        // Expire the first entry so dedup key can be reused
+        await _repo.ExpireAsync(first.Id);
 
         // Same dedup key should now succeed — the old one is no longer pending
         var (second, created) = await _repo.CreateIfAbsentAsync(MakeEntry());
@@ -113,7 +133,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
     {
         var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 1));
         await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 2));
-        await _repo.ApproveAsync(entry.Id, "user");
+        await SetApprovedDirectlyAsync(entry.Id);
 
         var pending = await _repo.ListAsync(statuses: [DispatchStatus.Pending]);
         Assert.Single(pending);
@@ -134,64 +154,10 @@ public class DispatchRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Approve_TransitionsPendingToApproved()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        var approved = await _repo.ApproveAsync(entry.Id, "user");
-
-        Assert.Equal(DispatchStatus.Approved, approved.Status);
-        Assert.Equal("user", approved.DecidedBy);
-        Assert.NotNull(approved.DecidedAt);
-    }
-
-    [Fact]
-    public async Task Approve_NonPending_Throws()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.ApproveAsync(entry.Id, "user");
-
-        // Already approved — can't approve again
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _repo.ApproveAsync(entry.Id, "user"));
-    }
-
-    [Fact]
-    public async Task Reject_TransitionsPendingToRejected()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        var rejected = await _repo.RejectAsync(entry.Id, "user");
-
-        Assert.Equal(DispatchStatus.Rejected, rejected.Status);
-        Assert.Equal("user", rejected.DecidedBy);
-        Assert.NotNull(rejected.DecidedAt);
-    }
-
-    [Fact]
-    public async Task Complete_TransitionsApprovedToCompleted()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.ApproveAsync(entry.Id, "user");
-        var completed = await _repo.CompleteAsync(entry.Id, "claude-code");
-
-        Assert.Equal(DispatchStatus.Completed, completed.Status);
-        Assert.NotNull(completed.CompletedAt);
-    }
-
-    [Fact]
-    public async Task Complete_PendingEntry_Throws()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-
-        // Can't complete a pending entry — must be approved first
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _repo.CompleteAsync(entry.Id));
-    }
-
-    [Fact]
     public async Task Expire_TransitionsApprovedToExpired()
     {
         var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.ApproveAsync(entry.Id, "user");
+        await SetApprovedDirectlyAsync(entry.Id);
 
         var expired = await _repo.ExpireAsync(entry.Id);
 
@@ -206,7 +172,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
         var otherTaskRecord = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Task 99" });
         var (pending, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 1, taskId: task.Id));
         var (approved, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 2, taskId: task.Id));
-        await _repo.ApproveAsync(approved.Id, "user");
+        await SetApprovedDirectlyAsync(approved.Id);
         var (otherTask, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 3, taskId: otherTaskRecord.Id));
         var (taskless, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 4));
 
@@ -226,7 +192,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
         var otherTaskRecord = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Task 99" });
         var (olderPending, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 1, taskId: task.Id));
         var (olderApproved, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 2, taskId: task.Id));
-        await _repo.ApproveAsync(olderApproved.Id, "user");
+        await SetApprovedDirectlyAsync(olderApproved.Id);
         var (otherTarget, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 3, agent: "codex", taskId: task.Id));
         var (otherTask, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 4, taskId: otherTaskRecord.Id));
         var (current, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 5, taskId: task.Id));
@@ -260,7 +226,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
     public async Task ExpireStale_DoesNotExpireApproved()
     {
         var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.ApproveAsync(entry.Id, "user");
+        await SetApprovedDirectlyAsync(entry.Id);
 
         // Even if expires_at is in the past, approved entries are not expired
         var expiredCount = await _repo.ExpireStaleAsync(DateTime.UtcNow.AddDays(30));
@@ -273,7 +239,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
         await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 1));
         await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 2));
         var (third, _) = await _repo.CreateIfAbsentAsync(MakeEntry(triggerId: 3));
-        await _repo.ApproveAsync(third.Id, "user");
+        await SetApprovedDirectlyAsync(third.Id);
 
         Assert.Equal(2, await _repo.GetPendingCountAsync());
         Assert.Equal(2, await _repo.GetPendingCountAsync("proj"));
@@ -290,17 +256,6 @@ public class DispatchRepositoryTests : IAsyncLifetime
 
         await Assert.ThrowsAsync<SqliteException>(
             () => _repo.CreateIfAbsentAsync(entry));
-    }
-
-    [Fact]
-    public async Task Complete_PreservesApproverAndCompleter()
-    {
-        var (entry, _) = await _repo.CreateIfAbsentAsync(MakeEntry());
-        await _repo.ApproveAsync(entry.Id, "george");
-        var completed = await _repo.CompleteAsync(entry.Id, "claude-code");
-
-        Assert.Equal("george", completed.DecidedBy);
-        Assert.Equal("claude-code", completed.CompletedBy);
     }
 
     [Fact]

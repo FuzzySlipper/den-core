@@ -27,12 +27,9 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
         _stream = new AgentStreamRepository(_testDb.Db);
         var docs = new DocumentRepository(_testDb.Db);
         var routing = new RoutingService(docs);
-        var contexts = new DispatchContextService(_dispatches, _messages, _tasks, routing,
-            NullLogger<DispatchContextService>.Instance);
         var detection = new DispatchDetectionService(
             routing,
             _dispatches,
-            contexts,
             NoOpNotifications.Instance,
             NullLogger<DispatchDetectionService>.Instance);
         _workflow = new ReviewWorkflowService(
@@ -50,6 +47,24 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
     }
 
     public Task DisposeAsync() => _testDb.DisposeAsync();
+
+    /// <summary>
+    /// Set a dispatch entry to 'approved' status directly via SQL.
+    /// Used to set up approved entries after ApproveAsync was removed.
+    /// </summary>
+    private async Task SetApprovedDirectlyAsync(int dispatchId, string decidedBy = "legacy-bridge-user")
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dispatch_entries
+            SET status = 'approved', decided_at = datetime('now'), decided_by = @decidedBy
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", dispatchId);
+        cmd.Parameters.AddWithValue("@decidedBy", decidedBy);
+        await cmd.ExecuteNonQueryAsync();
+    }
 
     private sealed class NoOpNotifications : INotificationChannel
     {
@@ -277,7 +292,7 @@ public class ReviewWorkflowServiceTests : IAsyncLifetime
             DedupKey = DispatchEntry.BuildDedupKey(DispatchTriggerType.Message, reviewRequest.Message.Id, "codex"),
             ExpiresAt = DateTime.UtcNow.AddHours(1)
         });
-        await _dispatches.ApproveAsync(reviewDispatch.Id, "legacy-bridge-user");
+        await SetApprovedDirectlyAsync(reviewDispatch.Id);
         var (stalePendingDispatch, _) = await _dispatches.CreateIfAbsentAsync(new DispatchEntry
         {
             ProjectId = "proj",

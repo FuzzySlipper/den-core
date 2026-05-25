@@ -28,7 +28,6 @@ public sealed class DispatchDetectionService : IDispatchDetectionService
     public DispatchDetectionService(
         IRoutingService routing,
         IDispatchRepository dispatches,
-        IDispatchContextService dispatchContexts,
         INotificationChannel notifications,
         ILogger<DispatchDetectionService> logger)
     {
@@ -36,7 +35,6 @@ public sealed class DispatchDetectionService : IDispatchDetectionService
         // while dispatch creation is retired. Parameters are intentionally unused.
         _ = routing;
         _ = dispatches;
-        _ = dispatchContexts;
         _ = notifications;
         _logger = logger;
     }

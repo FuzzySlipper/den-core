@@ -9,8 +9,6 @@ public interface IAgentStreamOpsService
 {
     Task<AgentStreamEntry> AppendOpsAsync(AgentStreamEntry entry);
     Task RecordDispatchCreatedAsync(DispatchEntry dispatch);
-    Task RecordDispatchApprovedAsync(DispatchEntry dispatch, string decidedBy);
-    Task RecordDispatchRejectedAsync(DispatchEntry dispatch, string decidedBy);
     Task RecordReviewRequestedAsync(Message message, ReviewRound round, ReviewPacketKind packetKind, string? recipientRole = null);
     Task RecordReviewVerdictAsync(ProjectTask task, ReviewRound round, string recipient, Message? handoffMessage);
 }
@@ -86,72 +84,6 @@ public sealed class AgentStreamOpsService : IAgentStreamOpsService
                 trigger_id = dispatch.TriggerId
             }),
             DedupKey = $"dispatch-created:{dispatch.Id}"
-        });
-
-    public async Task RecordDispatchApprovedAsync(DispatchEntry dispatch, string decidedBy)
-    {
-        await AppendSafelyAsync(new AgentStreamEntry
-        {
-            StreamKind = AgentStreamKind.Ops,
-            EventType = "dispatch_approved",
-            ProjectId = dispatch.ProjectId,
-            TaskId = dispatch.TaskId,
-            DispatchId = dispatch.Id,
-            Sender = decidedBy,
-            RecipientAgent = dispatch.TargetAgent,
-            DeliveryMode = AgentStreamDeliveryMode.RecordOnly,
-            Body = dispatch.Summary,
-            Metadata = JsonSerializer.SerializeToElement(new
-            {
-                status = dispatch.Status.ToDbValue(),
-                trigger_type = dispatch.TriggerType.ToDbValue(),
-                trigger_id = dispatch.TriggerId,
-                decided_by = decidedBy
-            }),
-            DedupKey = $"dispatch-approved:{dispatch.Id}"
-        });
-
-        await AppendSafelyAsync(new AgentStreamEntry
-        {
-            StreamKind = AgentStreamKind.Ops,
-            EventType = "wake_requested",
-            ProjectId = dispatch.ProjectId,
-            TaskId = dispatch.TaskId,
-            DispatchId = dispatch.Id,
-            Sender = decidedBy,
-            RecipientAgent = dispatch.TargetAgent,
-            DeliveryMode = AgentStreamDeliveryMode.RecordOnly,
-            Body = dispatch.Summary,
-            Metadata = JsonSerializer.SerializeToElement(new
-            {
-                dispatch_status = dispatch.Status.ToDbValue(),
-                trigger_type = dispatch.TriggerType.ToDbValue(),
-                trigger_id = dispatch.TriggerId
-            }),
-            DedupKey = $"wake-requested:{dispatch.Id}"
-        });
-    }
-
-    public Task RecordDispatchRejectedAsync(DispatchEntry dispatch, string decidedBy) =>
-        AppendSafelyAsync(new AgentStreamEntry
-        {
-            StreamKind = AgentStreamKind.Ops,
-            EventType = "dispatch_rejected",
-            ProjectId = dispatch.ProjectId,
-            TaskId = dispatch.TaskId,
-            DispatchId = dispatch.Id,
-            Sender = decidedBy,
-            RecipientAgent = dispatch.TargetAgent,
-            DeliveryMode = AgentStreamDeliveryMode.RecordOnly,
-            Body = dispatch.Summary,
-            Metadata = JsonSerializer.SerializeToElement(new
-            {
-                status = dispatch.Status.ToDbValue(),
-                trigger_type = dispatch.TriggerType.ToDbValue(),
-                trigger_id = dispatch.TriggerId,
-                decided_by = decidedBy
-            }),
-            DedupKey = $"dispatch-rejected:{dispatch.Id}"
         });
 
     public Task RecordReviewRequestedAsync(

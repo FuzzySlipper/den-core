@@ -27,9 +27,7 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
         _dispatches = new DispatchRepository(_testDb.Db);
         _docs = new DocumentRepository(_testDb.Db);
         var routing = new RoutingService(_docs);
-        var contexts = new DispatchContextService(_dispatches, _messages, _tasks, routing,
-            NullLogger<DispatchContextService>.Instance);
-        _detection = new DispatchDetectionService(routing, _dispatches, contexts, NoOpNotifications.Instance,
+        _detection = new DispatchDetectionService(routing, _dispatches, NoOpNotifications.Instance,
             NullLogger<DispatchDetectionService>.Instance);
 
         var projRepo = new ProjectRepository(_testDb.Db);
@@ -77,6 +75,25 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
         public Task StartListeningAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Set a dispatch entry to 'approved' status directly via SQL.
+    /// Used to set up approved entries for retirement tests after
+    /// ApproveAsync was removed from the repository.
+    /// </summary>
+    private async Task SetApprovedDirectlyAsync(int dispatchId, string decidedBy = "user")
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dispatch_entries
+            SET status = 'approved', decided_at = datetime('now'), decided_by = @decidedBy
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", dispatchId);
+        cmd.Parameters.AddWithValue("@decidedBy", decidedBy);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     #region Retirement: no dispatch creation
 
     [Fact]
@@ -114,7 +131,7 @@ public class DispatchDetectionServiceTests : IAsyncLifetime
         var task = await _tasks.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Cleanup task" });
         var pending = await CreateDispatchAsync(triggerId: 10, taskId: task.Id, targetAgent: "codex");
         var approved = await CreateDispatchAsync(triggerId: 11, taskId: task.Id, targetAgent: "claude-code");
-        await _dispatches.ApproveAsync(approved.Id, "user");
+        await SetApprovedDirectlyAsync(approved.Id);
 
         await _detection.OnTaskStatusChangedAsync(task, "review", "done", "codex");
 

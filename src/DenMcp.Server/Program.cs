@@ -118,7 +118,6 @@ builder.Services.AddSingleton<IPiSessionService, PiSessionService>();
 
 // Dispatch
 builder.Services.AddSingleton<IRoutingService, RoutingService>();
-builder.Services.AddSingleton<IDispatchContextService, DispatchContextService>();
 builder.Services.AddSingleton<IDispatchDetectionService, DispatchDetectionService>();
 
 // Librarian

@@ -29,22 +29,6 @@ public sealed class AgentStreamDispatchRepository : IDispatchRepository
         string? targetAgent = null,
         DispatchStatus[]? statuses = null) => _inner.ListAsync(projectId, targetAgent, statuses);
 
-    public async Task<DispatchEntry> ApproveAsync(int id, string decidedBy)
-    {
-        var entry = await _inner.ApproveAsync(id, decidedBy);
-        await _ops.RecordDispatchApprovedAsync(entry, decidedBy);
-        return entry;
-    }
-
-    public async Task<DispatchEntry> RejectAsync(int id, string decidedBy)
-    {
-        var entry = await _inner.RejectAsync(id, decidedBy);
-        await _ops.RecordDispatchRejectedAsync(entry, decidedBy);
-        return entry;
-    }
-
-    public Task<DispatchEntry> CompleteAsync(int id, string? completedBy = null) => _inner.CompleteAsync(id, completedBy);
-
     public Task<DispatchEntry> ExpireAsync(int id) => _inner.ExpireAsync(id);
 
     public Task<int> ExpireOpenForTaskAsync(string projectId, int taskId, int? excludeId = null) =>

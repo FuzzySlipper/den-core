@@ -13,9 +13,6 @@ public interface IDispatchRepository
     Task<DispatchEntry?> GetByIdAsync(int id);
     Task<List<DispatchEntry>> ListAsync(string? projectId = null, string? targetAgent = null,
         DispatchStatus[]? statuses = null);
-    Task<DispatchEntry> ApproveAsync(int id, string decidedBy);
-    Task<DispatchEntry> RejectAsync(int id, string decidedBy);
-    Task<DispatchEntry> CompleteAsync(int id, string? completedBy = null);
     Task<DispatchEntry> ExpireAsync(int id);
     Task<int> ExpireOpenForTaskAsync(string projectId, int taskId, int? excludeId = null);
     Task<int> ExpireSupersededForTaskTargetAsync(string projectId, int taskId, string targetAgent, int keepId);
@@ -119,36 +116,6 @@ public sealed class DispatchRepository : IDispatchRepository
         return results;
     }
 
-    public async Task<DispatchEntry> ApproveAsync(int id, string decidedBy)
-        => await TransitionAsync(id, DispatchStatus.Pending, DispatchStatus.Approved, decidedBy);
-
-    public async Task<DispatchEntry> RejectAsync(int id, string decidedBy)
-        => await TransitionAsync(id, DispatchStatus.Pending, DispatchStatus.Rejected, decidedBy);
-
-    public async Task<DispatchEntry> CompleteAsync(int id, string? completedBy = null)
-    {
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE dispatch_entries
-            SET status = @newStatus, completed_at = datetime('now'), completed_by = @completedBy
-            WHERE id = @id AND status = @requiredStatus
-            RETURNING id, project_id, target_agent, status, trigger_type, trigger_id,
-                      task_id, summary, context_prompt, context_json, dedup_key,
-                      created_at, expires_at, decided_at, completed_at, decided_by, completed_by
-            """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@newStatus", DispatchStatus.Completed.ToDbValue());
-        cmd.Parameters.AddWithValue("@requiredStatus", DispatchStatus.Approved.ToDbValue());
-        cmd.Parameters.AddWithValue("@completedBy", (object?)completedBy ?? DBNull.Value);
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        if (!await reader.ReadAsync())
-            throw new InvalidOperationException(
-                $"Dispatch {id} cannot transition to completed (must be approved)");
-        return ReadEntry(reader);
-    }
-
     public async Task<DispatchEntry> ExpireAsync(int id)
     {
         await using var conn = await _db.CreateConnectionAsync();
@@ -249,30 +216,6 @@ public sealed class DispatchRepository : IDispatchRepository
 
         var result = await cmd.ExecuteScalarAsync();
         return Convert.ToInt32(result);
-    }
-
-    private async Task<DispatchEntry> TransitionAsync(int id, DispatchStatus from, DispatchStatus to, string decidedBy)
-    {
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE dispatch_entries
-            SET status = @newStatus, decided_at = datetime('now'), decided_by = @decidedBy
-            WHERE id = @id AND status = @requiredStatus
-            RETURNING id, project_id, target_agent, status, trigger_type, trigger_id,
-                      task_id, summary, context_prompt, context_json, dedup_key,
-                      created_at, expires_at, decided_at, completed_at, decided_by, completed_by
-            """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@newStatus", to.ToDbValue());
-        cmd.Parameters.AddWithValue("@requiredStatus", from.ToDbValue());
-        cmd.Parameters.AddWithValue("@decidedBy", decidedBy);
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        if (!await reader.ReadAsync())
-            throw new InvalidOperationException(
-                $"Dispatch {id} cannot transition from {from} to {to}");
-        return ReadEntry(reader);
     }
 
     private static async Task<DispatchEntry?> GetByDedupKeyAsync(SqliteConnection conn, string dedupKey)

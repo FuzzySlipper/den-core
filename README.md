@@ -65,3 +65,22 @@ dotnet run --project src/DenMcp.Server -- --port 5199 --db-path /tmp/den-core/de
 ```
 
 Default server URL remains `http://localhost:5199` for compatibility during extraction. Production cutover should assign a dedicated Den Core URL/port and point the slim `den-mcp` adapter at it through `DenCore:BaseUrl`.
+
+## Live deployment helper
+
+Use the repo-local helper when promoting reviewed Core server changes to the live `den-srv` service:
+
+```bash
+scripts/deploy-live-server.sh --dry-run
+scripts/deploy-live-server.sh
+```
+
+The helper publishes `src/DenMcp.Server/DenMcp.Server.csproj`, stages the output into `/data/services/den-core/app`, restarts `den-core.service`, and smokes `/health` plus MCP `tools/list` through both the Core proxy (`http://192.168.1.10:18080/den-core-api/mcp`) and LAN MCP facade (`http://192.168.1.10:5199/mcp`).
+
+Deployment trust boundaries:
+
+- `/home/dev/den-core` is the normal local source checkout for Runner implementation work.
+- `/data/services/den-core/app` is the live app tree.
+- `/data/dev/den-core` can be stale unless this helper is explicitly run there or that checkout is separately synchronized.
+
+The helper supports `DEPLOY_MODE=auto|local|remote` or `--local`/`--remote`. Auto uses local mode only when run from `/data/dev/den-core` on `den-srv`; otherwise it uploads via `SSH_TARGET` (default `den-srv`) and performs the privileged install/restart with remote non-interactive sudo. Override `HEALTH_URL`, `MCP_CORE_URL`, or `MCP_LAN_URL` only when intentionally smoking a non-default environment.

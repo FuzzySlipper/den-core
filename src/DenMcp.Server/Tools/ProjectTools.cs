@@ -33,7 +33,7 @@ public sealed class ProjectTools
             : ConciseResponse.CreatedProject(project);
     }
 
-    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("core")]
     [McpServerTool(Name = "list_projects"), Description("List registered projects. Defaults to normal project-kind spaces only, excluding hidden or archived spaces.")]
     public static async Task<string> ListProjects(IProjectRepository repo)
@@ -42,7 +42,7 @@ public sealed class ProjectTools
         return JsonSerializer.Serialize(projects, JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("core")]
     [McpServerTool(Name = "get_project"), Description("Get a project by ID with summary stats (task counts by status, unread messages).")]
     public static async Task<string> GetProject(

@@ -105,7 +105,7 @@ public sealed class PacketTools
 
 
 
-    [McpToolProfile("admin-current", "runner")]
+    [McpToolProfile("admin-current", "runner", "worker-validator")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "prepare_validator_context_packet"), Description("Create and store a bounded Den task-thread validator context packet for a deterministic Pi worker.")]
     public static async Task<string> PrepareValidatorContextPacket(
@@ -125,7 +125,7 @@ public sealed class PacketTools
         return await PrepareSpecializedWorkerPacket(tasks, messages, project_id, task_id, requested_by, "validator", "validator_context_packet", branch, base_branch, base_commit, head_commit, null, allowed_scope, notes, verbose).ConfigureAwait(false);
     }
 
-    [McpToolProfile("admin-current")]
+    [McpToolProfile("admin-current", "worker-drift-checker")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "prepare_drift_checker_context_packet"), Description("Create and store a bounded Den task-thread drift-checker context packet for comparing task intent, packet claims, diff, and review state.")]
     public static async Task<string> PrepareDriftCheckerContextPacket(
@@ -145,7 +145,7 @@ public sealed class PacketTools
         return await PrepareSpecializedWorkerPacket(tasks, messages, project_id, task_id, requested_by, "drift_checker", "drift_checker_context_packet", branch, base_branch, base_commit, head_commit, null, allowed_scope, notes, verbose).ConfigureAwait(false);
     }
 
-    [McpToolProfile("admin-current")]
+    [McpToolProfile("admin-current", "worker-packet-auditor")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "prepare_packet_auditor_context_packet"), Description("Create and store a bounded Den task-thread packet-auditor context packet for checking worker packet claims against Den and repo state.")]
     public static async Task<string> PreparePacketAuditorContextPacket(
@@ -165,7 +165,7 @@ public sealed class PacketTools
         return await PrepareSpecializedWorkerPacket(tasks, messages, project_id, task_id, requested_by, "packet_auditor", "packet_auditor_context_packet", branch, base_branch, base_commit, head_commit, null, allowed_scope, notes, verbose).ConfigureAwait(false);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "get_latest_task_packet"), Description("Get the latest task-thread packet by packet metadata type/role. Returns the exact message reference for worker launch.")]
     public static async Task<string> GetLatestTaskPacket(
@@ -183,7 +183,7 @@ public sealed class PacketTools
         return SerializePacketResult(packet, MetadataString(packet, "role") ?? role ?? "worker", "found", verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "render_worker_prompt"), Description("Render a small worker startup prompt that points at a Den packet message reference without embedding the packet body in process args.")]
     public static async Task<string> RenderWorkerPrompt(

@@ -356,6 +356,43 @@ public sealed class McpToolProfileRegistry
             "get_latest_task_packet",
             "prepare_reviewer_context_packet", "render_worker_prompt");
 
+        // ---- profile: worker-validator ----
+        // Narrow profile: packet retrieval, status, completion, and role-specific context packet helpers only.
+        // No legacy tools, no governance/admin tools, no messaging/agent-stream/topics/orchestrator.
+        m.ProfileAdd(McpToolProfiles.WorkerValidator,
+            "get_project", "list_projects",
+            "get_space", "list_spaces",
+            "get_task", "list_tasks", "get_task_workflow_summary",
+            "get_document", "list_documents", "search_documents", "query_librarian",
+            "get_worker_run", "get_worker_run_status", "list_worker_runs",
+            "get_latest_worker_completion", "post_worker_completion_packet",
+            "get_latest_task_packet",
+            "prepare_validator_context_packet", "render_worker_prompt");
+
+        // ---- profile: worker-drift-checker ----
+        // Narrow profile: same tool scope as worker-validator with drift-checker-specific packet.
+        m.ProfileAdd(McpToolProfiles.WorkerDriftChecker,
+            "get_project", "list_projects",
+            "get_space", "list_spaces",
+            "get_task", "list_tasks", "get_task_workflow_summary",
+            "get_document", "list_documents", "search_documents", "query_librarian",
+            "get_worker_run", "get_worker_run_status", "list_worker_runs",
+            "get_latest_worker_completion", "post_worker_completion_packet",
+            "get_latest_task_packet",
+            "prepare_drift_checker_context_packet", "render_worker_prompt");
+
+        // ---- profile: worker-packet-auditor ----
+        // Narrow profile: same tool scope as worker-validator with packet-auditor-specific packet.
+        m.ProfileAdd(McpToolProfiles.WorkerPacketAuditor,
+            "get_project", "list_projects",
+            "get_space", "list_spaces",
+            "get_task", "list_tasks", "get_task_workflow_summary",
+            "get_document", "list_documents", "search_documents", "query_librarian",
+            "get_worker_run", "get_worker_run_status", "list_worker_runs",
+            "get_latest_worker_completion", "post_worker_completion_packet",
+            "get_latest_task_packet",
+            "prepare_packet_auditor_context_packet", "render_worker_prompt");
+
         // ---- profile: curator ----
         m.Profile(McpToolProfiles.Curator,
             McpToolBundles.Topics);

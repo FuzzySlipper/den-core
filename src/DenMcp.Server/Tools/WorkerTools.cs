@@ -171,7 +171,7 @@ public sealed class WorkerTools
         }
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "get_worker_run"), Description("Get a raw Den Pi worker run by run id or session id.")]
     public static async Task<string> GetWorkerRun(
@@ -186,7 +186,7 @@ public sealed class WorkerTools
         return Serialize(new { worker_run = ToWorkerRun(detail), summary = $"worker {RunId(detail.Session)} is {ToWorkerStatus(detail.Session)}" }, verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "list_worker_runs"), Description("List raw Den Pi worker runs with optional filters.")]
     public static async Task<string> ListWorkerRuns(
@@ -213,7 +213,7 @@ public sealed class WorkerTools
         return Serialize(new { worker_runs = workers, count = workers.Count, summary = $"listed {workers.Count} worker run(s)" }, verbose: true);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "get_worker_run_status"), Description("Get a Den Pi worker run status projection combining runtime state, launch handles, and latest completion-packet state.")]
     public static async Task<string> GetWorkerRunStatus(

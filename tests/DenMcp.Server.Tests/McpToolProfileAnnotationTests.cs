@@ -12,6 +12,12 @@ public class McpToolProfileAnnotationTests
     public void AssemblyAnnotations_MatchRegistry()
     {
         var mismatches = _registry.ValidateAgainstAssembly(typeof(AgentTools).Assembly);
+        // If the test fails, print detailed info
+        if (mismatches.Count > 0)
+        {
+            foreach (var m in mismatches)
+                Console.Error.WriteLine("VALIDATION_MISMATCH: " + m);
+        }
         Assert.Empty(mismatches);
     }
 

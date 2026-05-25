@@ -12,6 +12,9 @@ public static class McpToolProfiles
     public const string LegacyFull = "legacy-full";
     public const string WorkerCoder = "worker-coder";
     public const string WorkerReviewer = "worker-reviewer";
+    public const string WorkerValidator = "worker-validator";
+    public const string WorkerDriftChecker = "worker-drift-checker";
+    public const string WorkerPacketAuditor = "worker-packet-auditor";
     public const string Curator = "curator";
     public const string Diagnostics = "diagnostics";
 }

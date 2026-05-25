@@ -41,7 +41,7 @@ public sealed class SpaceTools
             : ConciseResponse.CreatedSpace(project);
     }
 
-    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("core")]
     [McpServerTool(Name = "list_spaces"), Description("List spaces with optional kind and visibility filters.")]
     public static async Task<string> ListSpaces(
@@ -54,7 +54,7 @@ public sealed class SpaceTools
         return JsonSerializer.Serialize(spaces, JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("core")]
     [McpServerTool(Name = "get_space"), Description("Get a space by ID with summary stats (task counts by status, unread messages).")]
     public static async Task<string> GetSpace(

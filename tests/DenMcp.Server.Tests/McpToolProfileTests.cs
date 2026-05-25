@@ -198,6 +198,72 @@ public sealed class McpToolProfileTests : IAsyncLifetime
         Assert.Contains("legacy_get_dispatch", names); // from legacy bundle
     }
 
+    [Theory]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
+    public async Task NewWorkerProfiles_AreNonEmpty(string profile)
+    {
+        var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+        var tools = await ListToolsAsync(sessionId);
+        var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+
+        Assert.True(tools.Count >= 14,
+            $"Profile '{profile}' expected at least 14 tools, got {tools.Count} ({string.Join(", ", names.OrderBy(n => n))})");
+        Assert.Contains("get_worker_run_status", names);
+        Assert.Contains("post_worker_completion_packet", names);
+        Assert.Contains("get_latest_task_packet", names);
+        Assert.Contains("render_worker_prompt", names);
+    }
+
+    [Theory]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
+    public async Task NewWorkerProfiles_ExcludeLegacyAndDiagnostics(string profile)
+    {
+        var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+        var tools = await ListToolsAsync(sessionId);
+        var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+
+        Assert.DoesNotContain("legacy_get_dispatch", names);
+        Assert.DoesNotContain("legacy_launch_pi_worker", names);
+        Assert.DoesNotContain("legacy_launch_validator_worker", names);
+        Assert.DoesNotContain("legacy_launch_drift_checker_worker", names);
+        Assert.DoesNotContain("legacy_launch_packet_auditor_worker", names);
+        Assert.DoesNotContain("send_agent_stream_message", names);
+    }
+
+    [Theory]
+    [InlineData("worker-validator", "prepare_validator_context_packet")]
+    [InlineData("worker-drift-checker", "prepare_drift_checker_context_packet")]
+    [InlineData("worker-packet-auditor", "prepare_packet_auditor_context_packet")]
+    public async Task NewWorkerProfiles_IncludeRoleSpecificPacket(string profile, string expectedPacketTool)
+    {
+        var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+        var tools = await ListToolsAsync(sessionId);
+        var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+
+        Assert.Contains(expectedPacketTool, names);
+        Assert.Contains("get_latest_task_packet", names);
+        Assert.Contains("get_worker_run_status", names);
+        Assert.Contains("post_worker_completion_packet", names);
+    }
+
+    [Theory]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
+    public async Task NewWorkerProfiles_HiddenToolCallIsRejected(string profile)
+    {
+        var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+
+        // These profiles do NOT include legacy tools
+        var result = await SendToolCallAsync(sessionId, 99, "legacy_get_dispatch", new { dispatch_id = 1 });
+        Assert.Contains("error", result);
+        Assert.Contains("\"code\":-32", result); // JSON-RPC method/tool not found error code
+    }
+
     private async Task<List<JsonNode?>> ListToolsAsync(string sessionId)
     {
         var payload = JsonSerializer.Serialize(new

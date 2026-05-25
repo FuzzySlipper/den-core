@@ -19,6 +19,9 @@ public class McpToolProfileRegistryTests
     [InlineData("legacy-full")]
     [InlineData("worker-coder")]
     [InlineData("worker-reviewer")]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
     [InlineData("curator")]
     [InlineData("diagnostics")]
     public void KnownProfiles_Exist(string profile)
@@ -122,6 +125,47 @@ public class McpToolProfileRegistryTests
         Assert.NotNull(allowed);
         Assert.Contains("create_task", allowed!); // from planner
         Assert.Contains("legacy_get_dispatch", allowed!); // from legacy bundle
+    }
+
+    [Theory]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
+    public void NewWorkerProfiles_AreNonEmpty(string profile)
+    {
+        var tools = _registry.GetProfileTools(profile);
+        Assert.NotEmpty(tools);
+        Assert.True(tools.Count >= 16,
+            $"Profile '{profile}' expected at least 16 tools, got {tools.Count} ({string.Join(", ", tools.OrderBy(t => t))})");
+    }
+
+    [Theory]
+    [InlineData("worker-validator")]
+    [InlineData("worker-drift-checker")]
+    [InlineData("worker-packet-auditor")]
+    public void NewWorkerProfiles_ExcludeLegacyAndDiagnostics(string profile)
+    {
+        var tools = _registry.GetProfileTools(profile);
+        var legacyTools = _registry.GetBundleTools("legacy");
+        var diagTools = _registry.GetBundleTools("diagnostics");
+        foreach (var t in legacyTools)
+            Assert.DoesNotContain(t, tools);
+        foreach (var t in diagTools)
+            Assert.DoesNotContain(t, tools);
+    }
+
+    [Theory]
+    [InlineData("worker-validator", "prepare_validator_context_packet")]
+    [InlineData("worker-drift-checker", "prepare_drift_checker_context_packet")]
+    [InlineData("worker-packet-auditor", "prepare_packet_auditor_context_packet")]
+    public void NewWorkerProfiles_IncludeRoleSpecificPacket(string profile, string expectedPacketTool)
+    {
+        var tools = _registry.GetProfileTools(profile);
+        Assert.Contains("get_worker_run_status", tools);
+        Assert.Contains("post_worker_completion_packet", tools);
+        Assert.Contains("get_latest_task_packet", tools);
+        Assert.Contains(expectedPacketTool, tools);
+        Assert.Contains("render_worker_prompt", tools);
     }
 
     [Theory]

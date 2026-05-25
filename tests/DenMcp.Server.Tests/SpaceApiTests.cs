@@ -311,6 +311,31 @@ public sealed class SpaceApiTests : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task PatchVisibility_RejectsInvalidValue()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"inv-vis-{suffix}", Name = "Invalid Visibility" });
+
+        // Invalid visibility values should be rejected with 400
+        foreach (var badVal in new[] { "visible", "deleted", "public", "private", "" })
+        {
+            var patchReq = new { visibility = badVal };
+            var response = await _client.PatchAsJsonAsync($"/api/spaces/inv-vis-{suffix}/visibility", patchReq);
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains("invalid visibility", doc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Verify space was not modified
+        var project = await repo.GetByIdAsync($"inv-vis-{suffix}");
+        Assert.NotNull(project);
+        Assert.Equal("normal", project!.Visibility);
+    }
+
     // ─── POST /api/spaces/{id}/archive ───────────────────────────────────
 
     [Fact]
@@ -484,6 +509,71 @@ public sealed class SpaceApiTests : IAsyncLifetime
 
         // Verify gone
         Assert.Null(await repo.GetByIdAsync($"force-dep-{suffix}"));
+    }
+
+    [Fact]
+    public async Task DeleteSpace_WithForce_BypassesProtectedKindGuard()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"force-kind-{suffix}", Name = "Force Delete System", Kind = "system" });
+
+        // force=true bypasses the protected kind check for system kind
+        var response = await _client.DeleteAsync($"/api/spaces/force-kind-{suffix}?force=true");
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(doc.RootElement.GetProperty("deleted").GetBoolean());
+
+        // Verify gone
+        Assert.Null(await repo.GetByIdAsync($"force-kind-{suffix}"));
+    }
+
+    [Fact]
+    public async Task DeleteSpace_WithForce_BypassesProtectedPersonalKindGuard()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"force-pers-{suffix}", Name = "Force Delete Personal", Kind = "personal" });
+
+        // force=true bypasses the protected kind check for personal kind
+        var response = await _client.DeleteAsync($"/api/spaces/force-pers-{suffix}?force=true");
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(doc.RootElement.GetProperty("deleted").GetBoolean());
+
+        // Verify gone
+        Assert.Null(await repo.GetByIdAsync($"force-pers-{suffix}"));
+    }
+
+    [Fact]
+    public async Task DeleteSpace_WithForce_BypassesProtectedCoreIdGuard()
+    {
+        // Create a space using core IDs that normally would be protected
+        var testIds = new[] { "den-force-test", "den-core-force-test", "core-force-test" };
+        foreach (var coreId in testIds)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+            var existing = await repo.GetByIdAsync(coreId);
+            if (existing is null)
+            {
+                await repo.CreateAsync(new Project { Id = coreId, Name = $"Force Core {coreId}" });
+            }
+
+            // force=true bypasses the protected core-id check
+            var response = await _client.DeleteAsync($"/api/spaces/{coreId}?force=true");
+            response.EnsureSuccessStatusCode();
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.True(doc.RootElement.GetProperty("deleted").GetBoolean());
+
+            // Verify gone
+            Assert.Null(await repo.GetByIdAsync(coreId));
+        }
     }
 
     // ─── MCP tool tests ────────────────────────────────────────────────────

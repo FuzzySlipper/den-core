@@ -354,6 +354,16 @@ public static class ConciseResponse
         });
     }
 
+    public static string InvalidVisibility(string visibility)
+    {
+        return Serialize(new
+        {
+            summary = $"invalid visibility '{visibility}': must be one of normal, hidden, archived",
+            error = true,
+            valid_values = new[] { "normal", "hidden", "archived" }
+        });
+    }
+
     public static string DeletedSpace(Project project)
     {
         return Serialize(new

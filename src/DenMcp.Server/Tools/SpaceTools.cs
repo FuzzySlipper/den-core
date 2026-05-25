@@ -74,6 +74,10 @@ public sealed class SpaceTools
         [Description("Space ID.")] string space_id,
         [Description("New visibility value: normal, hidden, archived.")] string visibility)
     {
+        var validVisibilities = new[] { "normal", "hidden", "archived" };
+        if (!validVisibilities.Contains(visibility))
+            return ConciseResponse.InvalidVisibility(visibility);
+
         var existing = await repo.GetByIdAsync(space_id)
             ?? throw new KeyNotFoundException($"Space '{space_id}' not found");
 

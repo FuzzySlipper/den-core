@@ -186,6 +186,7 @@ public sealed class McpToolProfileRegistry
         m.Add(McpToolBundles.Core,
             "create_project", "get_project", "list_projects",
             "create_space", "get_space", "list_spaces",
+            "update_space_visibility", "archive_space",
             "list_active_agents", "list_agent_instance_bindings");
 
         // ---- task bundle ----
@@ -360,7 +361,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Topics);
         m.ProfileAdd(McpToolProfiles.Curator,
             "list_projects", "get_project",
-            "list_spaces", "get_space");
+            "list_spaces", "get_space",
+            "update_space_visibility", "archive_space");
 
         // ---- profile: diagnostics ----
         m.Profile(McpToolProfiles.Diagnostics,
@@ -369,6 +371,20 @@ public sealed class McpToolProfileRegistry
         m.ProfileAdd(McpToolProfiles.Diagnostics,
             "list_active_agents", "list_agent_instance_bindings",
             "get_agent_guidance", "list_agent_guidance_entries");
+
+        // ---- delete_space: registered as core bundle member but restricted to admin-current only ----
+        // The annotation [McpToolBundle("core")] requires core in the tool's bundle map,
+        // but [McpToolProfile("admin-current")] restricts access. We register the bundle
+        // mapping directly without adding to the core bundle's tool set, then add it
+        // explicitly to the admin-current profile.
+        if (!_toolBundles.ContainsKey("delete_space"))
+            _toolBundles["delete_space"] = new HashSet<string>(StringComparer.Ordinal) { "core" };
+        if (!_profileTools.TryGetValue("admin-current", out var adminProfile))
+        {
+            adminProfile = new HashSet<string>(StringComparer.Ordinal);
+            _profileTools["admin-current"] = adminProfile;
+        }
+        adminProfile.Add("delete_space");
 
         // Freeze all computed sets
         foreach (var k in _toolBundles.Keys.ToList())

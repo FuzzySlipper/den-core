@@ -47,6 +47,14 @@ public static class SpaceRoutes
         // PATCH /api/spaces/{id}/visibility - update visibility (normal/hidden/archived)
         group.MapPatch("/{id}/visibility", async (IProjectRepository repo, string id, SpaceVisibilityRequest req) =>
         {
+            var validVisibilities = new[] { "normal", "hidden", "archived" };
+            if (!validVisibilities.Contains(req.Visibility))
+                return Results.BadRequest(new
+                {
+                    error = $"invalid visibility '{req.Visibility}': must be one of normal, hidden, archived",
+                    valid_values = new[] { "normal", "hidden", "archived" }
+                });
+
             var existing = await repo.GetByIdAsync(id);
             if (existing is null)
                 return Results.NotFound(new { error = $"Space '{id}' not found" });

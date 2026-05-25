@@ -11,6 +11,9 @@ public interface IProjectRepository
     Task<List<Project>> GetAllAsync();
     Task<List<Project>> ListAsync(string? kind = null, bool includeHidden = false, bool includeArchived = false);
     Task<ProjectWithStats> GetWithStatsAsync(string id, string? agent = null);
+    Task<Project> UpdateVisibilityAsync(string id, string visibility);
+    Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id);
+    Task DeleteSpaceAsync(string id);
 }
 
 public sealed class ProjectRepository : IProjectRepository
@@ -149,6 +152,76 @@ public sealed class ProjectRepository : IProjectRepository
             TaskCountsByStatus = counts,
             UnreadMessageCount = unread
         };
+    }
+
+    public async Task<Project> UpdateVisibilityAsync(string id, string visibility)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE projects
+            SET visibility = @visibility, updated_at = datetime('now')
+            WHERE id = @id
+            RETURNING id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
+        cmd.Parameters.AddWithValue("@visibility", visibility);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new KeyNotFoundException($"Project '{id}' not found");
+
+        return ReadProject(reader);
+    }
+
+    public async Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        var counts = new Dictionary<string, int>();
+
+        // Check all tables that have FK references to projects
+        var queries = new Dictionary<string, string>
+        {
+            ["tasks"] = "SELECT COUNT(*) FROM tasks WHERE project_id = @id",
+            ["messages"] = "SELECT COUNT(*) FROM messages WHERE project_id = @id",
+            ["documents"] = "SELECT COUNT(*) FROM documents WHERE project_id = @id",
+            ["agent_sessions"] = "SELECT COUNT(*) FROM agent_sessions WHERE project_id = @id",
+            ["agent_instance_bindings"] = "SELECT COUNT(*) FROM agent_instance_bindings WHERE project_id = @id",
+            ["dispatch_entries"] = "SELECT COUNT(*) FROM dispatch_entries WHERE project_id = @id",
+            ["channels"] = "SELECT COUNT(*) FROM channels WHERE project_id = @id",
+            ["agent_stream_entries"] = "SELECT COUNT(*) FROM agent_stream_entries WHERE project_id = @id",
+            ["agent_workspaces"] = "SELECT COUNT(*) FROM agent_workspaces WHERE project_id = @id",
+            ["pi_sessions"] = "SELECT COUNT(*) FROM pi_sessions WHERE project_id = @id",
+            ["desktop_git_snapshots"] = "SELECT COUNT(*) FROM desktop_git_snapshots WHERE project_id = @id",
+            ["desktop_diff_snapshots"] = "SELECT COUNT(*) FROM desktop_diff_snapshots WHERE project_id = @id",
+            ["desktop_session_events"] = "SELECT COUNT(*) FROM desktop_session_events WHERE project_id = @id",
+            ["collaboration_sessions"] = "SELECT COUNT(*) FROM collaboration_sessions WHERE project_id = @id",
+            ["agent_runs"] = "SELECT COUNT(*) FROM agent_runs WHERE project_id = @id"
+        };
+
+        foreach (var (table, sql) in queries)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.Parameters.AddWithValue("@id", id);
+            var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+            if (count > 0)
+                counts[table] = count;
+        }
+
+        return counts;
+    }
+
+    public async Task DeleteSpaceAsync(string id)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM projects WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", id);
+
+        var rows = await cmd.ExecuteNonQueryAsync();
+        if (rows == 0)
+            throw new KeyNotFoundException($"Project '{id}' not found");
     }
 
     private static Project ReadProject(SqliteDataReader reader) => new()

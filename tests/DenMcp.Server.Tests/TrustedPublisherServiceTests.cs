@@ -662,6 +662,9 @@ public class TrustedPublisherServiceTests : IDisposable
         public Task<List<Project>> GetAllAsync() => Task.FromResult(new List<Project> { project });
         public Task<List<Project>> ListAsync(string? kind = null, bool includeHidden = false, bool includeArchived = false) => Task.FromResult(new List<Project> { project });
         public Task<ProjectWithStats> GetWithStatsAsync(string id, string? agent = null) => throw new NotSupportedException();
+        public Task<Project> UpdateVisibilityAsync(string id, string visibility) => throw new NotSupportedException();
+        public Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id) => Task.FromResult(new Dictionary<string, int>());
+        public Task DeleteSpaceAsync(string id) => Task.CompletedTask;
     }
 
     private sealed class FakePiSessionService(string workspacePath, string state) : IPiSessionService

@@ -239,6 +239,257 @@ public sealed class SpaceApiTests : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    // ─── PATCH /api/spaces/{id}/visibility ───────────────────────────────
+
+    [Fact]
+    public async Task PatchVisibility_UpdatesToHidden()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"vis-test-{suffix}", Name = "Visibility Test" });
+
+        var patchReq = new { visibility = "hidden" };
+        var response = await _client.PatchAsJsonAsync($"/api/spaces/vis-test-{suffix}/visibility", patchReq);
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal($"vis-test-{suffix}", doc.RootElement.GetProperty("id").GetString());
+        Assert.Equal("hidden", doc.RootElement.GetProperty("visibility").GetString());
+
+        // Verify it's excluded from default listing
+        var listResponse = await _client.GetAsync("/api/spaces");
+        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var ids = listDoc.RootElement.EnumerateArray().Select(e => e.GetProperty("id").GetString()).ToHashSet();
+        Assert.DoesNotContain($"vis-test-{suffix}", ids);
+    }
+
+    [Fact]
+    public async Task PatchVisibility_UpdatesToArchived()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"arch-test-{suffix}", Name = "Archive Test" });
+
+        var patchReq = new { visibility = "archived" };
+        var response = await _client.PatchAsJsonAsync($"/api/spaces/arch-test-{suffix}/visibility", patchReq);
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("archived", doc.RootElement.GetProperty("visibility").GetString());
+    }
+
+    [Fact]
+    public async Task PatchVisibility_CanRestoreFromHidden()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"restore-test-{suffix}", Name = "Restore Test", Visibility = "hidden" });
+
+        // Restore to normal
+        var patchReq = new { visibility = "normal" };
+        var response = await _client.PatchAsJsonAsync($"/api/spaces/restore-test-{suffix}/visibility", patchReq);
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("normal", doc.RootElement.GetProperty("visibility").GetString());
+
+        // Verify it shows up in default listing
+        var listResponse = await _client.GetAsync("/api/spaces");
+        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var ids = listDoc.RootElement.EnumerateArray().Select(e => e.GetProperty("id").GetString()).ToHashSet();
+        Assert.Contains($"restore-test-{suffix}", ids);
+    }
+
+    [Fact]
+    public async Task PatchVisibility_NotFound_Returns404()
+    {
+        var patchReq = new { visibility = "hidden" };
+        var response = await _client.PatchAsJsonAsync("/api/spaces/nonexistent/visibility", patchReq);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ─── POST /api/spaces/{id}/archive ───────────────────────────────────
+
+    [Fact]
+    public async Task PostArchive_ArchivesSpace()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"arc-{suffix}", Name = "To Archive" });
+
+        var response = await _client.PostAsync($"/api/spaces/arc-{suffix}/archive", null);
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("archived", doc.RootElement.GetProperty("visibility").GetString());
+
+        // Excluded from default listing
+        var listResponse = await _client.GetAsync("/api/spaces");
+        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        var ids = listDoc.RootElement.EnumerateArray().Select(e => e.GetProperty("id").GetString()).ToHashSet();
+        Assert.DoesNotContain($"arc-{suffix}", ids);
+
+        // Included with includeArchived=true
+        var archivedResponse = await _client.GetAsync("/api/spaces?includeArchived=true");
+        using var archivedDoc = JsonDocument.Parse(await archivedResponse.Content.ReadAsStringAsync());
+        var archivedIds = archivedDoc.RootElement.EnumerateArray().Select(e => e.GetProperty("id").GetString()).ToHashSet();
+        Assert.Contains($"arc-{suffix}", archivedIds);
+    }
+
+    [Fact]
+    public async Task PostArchive_NotFound_Returns404()
+    {
+        var response = await _client.PostAsync("/api/spaces/nonexistent/archive", null);
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ─── DELETE /api/spaces/{id} ─────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteSpace_RefusesSystemKind()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"sys-del-{suffix}", Name = "System Space", Kind = "system" });
+
+        var response = await _client.DeleteAsync($"/api/spaces/sys-del-{suffix}");
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains("protected", doc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        // Space still exists
+        Assert.NotNull(await repo.GetByIdAsync($"sys-del-{suffix}"));
+    }
+
+    [Fact]
+    public async Task DeleteSpace_RefusesPersonalKind()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"pers-del-{suffix}", Name = "Personal Space", Kind = "personal" });
+
+        var response = await _client.DeleteAsync($"/api/spaces/pers-del-{suffix}");
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains("protected", doc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeleteSpace_RefusesCoreProjectIds()
+    {
+        foreach (var coreId in new[] { "den", "den-core", "core" })
+        {
+            using var scope = _factory.Services.CreateScope();
+            var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+
+            // Use the exact core ID (no suffix) so the guard catches it
+            var existing = await repo.GetByIdAsync(coreId);
+            if (existing is null)
+            {
+                await repo.CreateAsync(new Project { Id = coreId, Name = $"Core {coreId}" });
+            }
+
+            var response = await _client.DeleteAsync($"/api/spaces/{coreId}");
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Contains("protected", doc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteSpace_ReportsDependentsAndRefuses()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"dep-test-{suffix}", Name = "Dep Test" });
+
+        // Create a dependent task
+        var taskRepo = scope.ServiceProvider.GetRequiredService<ITaskRepository>();
+        await taskRepo.CreateAsync(new ProjectTask
+        {
+            ProjectId = $"dep-test-{suffix}",
+            Title = "Dependent Task"
+        });
+
+        var response = await _client.DeleteAsync($"/api/spaces/dep-test-{suffix}");
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains("dependent", doc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        // Verify dependent_counts are reported
+        var dependentCounts = doc.RootElement.GetProperty("dependent_counts");
+        Assert.True(dependentCounts.TryGetProperty("tasks", out var taskCount));
+        Assert.True(taskCount.GetInt32() >= 1);
+    }
+
+    [Fact]
+    public async Task DeleteSpace_WithForce_DeletesEmptySpace()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"force-del-{suffix}", Name = "Force Delete Me", Kind = "assistant" });
+
+        var response = await _client.DeleteAsync($"/api/spaces/force-del-{suffix}?force=true");
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(doc.RootElement.GetProperty("deleted").GetBoolean());
+        Assert.Equal($"force-del-{suffix}", doc.RootElement.GetProperty("id").GetString());
+
+        // Verify gone
+        Assert.Null(await repo.GetByIdAsync($"force-del-{suffix}"));
+    }
+
+    [Fact]
+    public async Task DeleteSpace_NotFound_Returns404()
+    {
+        var response = await _client.DeleteAsync("/api/spaces/nonexistent");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteSpace_WithForce_DeletesWithDependents()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"force-dep-{suffix}", Name = "Force Delete Deps", Kind = "assistant" });
+
+        // Create dependent task
+        var taskRepo = scope.ServiceProvider.GetRequiredService<ITaskRepository>();
+        await taskRepo.CreateAsync(new ProjectTask
+        {
+            ProjectId = $"force-dep-{suffix}",
+            Title = "Dependent Task"
+        });
+
+        // force=true should bypass dependency check
+        var response = await _client.DeleteAsync($"/api/spaces/force-dep-{suffix}?force=true");
+        response.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.True(doc.RootElement.GetProperty("deleted").GetBoolean());
+
+        // Verify gone
+        Assert.Null(await repo.GetByIdAsync($"force-dep-{suffix}"));
+    }
+
+    // ─── MCP tool tests ────────────────────────────────────────────────────
+    // MCP tools are tested via the HTTP REST API endpoints above.
+    // Streamable HTTP transport tests belong in McpEndpointTests.cs.
+
     private sealed class SpaceAppFactory : WebApplicationFactory<Program>
     {
         private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"den-mcp-space-{Guid.NewGuid()}.db");

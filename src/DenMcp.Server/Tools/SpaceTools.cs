@@ -65,4 +65,70 @@ public sealed class SpaceTools
         var stats = await repo.GetWithStatsAsync(space_id, agent);
         return JsonSerializer.Serialize(stats, JsonOpts.Default);
     }
+
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
+    [McpServerTool(Name = "update_space_visibility"), Description("Update a space's visibility (normal, hidden, archived). The preferred green path for removing spaces from normal lists without data loss. Archived spaces are preserved but excluded from default list views.")]
+    public static async Task<string> UpdateSpaceVisibility(
+        IProjectRepository repo,
+        [Description("Space ID.")] string space_id,
+        [Description("New visibility value: normal, hidden, archived.")] string visibility)
+    {
+        var existing = await repo.GetByIdAsync(space_id)
+            ?? throw new KeyNotFoundException($"Space '{space_id}' not found");
+
+        var oldVisibility = existing.Visibility;
+        var updated = await repo.UpdateVisibilityAsync(space_id, visibility);
+        return ConciseResponse.UpdatedSpaceVisibility(updated, oldVisibility);
+    }
+
+    [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
+    [McpServerTool(Name = "archive_space"), Description("Convenience method to archive a space (set visibility to 'archived'). Preserves all data but removes space from default listing. Reversible via update_space_visibility.")]
+    public static async Task<string> ArchiveSpace(
+        IProjectRepository repo,
+        [Description("Space ID to archive.")] string space_id)
+    {
+        var existing = await repo.GetByIdAsync(space_id)
+            ?? throw new KeyNotFoundException($"Space '{space_id}' not found");
+
+        var updated = await repo.UpdateVisibilityAsync(space_id, "archived");
+        return ConciseResponse.ArchivedSpace(updated);
+    }
+
+    [McpToolProfile("admin-current")]
+    [McpToolBundle("core")]
+    [McpServerTool(Name = "delete_space"), Description("ADMIN: Permanently delete a space and all its data. Refuses to delete system, personal, and core project spaces. Reports dependent records before deletion. Use archive_space or update_space_visibility as the non-destructive alternative.")]
+    public static async Task<string> DeleteSpace(
+        IProjectRepository repo,
+        [Description("Space ID to delete.")] string space_id,
+        [Description("Bypass protection for system/personal/core project spaces. Use with extreme caution.")] bool force = false)
+    {
+        var existing = await repo.GetByIdAsync(space_id);
+        if (existing is null)
+            throw new KeyNotFoundException($"Space '{space_id}' not found");
+
+        // Guard: protect system, personal, and core project spaces
+        var protectedKinds = new[] { "system", "personal" };
+        var protectedIds = new[] { "den", "den-core", "core" };
+
+        if (!force && protectedKinds.Contains(existing.Kind))
+            return ConciseResponse.SpaceDeleteBlocked(space_id,
+                $"cannot delete {existing.Kind} kind space (protected)");
+
+        if (!force && protectedIds.Contains(space_id))
+            return ConciseResponse.SpaceDeleteBlocked(space_id,
+                "core project space is protected from deletion");
+
+        // Report dependent records
+        var dependentCounts = await repo.GetDependentRecordCountsAsync(space_id);
+        if (dependentCounts.Count > 0 && !force)
+            return ConciseResponse.SpaceDeleteBlocked(space_id,
+                "space has dependent records; archive or hide instead, or use force=true to delete everything",
+                dependentCounts);
+
+        // Proceed with deletion
+        await repo.DeleteSpaceAsync(space_id);
+        return ConciseResponse.DeletedSpace(existing);
+    }
 }

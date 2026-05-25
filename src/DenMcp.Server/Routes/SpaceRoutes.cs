@@ -43,6 +43,80 @@ public static class SpaceRoutes
                 return Results.NotFound(new { error = $"Space '{id}' not found" });
             }
         });
+
+        // PATCH /api/spaces/{id}/visibility - update visibility (normal/hidden/archived)
+        group.MapPatch("/{id}/visibility", async (IProjectRepository repo, string id, SpaceVisibilityRequest req) =>
+        {
+            var existing = await repo.GetByIdAsync(id);
+            if (existing is null)
+                return Results.NotFound(new { error = $"Space '{id}' not found" });
+
+            try
+            {
+                var updated = await repo.UpdateVisibilityAsync(id, req.Visibility);
+                return Results.Ok(updated);
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { error = $"Space '{id}' not found" });
+            }
+        });
+
+        // POST /api/spaces/{id}/archive - convenience endpoint to archive a space
+        group.MapPost("/{id}/archive", async (IProjectRepository repo, string id) =>
+        {
+            var existing = await repo.GetByIdAsync(id);
+            if (existing is null)
+                return Results.NotFound(new { error = $"Space '{id}' not found" });
+
+            try
+            {
+                var updated = await repo.UpdateVisibilityAsync(id, "archived");
+                return Results.Ok(updated);
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { error = $"Space '{id}' not found" });
+            }
+        });
+
+        // DELETE /api/spaces/{id} - guarded delete with dependent record reporting
+        group.MapDelete("/{id}", async (IProjectRepository repo, string id, bool? force) =>
+        {
+            var existing = await repo.GetByIdAsync(id);
+            if (existing is null)
+                return Results.NotFound(new { error = $"Space '{id}' not found" });
+
+            var forceDelete = force == true;
+
+            // Guard: protect system, personal, and core project spaces
+            var protectedKinds = new[] { "system", "personal" };
+            var protectedIds = new[] { "den", "den-core", "core" };
+
+            if (!forceDelete && protectedKinds.Contains(existing.Kind))
+                return Results.BadRequest(new
+                {
+                    error = $"Cannot delete {existing.Kind} kind space '{id}' (protected). Use archive or hide instead."
+                });
+
+            if (!forceDelete && protectedIds.Contains(id))
+                return Results.BadRequest(new
+                {
+                    error = $"Core project space '{id}' is protected from deletion. Use archive or hide instead."
+                });
+
+            // Report dependent records
+            var dependentCounts = await repo.GetDependentRecordCountsAsync(id);
+            if (dependentCounts.Count > 0 && !forceDelete)
+                return Results.BadRequest(new
+                {
+                    error = $"Space '{id}' has {dependentCounts.Values.Sum()} dependent records. Archive or hide instead, or use ?force=true to delete everything.",
+                    dependent_counts = dependentCounts
+                });
+
+            await repo.DeleteSpaceAsync(id);
+            return Results.Ok(new { deleted = true, id });
+        });
     }
 }
 
@@ -55,3 +129,5 @@ public record SpaceCreateRequest(
     string? RootPath = null,
     string? Description = null,
     string? SettingsJson = null);
+
+public record SpaceVisibilityRequest(string Visibility);

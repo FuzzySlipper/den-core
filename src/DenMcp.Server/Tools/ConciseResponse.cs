@@ -329,6 +329,61 @@ public static class ConciseResponse
         });
     }
 
+    public static string UpdatedSpaceVisibility(Project project, string oldVisibility)
+    {
+        return Serialize(new
+        {
+            summary = $"updated space '{project.Id}' visibility: {oldVisibility} -> {project.Visibility}",
+            id = project.Id,
+            name = project.Name,
+            kind = project.Kind,
+            visibility = project.Visibility,
+            old_visibility = oldVisibility
+        });
+    }
+
+    public static string ArchivedSpace(Project project)
+    {
+        return Serialize(new
+        {
+            summary = $"archived space '{project.Id}'",
+            id = project.Id,
+            name = project.Name,
+            kind = project.Kind,
+            visibility = "archived"
+        });
+    }
+
+    public static string DeletedSpace(Project project)
+    {
+        return Serialize(new
+        {
+            summary = $"deleted space '{project.Id}'",
+            id = project.Id,
+            name = project.Name,
+            kind = project.Kind
+        });
+    }
+
+    public static string SpaceDeleteBlocked(string id, string reason, Dictionary<string, int>? dependentCounts = null)
+    {
+        var parts = new List<string> { $"cannot delete space '{id}': {reason}" };
+        if (dependentCounts is { Count: > 0 })
+        {
+            var depSummary = string.Join(", ",
+                dependentCounts.Select(kv => $"{kv.Value} {kv.Key}"));
+            parts.Add($" ({depSummary})");
+        }
+        return Serialize(new
+        {
+            summary = string.Concat(parts),
+            id,
+            blocked = true,
+            reason,
+            dependent_counts = dependentCounts
+        });
+    }
+
     // Agent stream operations
 
     public static string SentAgentStreamMessage(AgentStreamMessageCreateResult result)

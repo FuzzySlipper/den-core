@@ -997,6 +997,79 @@ public sealed class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS idx_curation_decisions_clip
             ON curation_decisions(clip_id);
+
+        ------------------------------------------------------------
+        -- DISCUSSION THREADS
+        ------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS discussion_threads (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_type         TEXT NOT NULL
+                                CHECK (target_type IN ('document')),
+            target_project_id   TEXT NOT NULL,
+            target_id           INTEGER,
+            target_slug         TEXT,
+            target_anchor       TEXT,
+            thread_key          TEXT NOT NULL,
+            title               TEXT,
+            status              TEXT NOT NULL DEFAULT 'open'
+                                CHECK (status IN (
+                                    'open',
+                                    'resolved',
+                                    'archived'
+                                )),
+            created_by          TEXT NOT NULL,
+            summary             TEXT,
+            resolution_summary  TEXT,
+            metadata_json       TEXT,
+            last_comment_at     TEXT,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            UNIQUE(target_type, target_project_id, target_slug, thread_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_discussion_threads_target
+            ON discussion_threads(target_type, target_project_id, target_slug);
+        CREATE INDEX IF NOT EXISTS idx_discussion_threads_status
+            ON discussion_threads(status);
+
+        ------------------------------------------------------------
+        -- DISCUSSION COMMENTS
+        ------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS discussion_comments (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id           INTEGER NOT NULL
+                                REFERENCES discussion_threads(id) ON DELETE CASCADE,
+            parent_comment_id   INTEGER
+                                REFERENCES discussion_comments(id) ON DELETE CASCADE,
+            author_identity     TEXT NOT NULL,
+            body_markdown       TEXT NOT NULL,
+            comment_kind        TEXT NOT NULL DEFAULT 'comment'
+                                CHECK (comment_kind IN (
+                                    'comment',
+                                    'suggestion',
+                                    'question',
+                                    'resolution'
+                                )),
+            status              TEXT NOT NULL DEFAULT 'active'
+                                CHECK (status IN (
+                                    'active',
+                                    'edited',
+                                    'deleted'
+                                )),
+            mentions_json       TEXT,
+            source_refs_json    TEXT,
+            metadata_json       TEXT,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+            edited_at           TEXT,
+            updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_discussion_comments_thread
+            ON discussion_comments(thread_id, created_at ASC, id ASC);
+        CREATE INDEX IF NOT EXISTS idx_discussion_comments_parent
+            ON discussion_comments(parent_comment_id)
+            WHERE parent_comment_id IS NOT NULL;
         """;
 
     private async Task RunMigrationsAsync(SqliteConnection connection)
@@ -1125,6 +1198,7 @@ public sealed class DatabaseInitializer
             CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_stream_dedup
             ON agent_stream_entries(dedup_key) WHERE dedup_key IS NOT NULL
             """);
+        await EnsureDiscussionSchemaAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2354,5 +2428,84 @@ public sealed class DatabaseInitializer
             fkOn.CommandText = "PRAGMA foreign_keys = ON;";
             await fkOn.ExecuteNonQueryAsync();
         }
+    }
+
+    private static async Task EnsureDiscussionSchemaAsync(SqliteConnection connection)
+    {
+        // discussion_threads — idempotent via IF NOT EXISTS in Schema.
+        // This migration handles existing databases that predate the schema addition.
+        await using var threadCmd = connection.CreateCommand();
+        threadCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS discussion_threads (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_type         TEXT NOT NULL
+                                    CHECK (target_type IN ('document')),
+                target_project_id   TEXT NOT NULL,
+                target_id           INTEGER,
+                target_slug         TEXT,
+                target_anchor       TEXT,
+                thread_key          TEXT NOT NULL,
+                title               TEXT,
+                status              TEXT NOT NULL DEFAULT 'open'
+                                    CHECK (status IN (
+                                        'open',
+                                        'resolved',
+                                        'archived'
+                                    )),
+                created_by          TEXT NOT NULL,
+                summary             TEXT,
+                resolution_summary  TEXT,
+                metadata_json       TEXT,
+                last_comment_at     TEXT,
+                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(target_type, target_project_id, target_slug, thread_key)
+            )
+            """;
+        await threadCmd.ExecuteNonQueryAsync();
+
+        await using var commentCmd = connection.CreateCommand();
+        commentCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS discussion_comments (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id           INTEGER NOT NULL
+                                    REFERENCES discussion_threads(id) ON DELETE CASCADE,
+                parent_comment_id   INTEGER
+                                    REFERENCES discussion_comments(id) ON DELETE CASCADE,
+                author_identity     TEXT NOT NULL,
+                body_markdown       TEXT NOT NULL,
+                comment_kind        TEXT NOT NULL DEFAULT 'comment'
+                                    CHECK (comment_kind IN (
+                                        'comment',
+                                        'suggestion',
+                                        'question',
+                                        'resolution'
+                                    )),
+                status              TEXT NOT NULL DEFAULT 'active'
+                                    CHECK (status IN (
+                                        'active',
+                                        'edited',
+                                        'deleted'
+                                    )),
+                mentions_json       TEXT,
+                source_refs_json    TEXT,
+                metadata_json       TEXT,
+                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                edited_at           TEXT,
+                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """;
+        await commentCmd.ExecuteNonQueryAsync();
+
+        // Idempotent index ensures
+        await EnsureIndexAsync(connection, "idx_discussion_threads_target",
+            "CREATE INDEX IF NOT EXISTS idx_discussion_threads_target ON discussion_threads(target_type, target_project_id, target_slug)");
+        await EnsureIndexAsync(connection, "idx_discussion_threads_status",
+            "CREATE INDEX IF NOT EXISTS idx_discussion_threads_status ON discussion_threads(status)");
+        await EnsureIndexAsync(connection, "idx_discussion_comments_thread",
+            "CREATE INDEX IF NOT EXISTS idx_discussion_comments_thread ON discussion_comments(thread_id, created_at ASC, id ASC)");
+        await EnsureIndexAsync(connection, "idx_discussion_comments_parent",
+            "CREATE INDEX IF NOT EXISTS idx_discussion_comments_parent ON discussion_comments(parent_comment_id) WHERE parent_comment_id IS NOT NULL");
     }
 }

@@ -91,6 +91,7 @@ builder.Services.AddSingleton<IPiSessionRepository, PiSessionRepository>();
 builder.Services.AddSingleton<IDesktopSnapshotRepository, DesktopSnapshotRepository>();
 builder.Services.AddSingleton<IDesktopSessionEventRepository, DesktopSessionEventRepository>();
 builder.Services.AddSingleton<ICollaborationRepository, CollaborationRepository>();
+builder.Services.AddSingleton<IDiscussionRepository, DiscussionRepository>();
 builder.Services.AddSingleton<AgentStreamRealtimeHub>();
 builder.Services.AddSingleton<INotificationChannel, NoOpNotificationChannel>();
 builder.Services.AddSingleton<IAgentStreamOpsService, AgentStreamOpsService>();

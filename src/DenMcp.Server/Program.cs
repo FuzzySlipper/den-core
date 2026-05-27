@@ -185,6 +185,7 @@ app.MapGitInspectionRoutes();
 app.MapPiLaunchProfileRoutes();
 app.MapPiSessionRoutes();
 app.MapLibrarianRoutes();
+app.MapDiscussionRoutes();
 
 // MCP endpoint
 app.MapMcp("/mcp");

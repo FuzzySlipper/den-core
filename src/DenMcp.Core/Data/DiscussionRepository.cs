@@ -34,9 +34,9 @@ public interface IDiscussionRepository
     Task<DiscussionThread?> GetThreadByIdAsync(int threadId);
 
     /// <summary>
-    /// Lists threads for a document target.
+    /// Lists threads for a document target, optionally filtered by status.
     /// </summary>
-    Task<List<DiscussionThread>> ListDocumentThreadsAsync(string projectId, string slug);
+    Task<List<DiscussionThread>> ListDocumentThreadsAsync(string projectId, string slug, string? status = null);
 
     /// <summary>
     /// Updates thread status, summary, resolution_summary, or title.
@@ -188,11 +188,12 @@ public sealed class DiscussionRepository : IDiscussionRepository
         return await reader.ReadAsync() ? ReadThread(reader) : null;
     }
 
-    public async Task<List<DiscussionThread>> ListDocumentThreadsAsync(string projectId, string slug)
+    public async Task<List<DiscussionThread>> ListDocumentThreadsAsync(string projectId, string slug, string? status = null)
     {
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+
+        var sql = """
             SELECT id, target_type, target_project_id, target_id, target_slug,
                    target_anchor, thread_key, title, status, created_by,
                    summary, resolution_summary, metadata_json, last_comment_at,
@@ -201,10 +202,18 @@ public sealed class DiscussionRepository : IDiscussionRepository
             WHERE target_type = 'document'
               AND target_project_id = @targetProjectId
               AND target_slug = @targetSlug
-            ORDER BY updated_at DESC
             """;
         cmd.Parameters.AddWithValue("@targetProjectId", projectId);
         cmd.Parameters.AddWithValue("@targetSlug", slug);
+
+        if (status is not null)
+        {
+            sql += " AND status = @status\n";
+            cmd.Parameters.AddWithValue("@status", status);
+        }
+
+        sql += " ORDER BY updated_at DESC\n";
+        cmd.CommandText = sql;
 
         var results = new List<DiscussionThread>();
         await using var reader = await cmd.ExecuteReaderAsync();

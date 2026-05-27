@@ -69,6 +69,82 @@ public static class DocumentRoutes
             var docs = await repo.ListAsync(projectId, parsedType, tagList);
             return Results.Ok(docs);
         });
+
+        // ── Document discussion convenience routes ──
+
+        // GET /api/projects/{projectId}/documents/{slug}/discussion
+        group.MapGet("/{slug}/discussion", async (IDiscussionRepository repo, IDocumentRepository docRepo, string projectId, string slug) =>
+        {
+            var doc = await docRepo.GetAsync(projectId, slug);
+            if (doc is null)
+                return Results.NotFound(new { error = $"Document '{slug}' not found" });
+
+            // Fetch default thread — do NOT create one on pure GET
+            var threads = await repo.ListDocumentThreadsAsync(projectId, slug);
+            var defaultThread = threads.FirstOrDefault(t => t.ThreadKey == "default");
+            if (defaultThread is null)
+                return Results.Ok(new DiscussionDetailResponse
+                {
+                    Thread = new DiscussionThreadResponse
+                    {
+                        Id = 0,
+                        TargetType = "document",
+                        TargetProjectId = projectId,
+                        TargetSlug = slug,
+                        ThreadKey = "default",
+                        Title = $"Discussion for {slug}",
+                        Status = "open",
+                        CreatedBy = "",
+                        CreatedAt = DateTime.MinValue,
+                        UpdatedAt = DateTime.MinValue
+                    },
+                    Comments = new List<DiscussionCommentResponse>()
+                });
+
+            var comments = await repo.ListCommentsAsync(defaultThread.Id);
+            return Results.Ok(new DiscussionDetailResponse(defaultThread, comments));
+        });
+
+        // POST /api/projects/{projectId}/documents/{slug}/discussion/comments
+        group.MapPost("/{slug}/discussion/comments", async (IDiscussionRepository repo, IDocumentRepository docRepo, string projectId, string slug, CreateCommentRequest req) =>
+        {
+            var doc = await docRepo.GetAsync(projectId, slug);
+            if (doc is null)
+                return Results.NotFound(new { error = $"Document '{slug}' not found" });
+
+            if (string.IsNullOrWhiteSpace(req.BodyMarkdown))
+                return Results.BadRequest(new { error = "body_markdown is required" });
+            if (string.IsNullOrWhiteSpace(req.AuthorIdentity))
+                return Results.BadRequest(new { error = "author_identity is required" });
+
+            try
+            {
+                // Ensure the default thread exists
+                var thread = await repo.GetOrCreateDefaultDocumentThreadAsync(projectId, slug, req.AuthorIdentity);
+                var comment = await repo.AddCommentAsync(
+                    thread.Id, req.BodyMarkdown, req.AuthorIdentity, req.CommentKind);
+
+                return Results.Created(
+                    $"/api/projects/{projectId}/documents/{slug}/discussion/threads/{thread.Id}/comments/{comment.Id}",
+                    new DiscussionCommentResponse(comment));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(new { error = ex.Message });
+            }
+        });
+
+        // Optional: GET /api/projects/{projectId}/documents/{slug}/discussion/threads
+        group.MapGet("/{slug}/discussion/threads", async (IDiscussionRepository repo, IDocumentRepository docRepo, string projectId, string slug, string? status) =>
+        {
+            var doc = await docRepo.GetAsync(projectId, slug);
+            if (doc is null)
+                return Results.NotFound(new { error = $"Document '{slug}' not found" });
+
+            var threads = await repo.ListDocumentThreadsAsync(projectId, slug, status);
+            var responses = threads.Select(t => new DiscussionThreadResponse(t)).ToList();
+            return Results.Ok(responses);
+        });
     }
 }
 

@@ -40,19 +40,20 @@ public sealed class DiscussionTools
         if (doc is null)
             return JsonSerializer.Serialize(new { error = $"Document '{slug}' not found in project '{project_id}'." }, JsonOpts.Default);
 
-        DiscussionThread? defaultThread = null;
+        var threadKey = ThreadKeyForAnchor(anchor);
+        DiscussionThread? selectedThread = null;
 
         if (create_if_missing)
         {
-            defaultThread = await repo.GetOrCreateDefaultDocumentThreadAsync(project_id, slug, "mcp-agent");
+            selectedThread = await GetOrCreateDocumentThreadAsync(repo, project_id, slug, threadKey, "mcp-agent");
         }
         else
         {
             var threads = await repo.ListDocumentThreadsAsync(project_id, slug);
-            defaultThread = threads.FirstOrDefault(t => t.ThreadKey == "default");
+            selectedThread = threads.FirstOrDefault(t => t.ThreadKey == threadKey);
         }
 
-        if (defaultThread is null)
+        if (selectedThread is null)
         {
             // No discussion threads at all — return empty
             if (verbose)
@@ -62,12 +63,13 @@ public sealed class DiscussionTools
 
         // Collect threads
         var allThreads = await repo.ListDocumentThreadsAsync(project_id, slug);
-        var filteredThreads = include_resolved
-            ? allThreads
-            : allThreads.Where(t => t.Status == DiscussionThreadStatus.Open).ToList();
+        var filteredThreads = allThreads
+            .Where(t => anchor is null || t.ThreadKey == threadKey)
+            .Where(t => include_resolved || t.Status == DiscussionThreadStatus.Open)
+            .ToList();
 
-        // Collect comments for default thread
-        var comments = await repo.ListCommentsAsync(defaultThread.Id);
+        // Collect comments for the selected/default thread
+        var comments = await repo.ListCommentsAsync(selectedThread.Id);
 
         if (verbose)
         {
@@ -77,7 +79,7 @@ public sealed class DiscussionTools
                 project_id,
                 slug,
                 threads = filteredThreads,
-                default_thread = defaultThread,
+                default_thread = selectedThread,
                 comments
             }, JsonOpts.Default);
         }
@@ -87,9 +89,9 @@ public sealed class DiscussionTools
             summary = $"Discussion for '{project_id}/{slug}': {filteredThreads.Count} thread(s), {comments.Count} comment(s)",
             threads_count = filteredThreads.Count,
             comments_count = comments.Count,
-            default_thread_id = defaultThread.Id,
-            default_thread_title = defaultThread.Title,
-            default_thread_status = defaultThread.Status
+            default_thread_id = selectedThread.Id,
+            default_thread_title = selectedThread.Title,
+            default_thread_status = selectedThread.Status
         });
     }
 
@@ -209,11 +211,11 @@ public sealed class DiscussionTools
         if (doc is null)
             return JsonSerializer.Serialize(new { error = $"Document '{slug}' not found in project '{project_id}'." }, JsonOpts.Default);
 
-        // Get or create default thread
-        var thread = await repo.GetOrCreateDefaultDocumentThreadAsync(project_id, slug, author_identity);
+        // Get or create default or anchor-specific thread
+        var thread = await GetOrCreateDocumentThreadAsync(repo, project_id, slug, ThreadKeyForAnchor(anchor), author_identity);
 
         var parsedMentions = ToolArgumentJson.ParseStringArray(mentions, "mentions");
-        var parsedSourceRefs = ToolArgumentJson.ParseStringArray(source_refs, "source_refs");
+        var sourceRefsJson = SerializeJsonArgument(source_refs, "source_refs");
 
         DiscussionComment comment;
         try
@@ -224,7 +226,7 @@ public sealed class DiscussionTools
                     thread.Id, parentId, body_markdown, author_identity,
                     comment_kind,
                     parsedMentions is not null ? JsonSerializer.Serialize(parsedMentions) : null,
-                    parsedSourceRefs is not null ? JsonSerializer.Serialize(parsedSourceRefs) : null);
+                    sourceRefsJson);
             }
             else
             {
@@ -232,7 +234,7 @@ public sealed class DiscussionTools
                     thread.Id, body_markdown, author_identity,
                     comment_kind,
                     parsedMentions is not null ? JsonSerializer.Serialize(parsedMentions) : null,
-                    parsedSourceRefs is not null ? JsonSerializer.Serialize(parsedSourceRefs) : null);
+                    sourceRefsJson);
             }
         }
         catch (InvalidOperationException ex)
@@ -272,7 +274,7 @@ public sealed class DiscussionTools
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var parsedMentions = ToolArgumentJson.ParseStringArray(mentions, "mentions");
-        var parsedSourceRefs = ToolArgumentJson.ParseStringArray(source_refs, "source_refs");
+        var sourceRefsJson = SerializeJsonArgument(source_refs, "source_refs");
 
         DiscussionComment comment;
         try
@@ -283,7 +285,7 @@ public sealed class DiscussionTools
                     thread_id, parentId, body_markdown, author_identity,
                     comment_kind,
                     parsedMentions is not null ? JsonSerializer.Serialize(parsedMentions) : null,
-                    parsedSourceRefs is not null ? JsonSerializer.Serialize(parsedSourceRefs) : null);
+                    sourceRefsJson);
             }
             else
             {
@@ -291,7 +293,7 @@ public sealed class DiscussionTools
                     thread_id, body_markdown, author_identity,
                     comment_kind,
                     parsedMentions is not null ? JsonSerializer.Serialize(parsedMentions) : null,
-                    parsedSourceRefs is not null ? JsonSerializer.Serialize(parsedSourceRefs) : null);
+                    sourceRefsJson);
             }
         }
         catch (InvalidOperationException ex)
@@ -369,4 +371,62 @@ public sealed class DiscussionTools
             return JsonSerializer.Serialize(new { error = ex.Message }, JsonOpts.Default);
         }
     }
+
+    private static string ThreadKeyForAnchor(string? anchor) =>
+        string.IsNullOrWhiteSpace(anchor) ? "default" : $"section:{anchor.Trim()}";
+
+    private static async Task<DiscussionThread> GetOrCreateDocumentThreadAsync(
+        IDiscussionRepository repo,
+        string projectId,
+        string slug,
+        string threadKey,
+        string createdBy)
+    {
+        if (threadKey == "default")
+            return await repo.GetOrCreateDefaultDocumentThreadAsync(projectId, slug, createdBy);
+
+        var existing = (await repo.ListDocumentThreadsAsync(projectId, slug))
+            .FirstOrDefault(t => t.ThreadKey == threadKey);
+        if (existing is not null)
+            return existing;
+
+        return await repo.CreateDocumentThreadAsync(
+            projectId,
+            slug,
+            threadKey,
+            $"Discussion {threadKey} for {slug}",
+            createdBy);
+    }
+
+    private static string? SerializeJsonArgument(object? value, string fieldName)
+    {
+        if (value is null)
+            return null;
+
+        if (value is string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                return JsonSerializer.Serialize(doc.RootElement);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException($"{fieldName} must be valid JSON when supplied as a string.", ex);
+            }
+        }
+
+        if (value is JsonElement element)
+        {
+            if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                return null;
+            return JsonSerializer.Serialize(element);
+        }
+
+        return JsonSerializer.Serialize(value, JsonOpts.Default);
+    }
+
 }

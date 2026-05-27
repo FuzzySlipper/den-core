@@ -264,6 +264,51 @@ public sealed class McpToolProfileTests : IAsyncLifetime
         Assert.Contains("\"code\":-32", result); // JSON-RPC method/tool not found error code
     }
 
+    [Fact]
+    public async Task DiscussionTools_ProfileExposureAndHiddenCallEnforcement()
+    {
+        var plannerSession = await InitializeMcpSessionAsync(query: "tool_profile=planner");
+        var plannerTools = await ListToolsAsync(plannerSession);
+        var plannerNames = plannerTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains("get_document_discussion", plannerNames);
+        Assert.Contains("comment_on_document", plannerNames);
+        Assert.Contains("list_discussion_threads", plannerNames);
+        Assert.Contains("get_discussion_thread", plannerNames);
+        Assert.Contains("create_discussion_comment", plannerNames);
+        Assert.DoesNotContain("update_discussion_thread", plannerNames);
+
+        var runnerSession = await InitializeMcpSessionAsync(query: "tool_profile=runner");
+        var runnerTools = await ListToolsAsync(runnerSession);
+        var runnerNames = runnerTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains("comment_on_document", runnerNames);
+        Assert.Contains("create_discussion_comment", runnerNames);
+
+        var adminSession = await InitializeMcpSessionAsync(query: "tool_profile=admin-current");
+        var adminTools = await ListToolsAsync(adminSession);
+        var adminNames = adminTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains("update_discussion_thread", adminNames);
+
+        var workerSession = await InitializeMcpSessionAsync(query: "tool_profile=worker-coder");
+        var workerTools = await ListToolsAsync(workerSession);
+        var workerNames = workerTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains("get_document_discussion", workerNames);
+        Assert.Contains("list_discussion_threads", workerNames);
+        Assert.Contains("get_discussion_thread", workerNames);
+        Assert.DoesNotContain("comment_on_document", workerNames);
+        Assert.DoesNotContain("create_discussion_comment", workerNames);
+        Assert.DoesNotContain("update_discussion_thread", workerNames);
+
+        var hiddenCall = await SendToolCallAsync(workerSession, 101, "comment_on_document", new
+        {
+            project_id = "den-core",
+            slug = "fake",
+            author_identity = "worker-coder",
+            body_markdown = "should fail"
+        });
+        Assert.Contains("error", hiddenCall);
+        Assert.Contains("\"code\":-32", hiddenCall);
+    }
+
     private async Task<List<JsonNode?>> ListToolsAsync(string sessionId)
     {
         var payload = JsonSerializer.Serialize(new

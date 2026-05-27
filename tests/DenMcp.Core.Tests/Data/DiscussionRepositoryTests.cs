@@ -80,6 +80,15 @@ public class DiscussionRepositoryTests : IAsyncLifetime
         await using var c4 = conn.CreateCommand();
         c4.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_comments_thread'";
         Assert.Equal(1L, (await c4.ExecuteScalarAsync())!);
+
+        // Missing index assertions per review R1677-2 (Finding 825)
+        await using var cIdxStatus = conn.CreateCommand();
+        cIdxStatus.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_status'";
+        Assert.Equal(1L, (await cIdxStatus.ExecuteScalarAsync())!);
+
+        await using var cIdxParent = conn.CreateCommand();
+        cIdxParent.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_comments_parent'";
+        Assert.Equal(1L, (await cIdxParent.ExecuteScalarAsync())!);
     }
 
     // ──────────────────────────────────────────────
@@ -250,6 +259,78 @@ public class DiscussionRepositoryTests : IAsyncLifetime
     }
 
     // ──────────────────────────────────────────────
+    // Empty/whitespace input validation — review R1677-1 (Finding 824)
+    // ──────────────────────────────────────────────
+    [Fact]
+    public async Task AddComment_NullBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddCommentAsync(thread.Id, null!, "agent"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    [Fact]
+    public async Task AddComment_EmptyBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddCommentAsync(thread.Id, "", "agent"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    [Fact]
+    public async Task AddComment_WhitespaceBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddCommentAsync(thread.Id, "   ", "agent"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    [Fact]
+    public async Task AddReply_NullBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent1");
+        var root = await _repo.AddCommentAsync(thread.Id, "Root", "alice");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddReplyAsync(thread.Id, root.Id, null!, "bob"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    [Fact]
+    public async Task AddReply_EmptyBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent1");
+        var root = await _repo.AddCommentAsync(thread.Id, "Root", "alice");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddReplyAsync(thread.Id, root.Id, "", "bob"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    [Fact]
+    public async Task AddReply_WhitespaceBody_Throws()
+    {
+        await SeedDocumentAsync();
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent1");
+        var root = await _repo.AddCommentAsync(thread.Id, "Root", "alice");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.AddReplyAsync(thread.Id, root.Id, "   ", "bob"));
+        Assert.Contains("bodyMarkdown", ex.Message);
+    }
+
+    // ──────────────────────────────────────────────
     // Acceptance criteria 6: Thread status/summary/resolution round-trip
     // ──────────────────────────────────────────────
     [Fact]
@@ -316,6 +397,25 @@ public class DiscussionRepositoryTests : IAsyncLifetime
         Assert.Single(list);
         // DocumentSummary has no discussion fields
         Assert.Equal("test-doc", list[0].Slug);
+    }
+
+    [Fact]
+    public async Task SearchAsync_DoesNotIncludeThreadData()
+    {
+        await SeedDocumentAsync("search-disc-free");
+        Assert.NotNull(await _documents.GetAsync("test-proj", "search-disc-free"));
+
+        // Create discussion data alongside the document — search should stay clean
+        var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync(
+            "test-proj", "search-disc-free", "agent");
+        await _repo.AddCommentAsync(thread.Id, "Architecture decision discussion", "alice");
+
+        // Search for document content, not discussion content
+        var results = await _documents.SearchAsync("Hello");
+        var match = results.FirstOrDefault(r => r.Slug == "search-disc-free");
+        Assert.NotNull(match);
+        // DocumentSearchResult has no discussion-related properties
+        Assert.Equal("Test Document", match!.Title);
     }
 
     // ──────────────────────────────────────────────

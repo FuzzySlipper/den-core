@@ -267,10 +267,16 @@ public sealed class McpToolProfileRegistry
         m.Add(McpToolBundles.Diagnostics,
             "send_agent_stream_message");
 
+        // ---- discussion bundle ----
+        m.Add(McpToolBundles.Discussion,
+            "get_document_discussion", "comment_on_document",
+            "list_discussion_threads", "get_discussion_thread",
+            "create_discussion_comment");
+
         AddPublicSpecBundles();
 
         // ---- profile: planner ----
-        // core + task + messaging + document + blackboard + agent + agent-stream + orchestrator + worker(read) + packet(read)
+        // core + task + messaging + document + blackboard + agent + agent-stream + orchestrator + worker(read) + packet(read) + discussion
         m.Profile(McpToolProfiles.Planner,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -279,7 +285,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Blackboard,
             McpToolBundles.Agent,
             McpToolBundles.AgentStream,
-            McpToolBundles.Orchestrator);
+            McpToolBundles.Orchestrator,
+            McpToolBundles.Discussion);
         // worker read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
             "get_worker_run", "get_worker_run_status", "list_worker_runs",
@@ -289,7 +296,7 @@ public sealed class McpToolProfileRegistry
             "get_latest_task_packet", "render_worker_prompt");
 
         // ---- profile: runner ----
-        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator
+        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion
         m.Profile(McpToolProfiles.Runner,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -300,7 +307,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Agent,
             McpToolBundles.AgentStream,
             McpToolBundles.Worker,
-            McpToolBundles.Orchestrator);
+            McpToolBundles.Orchestrator,
+            McpToolBundles.Discussion);
         // runner-specific packet subset
         m.ProfileAdd(McpToolProfiles.Runner,
             "get_latest_task_packet", "render_worker_prompt",
@@ -320,7 +328,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Worker,
             McpToolBundles.Packet,
             McpToolBundles.Orchestrator,
-            McpToolBundles.Topics);
+            McpToolBundles.Topics,
+            McpToolBundles.Discussion);
 
         // ---- profile: legacy-full ----
         m.Profile(McpToolProfiles.LegacyFull,
@@ -340,7 +349,8 @@ public sealed class McpToolProfileRegistry
             "get_task_workflow_summary", "list_tasks", "get_task",
             "list_review_rounds", "list_review_findings",
             "get_latest_task_packet",
-            "prepare_coder_context_packet", "render_worker_prompt");
+            "prepare_coder_context_packet", "render_worker_prompt",
+            "get_document_discussion", "list_discussion_threads", "get_discussion_thread");
 
         // ---- profile: worker-reviewer ----
         m.Profile(McpToolProfiles.WorkerReviewer,
@@ -354,7 +364,8 @@ public sealed class McpToolProfileRegistry
         m.ProfileAdd(McpToolProfiles.WorkerReviewer,
             "get_task_workflow_summary", "list_tasks", "get_task",
             "get_latest_task_packet",
-            "prepare_reviewer_context_packet", "render_worker_prompt");
+            "prepare_reviewer_context_packet", "render_worker_prompt",
+            "get_document_discussion", "list_discussion_threads", "get_discussion_thread");
 
         // ---- profile: worker-validator ----
         // Narrow profile: packet retrieval, status, completion, and role-specific context packet helpers only.
@@ -422,6 +433,20 @@ public sealed class McpToolProfileRegistry
             _profileTools["admin-current"] = adminProfile;
         }
         adminProfile.Add("delete_space");
+
+        // ---- update_discussion_thread: registered as discussion bundle member but restricted to admin-current only ----
+        // The annotation [McpToolBundle("discussion")] requires discussion in the tool's bundle map,
+        // but [McpToolProfile("admin-current")] restricts access. We register the bundle
+        // mapping directly without adding to the discussion bundle's tool set, then add it
+        // explicitly to the admin-current profile.
+        if (!_toolBundles.ContainsKey("update_discussion_thread"))
+            _toolBundles["update_discussion_thread"] = new HashSet<string>(StringComparer.Ordinal) { "discussion" };
+        if (!_profileTools.TryGetValue("admin-current", out var adminProfile2))
+        {
+            adminProfile2 = new HashSet<string>(StringComparer.Ordinal);
+            _profileTools["admin-current"] = adminProfile2;
+        }
+        adminProfile2.Add("update_discussion_thread");
 
         // Freeze all computed sets
         foreach (var k in _toolBundles.Keys.ToList())

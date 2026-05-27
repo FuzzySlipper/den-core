@@ -1010,7 +1010,7 @@ public sealed class DatabaseInitializer
             target_slug         TEXT,
             target_anchor       TEXT,
             thread_key          TEXT NOT NULL,
-            title               TEXT,
+            title               TEXT NOT NULL,
             status              TEXT NOT NULL DEFAULT 'open'
                                 CHECK (status IN (
                                     'open',
@@ -1024,12 +1024,21 @@ public sealed class DatabaseInitializer
             last_comment_at     TEXT,
             created_at          TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            UNIQUE(target_type, target_project_id, target_slug, thread_key)
+            FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
 
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_discussion_threads_unique_target_key
+            ON discussion_threads(
+                target_type,
+                COALESCE(target_project_id, ''),
+                COALESCE(target_slug, ''),
+                COALESCE(target_id, -1),
+                COALESCE(target_anchor, ''),
+                COALESCE(thread_key, '')
+            );
+
         CREATE INDEX IF NOT EXISTS idx_discussion_threads_target
-            ON discussion_threads(target_type, target_project_id, target_slug);
+            ON discussion_threads(target_type, target_project_id, target_slug, target_id, target_anchor, status, last_comment_at DESC);
         CREATE INDEX IF NOT EXISTS idx_discussion_threads_status
             ON discussion_threads(status);
 
@@ -1047,14 +1056,16 @@ public sealed class DatabaseInitializer
             comment_kind        TEXT NOT NULL DEFAULT 'comment'
                                 CHECK (comment_kind IN (
                                     'comment',
-                                    'suggestion',
                                     'question',
-                                    'resolution'
+                                    'answer',
+                                    'resolution',
+                                    'version_note'
                                 )),
             status              TEXT NOT NULL DEFAULT 'active'
                                 CHECK (status IN (
                                     'active',
-                                    'edited',
+                                    'resolved',
+                                    'hidden',
                                     'deleted'
                                 )),
             mentions_json       TEXT,
@@ -2445,7 +2456,7 @@ public sealed class DatabaseInitializer
                 target_slug         TEXT,
                 target_anchor       TEXT,
                 thread_key          TEXT NOT NULL,
-                title               TEXT,
+                title               TEXT NOT NULL,
                 status              TEXT NOT NULL DEFAULT 'open'
                                     CHECK (status IN (
                                         'open',
@@ -2459,8 +2470,7 @@ public sealed class DatabaseInitializer
                 last_comment_at     TEXT,
                 created_at          TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-                FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                UNIQUE(target_type, target_project_id, target_slug, thread_key)
+                FOREIGN KEY (target_project_id) REFERENCES projects(id) ON DELETE CASCADE
             )
             """;
         await threadCmd.ExecuteNonQueryAsync();
@@ -2478,14 +2488,16 @@ public sealed class DatabaseInitializer
                 comment_kind        TEXT NOT NULL DEFAULT 'comment'
                                     CHECK (comment_kind IN (
                                         'comment',
-                                        'suggestion',
                                         'question',
-                                        'resolution'
+                                        'answer',
+                                        'resolution',
+                                        'version_note'
                                     )),
                 status              TEXT NOT NULL DEFAULT 'active'
                                     CHECK (status IN (
                                         'active',
-                                        'edited',
+                                        'resolved',
+                                        'hidden',
                                         'deleted'
                                     )),
                 mentions_json       TEXT,
@@ -2499,8 +2511,10 @@ public sealed class DatabaseInitializer
         await commentCmd.ExecuteNonQueryAsync();
 
         // Idempotent index ensures
+        await EnsureIndexAsync(connection, "idx_discussion_threads_unique_target_key",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_discussion_threads_unique_target_key ON discussion_threads(target_type, COALESCE(target_project_id, ''), COALESCE(target_slug, ''), COALESCE(target_id, -1), COALESCE(target_anchor, ''), COALESCE(thread_key, ''))");
         await EnsureIndexAsync(connection, "idx_discussion_threads_target",
-            "CREATE INDEX IF NOT EXISTS idx_discussion_threads_target ON discussion_threads(target_type, target_project_id, target_slug)");
+            "CREATE INDEX IF NOT EXISTS idx_discussion_threads_target ON discussion_threads(target_type, target_project_id, target_slug, target_id, target_anchor, status, last_comment_at DESC)");
         await EnsureIndexAsync(connection, "idx_discussion_threads_status",
             "CREATE INDEX IF NOT EXISTS idx_discussion_threads_status ON discussion_threads(status)");
         await EnsureIndexAsync(connection, "idx_discussion_comments_thread",

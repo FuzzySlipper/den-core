@@ -15,7 +15,7 @@ public sealed class DiscussionThread
     public string? TargetSlug { get; set; }
     public string? TargetAnchor { get; set; }
     public required string ThreadKey { get; set; }
-    public string? Title { get; set; }
+    public required string Title { get; set; }
     public required string Status { get; set; } = DiscussionThreadStatus.Open;
     public required string CreatedBy { get; set; }
     public string? Summary { get; set; }
@@ -89,11 +89,12 @@ public static class DiscussionThreadStatus
 public static class DiscussionCommentKind
 {
     public const string Comment = "comment";
-    public const string Suggestion = "suggestion";
     public const string Question = "question";
+    public const string Answer = "answer";
     public const string Resolution = "resolution";
+    public const string VersionNote = "version_note";
 
-    public static readonly string[] Allowed = [Comment, Suggestion, Question, Resolution];
+    public static readonly string[] Allowed = [Comment, Question, Answer, Resolution, VersionNote];
 
     public static bool IsValid(string value) => Allowed.Contains(value);
 }
@@ -104,10 +105,11 @@ public static class DiscussionCommentKind
 public static class DiscussionCommentStatus
 {
     public const string Active = "active";
-    public const string Edited = "edited";
+    public const string Resolved = "resolved";
+    public const string Hidden = "hidden";
     public const string Deleted = "deleted";
 
-    public static readonly string[] Allowed = [Active, Edited, Deleted];
+    public static readonly string[] Allowed = [Active, Resolved, Hidden, Deleted];
 
     public static bool IsValid(string value) => Allowed.Contains(value);
 }

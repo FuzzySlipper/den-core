@@ -100,6 +100,8 @@ public sealed class DiscussionRepository : IDiscussionRepository
         string? metadataJson = null)
     {
         ValidateThreadStatus(DiscussionThreadStatus.Open);
+        ValidateRequired(title, nameof(title));
+        ValidateRequired(createdBy, nameof(createdBy));
 
         // Validate the target document exists before creating the thread
         var document = await _documents.GetAsync(projectId, slug);
@@ -214,6 +216,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
     public async Task<DiscussionThread> UpdateThreadAsync(DiscussionThread thread)
     {
         ValidateThreadStatus(thread.Status);
+        ValidateRequired(thread.Title, nameof(thread.Title));
 
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -255,6 +258,8 @@ public sealed class DiscussionRepository : IDiscussionRepository
         var kind = commentKind ?? DiscussionCommentKind.Comment;
         ValidateCommentKind(kind);
         ValidateCommentStatus(DiscussionCommentStatus.Active);
+        ValidateRequired(bodyMarkdown, nameof(bodyMarkdown));
+        ValidateRequired(authorIdentity, nameof(authorIdentity));
 
         await using var conn = await _db.CreateConnectionAsync();
 
@@ -309,6 +314,8 @@ public sealed class DiscussionRepository : IDiscussionRepository
         var kind = commentKind ?? DiscussionCommentKind.Comment;
         ValidateCommentKind(kind);
         ValidateCommentStatus(DiscussionCommentStatus.Active);
+        ValidateRequired(bodyMarkdown, nameof(bodyMarkdown));
+        ValidateRequired(authorIdentity, nameof(authorIdentity));
 
         await using var conn = await _db.CreateConnectionAsync();
 
@@ -458,7 +465,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
             TargetSlug = reader.IsDBNull(4) ? null : reader.GetString(4),
             TargetAnchor = reader.IsDBNull(5) ? null : reader.GetString(5),
             ThreadKey = reader.GetString(6),
-            Title = reader.IsDBNull(7) ? null : reader.GetString(7),
+            Title = reader.GetString(7),
             Status = reader.GetString(8),
             CreatedBy = reader.GetString(9),
             Summary = reader.IsDBNull(10) ? null : reader.GetString(10),
@@ -512,5 +519,11 @@ public sealed class DiscussionRepository : IDiscussionRepository
             throw new ArgumentException(
                 $"Invalid comment status '{status}'. Allowed: {string.Join(", ", DiscussionCommentStatus.Allowed)}",
                 nameof(status));
+    }
+
+    private static void ValidateRequired(string? value, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"{paramName} is required and must be non-empty.", paramName);
     }
 }

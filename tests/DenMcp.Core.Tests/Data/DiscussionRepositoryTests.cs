@@ -73,6 +73,10 @@ public class DiscussionRepositoryTests : IAsyncLifetime
         c3.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_target'";
         Assert.Equal(1L, (await c3.ExecuteScalarAsync())!);
 
+        await using var cUnique = conn.CreateCommand();
+        cUnique.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_unique_target_key'";
+        Assert.Equal(1L, (await cUnique.ExecuteScalarAsync())!);
+
         await using var c4 = conn.CreateCommand();
         c4.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_comments_thread'";
         Assert.Equal(1L, (await c4.ExecuteScalarAsync())!);
@@ -398,13 +402,13 @@ public class DiscussionRepositoryTests : IAsyncLifetime
         await SeedDocumentAsync();
         var thread = await _repo.GetOrCreateDefaultDocumentThreadAsync("test-proj", "test-doc", "agent");
         var comment = await _repo.AddCommentAsync(thread.Id, "Check me", "alice",
-            commentKind: "suggestion", mentionsJson: """["bob"]""", sourceRefsJson: """["ref1"]""");
+            commentKind: "answer", mentionsJson: """["bob"]""", sourceRefsJson: """["ref1"]""");
 
         var fetched = await _repo.GetCommentByIdAsync(comment.Id);
         Assert.NotNull(fetched);
         Assert.Equal(comment.Id, fetched!.Id);
         Assert.Equal("Check me", fetched.BodyMarkdown);
-        Assert.Equal("suggestion", fetched.CommentKind);
+        Assert.Equal("answer", fetched.CommentKind);
         Assert.Equal("active", fetched.Status);
         Assert.Equal("""["bob"]""", fetched.MentionsJson);
         Assert.Equal("""["ref1"]""", fetched.SourceRefsJson);

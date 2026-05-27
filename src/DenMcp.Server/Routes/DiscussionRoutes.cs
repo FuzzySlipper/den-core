@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
 
@@ -50,9 +51,14 @@ public static class DiscussionRoutes
 
             try
             {
+                var existing = (await repo.ListDocumentThreadsAsync(req.TargetProjectId, req.TargetSlug))
+                    .FirstOrDefault(t => t.ThreadKey == req.ThreadKey);
+                if (existing is not null)
+                    return Results.Ok(new DiscussionThreadResponse(existing));
+
                 var thread = await repo.CreateDocumentThreadAsync(
                     req.TargetProjectId, req.TargetSlug, req.ThreadKey,
-                    req.Title, req.CreatedBy, req.Summary, req.MetadataJson);
+                    req.Title, req.CreatedBy, req.Summary, req.SerializedMetadata());
 
                 return Results.Created($"/api/discussion-threads/{thread.Id}", new DiscussionThreadResponse(thread));
             }
@@ -72,8 +78,24 @@ public static class DiscussionRoutes
 
             try
             {
-                var comment = await repo.AddCommentAsync(
-                    threadId, req.BodyMarkdown, req.AuthorIdentity, req.CommentKind);
+                var comment = req.ParentCommentId is int parentCommentId
+                    ? await repo.AddReplyAsync(
+                        threadId,
+                        parentCommentId,
+                        req.BodyMarkdown,
+                        req.AuthorIdentity,
+                        req.CommentKind,
+                        req.SerializedMentions(),
+                        req.SerializedSourceRefs(),
+                        req.SerializedMetadata())
+                    : await repo.AddCommentAsync(
+                        threadId,
+                        req.BodyMarkdown,
+                        req.AuthorIdentity,
+                        req.CommentKind,
+                        req.SerializedMentions(),
+                        req.SerializedSourceRefs(),
+                        req.SerializedMetadata());
 
                 return Results.Created($"/api/discussion-threads/{threadId}/comments/{comment.Id}", new DiscussionCommentResponse(comment));
             }
@@ -230,14 +252,24 @@ public sealed class CreateThreadRequest
     public string Title { get; set; } = "";
     public string CreatedBy { get; set; } = "";
     public string? Summary { get; set; }
-    public string? MetadataJson { get; set; }
+    public JsonElement? Metadata { get; set; }
+
+    public string? SerializedMetadata() => Metadata is null ? null : JsonSerializer.Serialize(Metadata.Value);
 }
 
 public sealed class CreateCommentRequest
 {
     public string BodyMarkdown { get; set; } = "";
     public string AuthorIdentity { get; set; } = "";
+    public int? ParentCommentId { get; set; }
     public string? CommentKind { get; set; }
+    public JsonElement? Mentions { get; set; }
+    public JsonElement? SourceRefs { get; set; }
+    public JsonElement? Metadata { get; set; }
+
+    public string? SerializedMentions() => Mentions is null ? null : JsonSerializer.Serialize(Mentions.Value);
+    public string? SerializedSourceRefs() => SourceRefs is null ? null : JsonSerializer.Serialize(SourceRefs.Value);
+    public string? SerializedMetadata() => Metadata is null ? null : JsonSerializer.Serialize(Metadata.Value);
 }
 
 public sealed class UpdateThreadRequest

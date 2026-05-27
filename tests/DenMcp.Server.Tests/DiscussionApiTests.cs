@@ -189,6 +189,34 @@ public sealed class DiscussionApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PostThread_DuplicateThreadKey_ReturnsExistingThread()
+    {
+        var payload = new
+        {
+            target_type = "document",
+            target_project_id = _projectId,
+            target_slug = Slug,
+            thread_key = "stable-key",
+            title = "Stable Thread",
+            created_by = "agent"
+        };
+
+        var firstResponse = await _client.PostAsJsonAsync("/api/discussion-threads", payload);
+        firstResponse.EnsureSuccessStatusCode();
+        Assert.Equal(201, (int)firstResponse.StatusCode);
+        var first = await firstResponse.Content.ReadFromJsonAsync<DiscussionThreadResponse>(JsonOpts);
+
+        var secondResponse = await _client.PostAsJsonAsync("/api/discussion-threads", payload);
+        secondResponse.EnsureSuccessStatusCode();
+        Assert.Equal(200, (int)secondResponse.StatusCode);
+        var second = await secondResponse.Content.ReadFromJsonAsync<DiscussionThreadResponse>(JsonOpts);
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(first!.Id, second!.Id);
+    }
+
+    [Fact]
     public async Task CreateThread_MissingDocument_Returns404()
     {
         var response = await _client.PostAsJsonAsync("/api/discussion-threads", new
@@ -244,6 +272,44 @@ public sealed class DiscussionApiTests : IAsyncLifetime
         Assert.NotNull(detail.Comments);
         Assert.Single(detail.Comments);
         Assert.Equal("This is a comment", detail.Comments[0].BodyMarkdown);
+    }
+
+    [Fact]
+    public async Task PostComment_WithParentPointer_CreatesReply()
+    {
+        var createResponse = await _client.PostAsJsonAsync("/api/discussion-threads", new
+        {
+            target_type = "document",
+            target_project_id = _projectId,
+            target_slug = Slug,
+            thread_key = "reply-test",
+            title = "Reply Test",
+            created_by = "agent1"
+        });
+        var thread = await createResponse.Content.ReadFromJsonAsync<DiscussionThreadResponse>(JsonOpts);
+
+        var rootResponse = await _client.PostAsJsonAsync($"/api/discussion-threads/{thread!.Id}/comments", new
+        {
+            body_markdown = "Root comment",
+            author_identity = "alice"
+        });
+        var root = await rootResponse.Content.ReadFromJsonAsync<DiscussionCommentResponse>(JsonOpts);
+
+        var replyResponse = await _client.PostAsJsonAsync($"/api/discussion-threads/{thread.Id}/comments", new
+        {
+            body_markdown = "Reply comment",
+            author_identity = "bob",
+            parent_comment_id = root!.Id,
+            mentions = new[] { "alice" },
+            source_refs = new[] { new { type = "task", project_id = _projectId, id = 1678 } },
+            metadata = new { client = "test" }
+        });
+        replyResponse.EnsureSuccessStatusCode();
+
+        var reply = await replyResponse.Content.ReadFromJsonAsync<DiscussionCommentResponse>(JsonOpts);
+        Assert.NotNull(reply);
+        Assert.Equal(root.Id, reply!.ParentCommentId);
+        Assert.Equal("Reply comment", reply.BodyMarkdown);
     }
 
     [Fact]
@@ -385,6 +451,7 @@ public sealed class DiscussionApiTests : IAsyncLifetime
         var detail = await response.Content.ReadFromJsonAsync<DiscussionDetailResponse>(JsonOpts);
         Assert.NotNull(detail);
         // No default thread exists yet — show empty info
+        Assert.Null(detail.Thread);
         Assert.NotNull(detail.Comments);
         Assert.Empty(detail.Comments);
     }
@@ -436,6 +503,31 @@ public sealed class DiscussionApiTests : IAsyncLifetime
         var threads = await threadsResponse.Content.ReadFromJsonAsync<List<DiscussionThreadResponse>>(JsonOpts);
         Assert.NotNull(threads);
         Assert.Empty(threads!);
+    }
+
+    [Fact]
+    public async Task PostDocumentComment_WithParentPointer_CreatesReplyInDefaultThread()
+    {
+        var rootResponse = await _client.PostAsJsonAsync(
+            $"/api/projects/{_projectId}/documents/{Slug}/discussion/comments", new
+            {
+                body_markdown = "Root document comment",
+                author_identity = "alice"
+            });
+        var root = await rootResponse.Content.ReadFromJsonAsync<DiscussionCommentResponse>(JsonOpts);
+
+        var replyResponse = await _client.PostAsJsonAsync(
+            $"/api/projects/{_projectId}/documents/{Slug}/discussion/comments", new
+            {
+                body_markdown = "Document reply",
+                author_identity = "bob",
+                parent_comment_id = root!.Id
+            });
+        replyResponse.EnsureSuccessStatusCode();
+
+        var reply = await replyResponse.Content.ReadFromJsonAsync<DiscussionCommentResponse>(JsonOpts);
+        Assert.NotNull(reply);
+        Assert.Equal(root.Id, reply!.ParentCommentId);
     }
 
     [Fact]

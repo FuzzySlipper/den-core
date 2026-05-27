@@ -85,19 +85,7 @@ public static class DocumentRoutes
             if (defaultThread is null)
                 return Results.Ok(new DiscussionDetailResponse
                 {
-                    Thread = new DiscussionThreadResponse
-                    {
-                        Id = 0,
-                        TargetType = "document",
-                        TargetProjectId = projectId,
-                        TargetSlug = slug,
-                        ThreadKey = "default",
-                        Title = $"Discussion for {slug}",
-                        Status = "open",
-                        CreatedBy = "",
-                        CreatedAt = DateTime.MinValue,
-                        UpdatedAt = DateTime.MinValue
-                    },
+                    Thread = null,
                     Comments = new List<DiscussionCommentResponse>()
                 });
 
@@ -121,8 +109,24 @@ public static class DocumentRoutes
             {
                 // Ensure the default thread exists
                 var thread = await repo.GetOrCreateDefaultDocumentThreadAsync(projectId, slug, req.AuthorIdentity);
-                var comment = await repo.AddCommentAsync(
-                    thread.Id, req.BodyMarkdown, req.AuthorIdentity, req.CommentKind);
+                var comment = req.ParentCommentId is int parentCommentId
+                    ? await repo.AddReplyAsync(
+                        thread.Id,
+                        parentCommentId,
+                        req.BodyMarkdown,
+                        req.AuthorIdentity,
+                        req.CommentKind,
+                        req.SerializedMentions(),
+                        req.SerializedSourceRefs(),
+                        req.SerializedMetadata())
+                    : await repo.AddCommentAsync(
+                        thread.Id,
+                        req.BodyMarkdown,
+                        req.AuthorIdentity,
+                        req.CommentKind,
+                        req.SerializedMentions(),
+                        req.SerializedSourceRefs(),
+                        req.SerializedMetadata());
 
                 return Results.Created(
                     $"/api/projects/{projectId}/documents/{slug}/discussion/threads/{thread.Id}/comments/{comment.Id}",

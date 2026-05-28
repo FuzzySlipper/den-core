@@ -288,22 +288,30 @@ public sealed class McpToolProfileTests : IAsyncLifetime
         var adminNames = adminTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
         Assert.Contains("update_discussion_thread", adminNames);
 
-        var workerSession = await InitializeMcpSessionAsync(query: "tool_profile=worker-coder");
-        var workerTools = await ListToolsAsync(workerSession);
-        var workerNames = workerTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
-        Assert.Contains("get_document_discussion", workerNames);
-        Assert.Contains("list_discussion_threads", workerNames);
-        Assert.Contains("get_discussion_thread", workerNames);
-        Assert.DoesNotContain("comment_on_document", workerNames);
-        Assert.DoesNotContain("create_discussion_comment", workerNames);
-        Assert.DoesNotContain("update_discussion_thread", workerNames);
+        var coderSession = await InitializeMcpSessionAsync(query: "tool_profile=worker-coder");
+        var coderTools = await ListToolsAsync(coderSession);
+        var coderNames = coderTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.DoesNotContain("get_document_discussion", coderNames);
+        Assert.DoesNotContain("list_discussion_threads", coderNames);
+        Assert.DoesNotContain("get_discussion_thread", coderNames);
+        Assert.DoesNotContain("comment_on_document", coderNames);
+        Assert.DoesNotContain("create_discussion_comment", coderNames);
+        Assert.DoesNotContain("update_discussion_thread", coderNames);
 
-        var hiddenCall = await SendToolCallAsync(workerSession, 101, "comment_on_document", new
+        var reviewerSession = await InitializeMcpSessionAsync(query: "tool_profile=worker-reviewer");
+        var reviewerTools = await ListToolsAsync(reviewerSession);
+        var reviewerNames = reviewerTools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+        Assert.Contains("get_document_discussion", reviewerNames);
+        Assert.Contains("list_discussion_threads", reviewerNames);
+        Assert.Contains("get_discussion_thread", reviewerNames);
+        Assert.DoesNotContain("comment_on_document", reviewerNames);
+        Assert.DoesNotContain("create_discussion_comment", reviewerNames);
+        Assert.DoesNotContain("update_discussion_thread", reviewerNames);
+
+        var hiddenCall = await SendToolCallAsync(coderSession, 101, "get_document_discussion", new
         {
             project_id = "den-core",
-            slug = "fake",
-            author_identity = "worker-coder",
-            body_markdown = "should fail"
+            slug = "fake"
         });
         Assert.Contains("error", hiddenCall);
         Assert.Contains("\"code\":-32", hiddenCall);

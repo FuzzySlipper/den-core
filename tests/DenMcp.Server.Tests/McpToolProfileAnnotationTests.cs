@@ -47,6 +47,51 @@ public class McpToolProfileAnnotationTests
             $"Tools missing [McpToolBundle] or [McpToolProfile]: {string.Join(", ", missing)}");
     }
 
+    [Fact]
+    public void DiscussionTools_AreScopedByRole()
+    {
+        var readOnlyDiscussionTools = new[]
+        {
+            "get_document_discussion",
+            "list_discussion_threads",
+            "get_discussion_thread"
+        };
+        var writeDiscussionTools = new[]
+        {
+            "comment_on_document",
+            "create_discussion_comment"
+        };
+
+        foreach (var tool in readOnlyDiscussionTools)
+        {
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.Planner), tool);
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.Runner), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerCoder), tool);
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.WorkerReviewer), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerValidator), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerDriftChecker), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerPacketAuditor), tool);
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.AdminCurrent), tool);
+        }
+
+        foreach (var tool in writeDiscussionTools)
+        {
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.Planner), tool);
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.Runner), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerCoder), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerReviewer), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerValidator), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerDriftChecker), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerPacketAuditor), tool);
+            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.AdminCurrent), tool);
+        }
+
+        Assert.True(_registry.ToolInProfile("update_discussion_thread", McpToolProfiles.AdminCurrent));
+        Assert.False(_registry.ToolInProfile("update_discussion_thread", McpToolProfiles.Planner));
+        Assert.False(_registry.ToolInProfile("update_discussion_thread", McpToolProfiles.Runner));
+        Assert.False(_registry.ToolInProfile("update_discussion_thread", McpToolProfiles.WorkerReviewer));
+    }
+
     private static string? GetToolName(MethodInfo method)
     {
         var attr = method.GetCustomAttributesData()

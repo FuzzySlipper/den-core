@@ -338,6 +338,8 @@ public sealed class McpToolProfileRegistry
             "send_agent_stream_message");
 
         // ---- profile: worker-coder ----
+        // Coder workers should receive any relevant discussion context in their
+        // orchestrator packet rather than fetching discussion threads directly.
         m.Profile(McpToolProfiles.WorkerCoder,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -349,8 +351,7 @@ public sealed class McpToolProfileRegistry
             "get_task_workflow_summary", "list_tasks", "get_task",
             "list_review_rounds", "list_review_findings",
             "get_latest_task_packet",
-            "prepare_coder_context_packet", "render_worker_prompt",
-            "get_document_discussion", "list_discussion_threads", "get_discussion_thread");
+            "prepare_coder_context_packet", "render_worker_prompt");
 
         // ---- profile: worker-reviewer ----
         m.Profile(McpToolProfiles.WorkerReviewer,

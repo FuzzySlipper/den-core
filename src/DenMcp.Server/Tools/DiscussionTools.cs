@@ -15,9 +15,9 @@ namespace DenMcp.Server.Tools;
 [McpServerToolType]
 public sealed class DiscussionTools
 {
-    // ── Read tools (reader profiles + worker-coder/reviewer get read-only) ──
+    // ── Read tools (reader profiles + worker-reviewer get read-only) ──
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-reviewer")]
     [McpToolBundle("discussion")]
     [McpServerTool(Name = "get_document_discussion"), Description(
         "Get discussion threads and comments for a document. Discussion is separate from document content — " +
@@ -95,7 +95,7 @@ public sealed class DiscussionTools
         });
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-reviewer")]
     [McpToolBundle("discussion")]
     [McpServerTool(Name = "list_discussion_threads"), Description(
         "List discussion threads across targets. Currently supports document-target threads only; " +
@@ -140,7 +140,7 @@ public sealed class DiscussionTools
             });
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-reviewer")]
     [McpToolBundle("discussion")]
     [McpServerTool(Name = "get_discussion_thread"), Description(
         "Get a single discussion thread by ID, optionally including its comments. " +

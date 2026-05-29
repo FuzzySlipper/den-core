@@ -273,6 +273,17 @@ public sealed class McpToolProfileRegistry
             "list_discussion_threads", "get_discussion_thread",
             "create_discussion_comment");
 
+        // ---- worker-pool bundle ----
+        // Core-owned worker pool management (members, assignments, checkpoints, responses).
+        // Gateway/Channels/Hermes Bridge consume these via REST APIs or injected IWorkerPoolRepository.
+        m.Add(McpToolBundles.WorkerPool,
+            "upsert_pool_member", "list_pool_members",
+            "lease_worker", "list_assignments", "get_assignment",
+            "append_checkpoint", "respond_to_checkpoint",
+            "quarantine_pool_member",
+            "record_cleanup_evidence", "release_assignment",
+            "get_worker_pool_summary");
+
         AddPublicSpecBundles();
 
         // ---- profile: planner ----
@@ -294,6 +305,9 @@ public sealed class McpToolProfileRegistry
         // packet read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
             "get_latest_task_packet", "render_worker_prompt");
+        // worker-pool read-only subset for planner
+        m.ProfileAdd(McpToolProfiles.Planner,
+            "list_pool_members", "list_assignments", "get_assignment", "get_worker_pool_summary");
 
         // ---- profile: runner ----
         // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion
@@ -307,6 +321,7 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Agent,
             McpToolBundles.AgentStream,
             McpToolBundles.Worker,
+            McpToolBundles.WorkerPool,
             McpToolBundles.Orchestrator,
             McpToolBundles.Discussion);
         // runner-specific packet subset
@@ -326,6 +341,7 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Agent,
             McpToolBundles.AgentStream,
             McpToolBundles.Worker,
+            McpToolBundles.WorkerPool,
             McpToolBundles.Packet,
             McpToolBundles.Orchestrator,
             McpToolBundles.Topics,
@@ -351,7 +367,8 @@ public sealed class McpToolProfileRegistry
             "get_task_workflow_summary", "list_tasks", "get_task",
             "list_review_rounds", "list_review_findings",
             "get_latest_task_packet",
-            "prepare_coder_context_packet", "render_worker_prompt");
+            "prepare_coder_context_packet", "render_worker_prompt",
+            "append_checkpoint", "respond_to_checkpoint", "get_worker_pool_summary");
 
         // ---- profile: worker-reviewer ----
         m.Profile(McpToolProfiles.WorkerReviewer,
@@ -366,7 +383,8 @@ public sealed class McpToolProfileRegistry
             "get_task_workflow_summary", "list_tasks", "get_task",
             "get_latest_task_packet",
             "prepare_reviewer_context_packet", "render_worker_prompt",
-            "get_document_discussion", "list_discussion_threads", "get_discussion_thread");
+            "get_document_discussion", "list_discussion_threads", "get_discussion_thread",
+            "append_checkpoint", "respond_to_checkpoint", "get_worker_pool_summary");
 
         // ---- profile: worker-validator ----
         // Narrow profile: packet retrieval, status, completion, and role-specific context packet helpers only.

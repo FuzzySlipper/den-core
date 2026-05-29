@@ -1210,6 +1210,7 @@ public sealed class DatabaseInitializer
             ON agent_stream_entries(dedup_key) WHERE dedup_key IS NOT NULL
             """);
         await EnsureDiscussionSchemaAsync(connection);
+        await EnsureWorkerPoolSchemaAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2521,5 +2522,137 @@ public sealed class DatabaseInitializer
             "CREATE INDEX IF NOT EXISTS idx_discussion_comments_thread ON discussion_comments(thread_id, created_at ASC, id ASC)");
         await EnsureIndexAsync(connection, "idx_discussion_comments_parent",
             "CREATE INDEX IF NOT EXISTS idx_discussion_comments_parent ON discussion_comments(parent_comment_id) WHERE parent_comment_id IS NOT NULL");
+    }
+
+    /// <summary>
+    /// Core-owned worker pool schema: members, assignments, checkpoints, responses.
+    /// Gateway/Channels/Hermes Bridge consume these tables via Core repository/APIs;
+    /// they do NOT own the schema directly.
+    /// </summary>
+    private static async Task EnsureWorkerPoolSchemaAsync(SqliteConnection connection)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            ------------------------------------------------------------
+            -- WORKER POOL MEMBERS
+            -- Core-owned. Gateway/Channels query via Core APIs.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS worker_pool_members (
+                worker_identity      TEXT PRIMARY KEY,
+                display_name         TEXT,
+                capabilities         TEXT,
+                status               TEXT NOT NULL DEFAULT 'available'
+                                     CHECK (status IN ('available', 'busy', 'quarantined', 'offboarded')),
+                last_heartbeat       TEXT,
+                metadata             TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_pool_members_status
+                ON worker_pool_members(status, updated_at DESC);
+
+            ------------------------------------------------------------
+            -- WORKER ASSIGNMENTS
+            -- Core-owned lease records. Each assignment binds a worker to
+            -- a project/task/role with tracked state transitions.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS worker_assignments (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                worker_identity      TEXT NOT NULL
+                                     REFERENCES worker_pool_members(worker_identity),
+                run_id               TEXT NOT NULL,
+                project_id           TEXT NOT NULL REFERENCES projects(id),
+                task_id              INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                role                 TEXT NOT NULL,
+                assigned_by          TEXT NOT NULL,
+                state                TEXT NOT NULL DEFAULT 'ack'
+                                     CHECK (state IN (
+                                         'ack',
+                                         'running',
+                                         'checkpoint_waiting',
+                                         'blocked',
+                                         'completed',
+                                         'failed',
+                                         'expired'
+                                     )),
+                latest_checkpoint_id INTEGER,
+                cleanup_evidence     TEXT,
+                cleanup_recorded_at  TEXT,
+                acquired_at          TEXT,
+                released_at          TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_assignments_worker_state
+                ON worker_assignments(worker_identity, state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_worker_assignments_project_state
+                ON worker_assignments(project_id, state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_worker_assignments_task_state
+                ON worker_assignments(task_id, state, updated_at DESC)
+                WHERE task_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_worker_assignments_state_updated
+                ON worker_assignments(state, updated_at DESC);
+
+            ------------------------------------------------------------
+            -- WORKER CHECKPOINTS (append-only checkpoint packet log)
+            -- Core-owned. Checkpoints are the primary progress/completion
+            -- communication from worker to orchestrator.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS worker_checkpoints (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id        INTEGER NOT NULL
+                                     REFERENCES worker_assignments(id),
+                run_id               TEXT NOT NULL,
+                checkpoint_type      TEXT NOT NULL
+                                     CHECK (checkpoint_type IN (
+                                         'checkpoint',
+                                         'progress',
+                                         'completion',
+                                         'failure',
+                                         'state_snapshot'
+                                     )),
+                payload              TEXT NOT NULL,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_checkpoints_assignment
+                ON worker_checkpoints(assignment_id, created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_worker_checkpoints_run
+                ON worker_checkpoints(run_id, created_at DESC, id DESC);
+
+            ------------------------------------------------------------
+            -- CHECKPOINT RESPONSES (append-only orchestrator response log)
+            -- Core-owned. Responses carry guidance/redirect/abort signals.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS checkpoint_responses (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                checkpoint_id        INTEGER NOT NULL
+                                     REFERENCES worker_checkpoints(id),
+                assignment_id        INTEGER
+                                     REFERENCES worker_assignments(id),
+                run_id               TEXT NOT NULL,
+                response_type        TEXT NOT NULL
+                                     CHECK (response_type IN (
+                                         'ack',
+                                         'guidance',
+                                         'redirect',
+                                         'abort',
+                                         'checkpoint_request'
+                                     )),
+                payload              TEXT NOT NULL,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_checkpoint_responses_checkpoint
+                ON checkpoint_responses(checkpoint_id, created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_checkpoint_responses_run
+                ON checkpoint_responses(run_id, created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_checkpoint_responses_assignment
+                ON checkpoint_responses(assignment_id, created_at DESC, id DESC)
+                WHERE assignment_id IS NOT NULL;
+            """;
+        await cmd.ExecuteNonQueryAsync();
     }
 }

@@ -337,6 +337,37 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Transition_TerminalUpdateFailure_RollsBackMemberStatus()
+    {
+        await SeedMemberAsync("rollback-worker");
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput { ProjectId = "test-proj", Role = "coder", AssignedBy = "runner", RunId = "run-rollback" });
+        Assert.NotNull(lease);
+        await _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Running);
+
+        await using (var conn = await _testDb.Db.CreateConnectionAsync())
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"""
+                CREATE TRIGGER fail_worker_assignment_completion
+                BEFORE UPDATE OF state ON worker_assignments
+                WHEN OLD.id = {lease.Id} AND NEW.state = 'completed'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced assignment update failure');
+                END;
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Completed));
+
+        var assignment = await _repo.GetAssignmentAsync(lease.Id);
+        Assert.Equal(WorkerPoolStates.Running, assignment!.State);
+        var member = await _repo.GetMemberAsync("rollback-worker");
+        Assert.Equal(WorkerPoolStates.MemberBusy, member!.Status);
+    }
+
+    [Fact]
     public async Task Transition_Invalid_ReturnsNull()
     {
         await SeedMemberAsync("bad-transit-worker");

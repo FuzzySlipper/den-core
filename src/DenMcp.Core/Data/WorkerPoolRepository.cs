@@ -312,51 +312,69 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     public async Task<WorkerAssignment?> TransitionAssignmentStateAsync(int assignmentId, string newState, string? metadata = null)
     {
         await using var conn = await _db.CreateConnectionAsync();
-        var assignment = await GetAssignmentByIdAsync(conn, assignmentId);
-        if (assignment is null)
-            return null;
-
-        // Validate transition
-        if (!IsValidTransition(assignment.State, newState))
-            return null;
-
-        var setClauses = new List<string>
+        await using var tx = await conn.BeginTransactionAsync();
+        try
         {
-            "state = @newState",
-            "updated_at = datetime('now')"
-        };
+            var assignment = await GetAssignmentByIdAsync(conn, assignmentId);
+            if (assignment is null)
+            {
+                await tx.CommitAsync();
+                return null;
+            }
 
-        // If transitioning to terminal, record released_at
-        if (WorkerPoolStates.IsTerminal(newState) && assignment.ReleasedAt is null)
-        {
-            setClauses.Add("released_at = datetime('now')");
+            // Validate transition
+            if (!IsValidTransition(assignment.State, newState))
+            {
+                await tx.CommitAsync();
+                return null;
+            }
+
+            var setClauses = new List<string>
+            {
+                "state = @newState",
+                "updated_at = datetime('now')"
+            };
+
+            // If transitioning to terminal, record released_at
+            if (WorkerPoolStates.IsTerminal(newState) && assignment.ReleasedAt is null)
+            {
+                setClauses.Add("released_at = datetime('now')");
+            }
+
+            // If transitioning out of checkpoint_waiting, clear the flag
+            if (newState == WorkerPoolStates.Ack || newState == WorkerPoolStates.Running)
+            {
+                // No checkpoint_id change needed here
+            }
+            if (newState == WorkerPoolStates.Completed || newState == WorkerPoolStates.Failed)
+            {
+                // Terminal — set member back to available if not quarantined later
+                await SetMemberStatusByConnAsync(conn, assignment.WorkerIdentity, WorkerPoolStates.MemberAvailable);
+            }
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                UPDATE worker_assignments
+                SET {string.Join(", ", setClauses)}
+                WHERE id = @id
+                RETURNING id, worker_identity, run_id, project_id, task_id, role, assigned_by, state,
+                          latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, acquired_at, released_at,
+                          created_at, updated_at
+                """;
+            cmd.Parameters.AddWithValue("@id", assignmentId);
+            cmd.Parameters.AddWithValue("@newState", newState);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            var updated = await reader.ReadAsync() ? ReadAssignment(reader) : null;
+            await reader.CloseAsync();
+            await tx.CommitAsync();
+            return updated;
         }
-
-        // If transitioning out of checkpoint_waiting, clear the flag
-        if (newState == WorkerPoolStates.Ack || newState == WorkerPoolStates.Running)
+        catch
         {
-            // No checkpoint_id change needed here
+            await tx.RollbackAsync();
+            throw;
         }
-        if (newState == WorkerPoolStates.Completed || newState == WorkerPoolStates.Failed)
-        {
-            // Terminal — set member back to available if not quarantined later
-            await SetMemberStatusByConnAsync(conn, assignment.WorkerIdentity, WorkerPoolStates.MemberAvailable);
-        }
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            UPDATE worker_assignments
-            SET {string.Join(", ", setClauses)}
-            WHERE id = @id
-            RETURNING id, worker_identity, run_id, project_id, task_id, role, assigned_by, state,
-                      latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, acquired_at, released_at,
-                      created_at, updated_at
-            """;
-        cmd.Parameters.AddWithValue("@id", assignmentId);
-        cmd.Parameters.AddWithValue("@newState", newState);
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        return await reader.ReadAsync() ? ReadAssignment(reader) : null;
     }
 
     // ── Checkpoints ──────────────────────────────────────────────────────

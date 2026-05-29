@@ -19,7 +19,15 @@ public static class WorkerPoolRoutes
 
         pool.MapPost("/members", async (IWorkerPoolRepository repo, JsonElement body) =>
         {
-            var member = JsonSerializer.Deserialize<WorkerPoolMember>(body.GetRawText(), JsonOpts.Default);
+            WorkerPoolMember? member;
+            try
+            {
+                member = JsonSerializer.Deserialize<WorkerPoolMember>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid request body" });
+            }
             if (member is null || string.IsNullOrWhiteSpace(member.WorkerIdentity))
                 return Results.BadRequest(new { error = "worker_identity is required" });
             var result = await repo.UpsertMemberAsync(member);
@@ -54,7 +62,15 @@ public static class WorkerPoolRoutes
 
         pool.MapPost("/leases", async (IWorkerPoolRepository repo, JsonElement body) =>
         {
-            var input = JsonSerializer.Deserialize<LeaseWorkerInput>(body.GetRawText(), JsonOpts.Default);
+            LeaseWorkerInput? input;
+            try
+            {
+                input = JsonSerializer.Deserialize<LeaseWorkerInput>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid request body" });
+            }
             if (input is null || string.IsNullOrWhiteSpace(input.ProjectId) || string.IsNullOrWhiteSpace(input.Role) || string.IsNullOrWhiteSpace(input.RunId) || string.IsNullOrWhiteSpace(input.AssignedBy))
                 return Results.BadRequest(new { error = "project_id, role, run_id, and assigned_by are required" });
             var assignment = await repo.LeaseAvailableWorkerAsync(input);

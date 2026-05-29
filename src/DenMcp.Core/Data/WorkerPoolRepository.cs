@@ -162,23 +162,40 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     public async Task<WorkerAssignment?> LeaseAvailableWorkerAsync(LeaseWorkerInput input)
     {
         await using var conn = await _db.CreateConnectionAsync();
-
-        // If a preferred worker was specified, try to lease that specific one
-        if (!string.IsNullOrWhiteSpace(input.PreferredWorkerIdentity))
+        await using var tx = await conn.BeginTransactionAsync();
+        try
         {
-            return await TryLeaseSpecificWorkerAsync(conn, input);
-        }
+            WorkerAssignment? result;
 
-        // Otherwise find an available worker matching capability requirements
-        var availableWorkers = await FindAvailableWorkersAsync(conn, input.RequiredCapabilities);
-        foreach (var workerId in availableWorkers)
+            // If a preferred worker was specified, try to lease that specific one
+            if (!string.IsNullOrWhiteSpace(input.PreferredWorkerIdentity))
+            {
+                result = await TryLeaseSpecificWorkerAsync(conn, input);
+            }
+            else
+            {
+                // Otherwise find an available worker matching capability requirements
+                var availableWorkers = await FindAvailableWorkersAsync(conn, input.RequiredCapabilities);
+                result = null;
+                foreach (var workerId in availableWorkers)
+                {
+                    var leased = await TryLeaseSpecificWorkerAsync(conn, input with { PreferredWorkerIdentity = workerId });
+                    if (leased is not null)
+                    {
+                        result = leased;
+                        break;
+                    }
+                }
+            }
+
+            await tx.CommitAsync();
+            return result;
+        }
+        catch
         {
-            var leased = await TryLeaseSpecificWorkerAsync(conn, input with { PreferredWorkerIdentity = workerId });
-            if (leased is not null)
-                return leased;
+            await tx.RollbackAsync();
+            throw;
         }
-
-        return null;
     }
 
     private async Task<WorkerAssignment?> TryLeaseSpecificWorkerAsync(SqliteConnection conn, LeaseWorkerInput input)
@@ -347,61 +364,72 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     public async Task<WorkerCheckpoint> AppendCheckpointAsync(int assignmentId, string runId, string checkpointType, string payload)
     {
         await using var conn = await _db.CreateConnectionAsync();
-
-        // Insert checkpoint
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload)
-            VALUES (@assignmentId, @runId, @checkpointType, @payload)
-            RETURNING id, assignment_id, run_id, checkpoint_type, payload, created_at
-            """;
-        cmd.Parameters.AddWithValue("@assignmentId", assignmentId);
-        cmd.Parameters.AddWithValue("@runId", runId);
-        cmd.Parameters.AddWithValue("@checkpointType", checkpointType);
-        cmd.Parameters.AddWithValue("@payload", payload);
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        var checkpoint = ReadCheckpoint(reader);
-        await reader.CloseAsync();
-
-        // Update assignment: link latest checkpoint and derive state
-        string newState;
-        switch (checkpointType)
+        await using var tx = await conn.BeginTransactionAsync();
+        try
         {
-            case WorkerPoolStates.CheckpointCompletion:
-                newState = WorkerPoolStates.Completed;
-                break;
-            case WorkerPoolStates.CheckpointFailure:
-                newState = WorkerPoolStates.Failed;
-                break;
-            default:
-                newState = WorkerPoolStates.CheckpointWaiting;
-                break;
+            // Insert checkpoint
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload)
+                VALUES (@assignmentId, @runId, @checkpointType, @payload)
+                RETURNING id, assignment_id, run_id, checkpoint_type, payload, created_at
+                """;
+            cmd.Parameters.AddWithValue("@assignmentId", assignmentId);
+            cmd.Parameters.AddWithValue("@runId", runId);
+            cmd.Parameters.AddWithValue("@checkpointType", checkpointType);
+            cmd.Parameters.AddWithValue("@payload", payload);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            var checkpoint = ReadCheckpoint(reader);
+            await reader.CloseAsync();
+
+            // Update assignment: link latest checkpoint and derive state
+            string newState;
+            switch (checkpointType)
+            {
+                case WorkerPoolStates.CheckpointCompletion:
+                    newState = WorkerPoolStates.Completed;
+                    break;
+                case WorkerPoolStates.CheckpointFailure:
+                    newState = WorkerPoolStates.Failed;
+                    break;
+                default:
+                    newState = WorkerPoolStates.CheckpointWaiting;
+                    break;
+            }
+
+            await using var updateCmd = conn.CreateCommand();
+            updateCmd.CommandText = """
+                UPDATE worker_assignments
+                SET latest_checkpoint_id = @checkpointId,
+                    state = @newState,
+                    released_at = CASE WHEN @isTerminal = 1 AND released_at IS NULL THEN datetime('now') ELSE released_at END,
+                    updated_at = datetime('now')
+                WHERE id = @assignmentId
+                RETURNING worker_identity
+                """;
+            updateCmd.Parameters.AddWithValue("@checkpointId", checkpoint.Id);
+            updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId);
+            updateCmd.Parameters.AddWithValue("@newState", newState);
+            updateCmd.Parameters.AddWithValue("@isTerminal", WorkerPoolStates.IsTerminal(newState) ? 1 : 0);
+
+            var workerIdentity = (string?)await updateCmd.ExecuteScalarAsync();
+
+            // If terminal via checkpoint, set member back to available
+            if (WorkerPoolStates.IsTerminal(newState) && workerIdentity is not null)
+            {
+                await SetMemberStatusByConnAsync(conn, workerIdentity, WorkerPoolStates.MemberAvailable);
+            }
+
+            await tx.CommitAsync();
+            return checkpoint;
         }
-
-        await using var updateCmd = conn.CreateCommand();
-        updateCmd.CommandText = """
-            UPDATE worker_assignments
-            SET latest_checkpoint_id = @checkpointId,
-                state = @newState,
-                released_at = CASE WHEN @isTerminal = 1 AND released_at IS NULL THEN datetime('now') ELSE released_at END,
-                updated_at = datetime('now')
-            WHERE id = @assignmentId
-            """;
-        updateCmd.Parameters.AddWithValue("@checkpointId", checkpoint.Id);
-        updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId);
-        updateCmd.Parameters.AddWithValue("@newState", newState);
-        updateCmd.Parameters.AddWithValue("@isTerminal", WorkerPoolStates.IsTerminal(newState) ? 1 : 0);
-        await updateCmd.ExecuteNonQueryAsync();
-
-        // If terminal via checkpoint, set member back to available
-        if (WorkerPoolStates.IsTerminal(newState))
+        catch
         {
-            await SetMemberStatusByConnAsync(conn, (await GetAssignmentByIdAsync(conn, assignmentId))?.WorkerIdentity ?? "", WorkerPoolStates.MemberAvailable);
+            await tx.RollbackAsync();
+            throw;
         }
-
-        return checkpoint;
     }
 
     public async Task<List<WorkerCheckpoint>> ListCheckpointsAsync(WorkerCheckpointListOptions options)
@@ -448,50 +476,60 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     public async Task<CheckpointResponse> AppendCheckpointResponseAsync(int checkpointId, int? assignmentId, string runId, string responseType, string payload)
     {
         await using var conn = await _db.CreateConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO checkpoint_responses (checkpoint_id, assignment_id, run_id, response_type, payload)
-            VALUES (@checkpointId, @assignmentId, @runId, @responseType, @payload)
-            RETURNING id, checkpoint_id, assignment_id, run_id, response_type, payload, created_at
-            """;
-        cmd.Parameters.AddWithValue("@checkpointId", checkpointId);
-        cmd.Parameters.AddWithValue("@assignmentId", (object?)assignmentId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@runId", runId);
-        cmd.Parameters.AddWithValue("@responseType", responseType);
-        cmd.Parameters.AddWithValue("@payload", payload);
-
-        await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        var response = ReadResponse(reader);
-        await reader.CloseAsync();
-
-        // If response is ack, transition assignment back to running
-        if (responseType == WorkerPoolStates.ResponseAck && assignmentId is not null)
+        await using var tx = await conn.BeginTransactionAsync();
+        try
         {
-            await using var updateCmd = conn.CreateCommand();
-            updateCmd.CommandText = """
-                UPDATE worker_assignments
-                SET state = 'running', updated_at = datetime('now')
-                WHERE id = @assignmentId AND state = 'checkpoint_waiting'
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO checkpoint_responses (checkpoint_id, assignment_id, run_id, response_type, payload)
+                VALUES (@checkpointId, @assignmentId, @runId, @responseType, @payload)
+                RETURNING id, checkpoint_id, assignment_id, run_id, response_type, payload, created_at
                 """;
-            updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
-            await updateCmd.ExecuteNonQueryAsync();
-        }
+            cmd.Parameters.AddWithValue("@checkpointId", checkpointId);
+            cmd.Parameters.AddWithValue("@assignmentId", (object?)assignmentId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@runId", runId);
+            cmd.Parameters.AddWithValue("@responseType", responseType);
+            cmd.Parameters.AddWithValue("@payload", payload);
 
-        // If response is abort, transition to expired
-        if (responseType == WorkerPoolStates.ResponseAbort && assignmentId is not null)
+            await using var reader = await cmd.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            var response = ReadResponse(reader);
+            await reader.CloseAsync();
+
+            // If response is ack, transition assignment back to running
+            if (responseType == WorkerPoolStates.ResponseAck && assignmentId is not null)
+            {
+                await using var updateCmd = conn.CreateCommand();
+                updateCmd.CommandText = """
+                    UPDATE worker_assignments
+                    SET state = 'running', updated_at = datetime('now')
+                    WHERE id = @assignmentId AND state = 'checkpoint_waiting'
+                    """;
+                updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            // If response is abort, transition to expired
+            if (responseType == WorkerPoolStates.ResponseAbort && assignmentId is not null)
+            {
+                await using var updateCmd = conn.CreateCommand();
+                updateCmd.CommandText = """
+                    UPDATE worker_assignments
+                    SET state = 'expired', released_at = datetime('now'), updated_at = datetime('now')
+                    WHERE id = @assignmentId AND state NOT IN ('completed', 'failed', 'expired')
+                    """;
+                updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
+                await updateCmd.ExecuteNonQueryAsync();
+            }
+
+            await tx.CommitAsync();
+            return response;
+        }
+        catch
         {
-            await using var updateCmd = conn.CreateCommand();
-            updateCmd.CommandText = """
-                UPDATE worker_assignments
-                SET state = 'expired', released_at = datetime('now'), updated_at = datetime('now')
-                WHERE id = @assignmentId AND state NOT IN ('completed', 'failed', 'expired')
-                """;
-            updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
-            await updateCmd.ExecuteNonQueryAsync();
+            await tx.RollbackAsync();
+            throw;
         }
-
-        return response;
     }
 
     public async Task<List<CheckpointResponse>> ListResponsesAsync(int checkpointId)
@@ -601,44 +639,55 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     public async Task<bool> QuarantineWorkerAsync(string workerIdentity, string quarantinedBy, string? reason = null)
     {
         await using var conn = await _db.CreateConnectionAsync();
-        var worker = await GetMemberByConnAsync(conn, workerIdentity);
-        if (worker is null)
-            return false;
-
-        var metadata = worker.Metadata;
+        await using var tx = await conn.BeginTransactionAsync();
         try
         {
-            var metaObj = string.IsNullOrWhiteSpace(metadata)
-                ? new Dictionary<string, object?>()
-                : JsonSerializer.Deserialize<Dictionary<string, object?>>(metadata) ?? new Dictionary<string, object?>();
-            metaObj["quarantined_by"] = quarantinedBy;
-            metaObj["quarantine_reason"] = reason;
-            metaObj["quarantined_at"] = DateTime.UtcNow.ToString("o");
-            metadata = JsonSerializer.Serialize(metaObj);
+            var worker = await GetMemberByConnAsync(conn, workerIdentity);
+            if (worker is null)
+                return false;
+
+            var metadata = worker.Metadata;
+            try
+            {
+                var metaObj = string.IsNullOrWhiteSpace(metadata)
+                    ? new Dictionary<string, object?>()
+                    : JsonSerializer.Deserialize<Dictionary<string, object?>>(metadata) ?? new Dictionary<string, object?>();
+                metaObj["quarantined_by"] = quarantinedBy;
+                metaObj["quarantine_reason"] = reason;
+                metaObj["quarantined_at"] = DateTime.UtcNow.ToString("o");
+                metadata = JsonSerializer.Serialize(metaObj);
+            }
+            catch
+            {
+                // If existing metadata is malformed, replace it
+                metadata = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["quarantined_by"] = quarantinedBy,
+                    ["quarantine_reason"] = reason,
+                    ["quarantined_at"] = DateTime.UtcNow.ToString("o")
+                });
+            }
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                UPDATE worker_pool_members
+                SET status = 'quarantined',
+                    metadata = @metadata,
+                    updated_at = datetime('now')
+                WHERE worker_identity = @workerIdentity
+                """;
+            cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
+            cmd.Parameters.AddWithValue("@metadata", metadata);
+
+            var result = await cmd.ExecuteNonQueryAsync() > 0;
+            await tx.CommitAsync();
+            return result;
         }
         catch
         {
-            // If existing metadata is malformed, replace it
-            metadata = JsonSerializer.Serialize(new Dictionary<string, object?>
-            {
-                ["quarantined_by"] = quarantinedBy,
-                ["quarantine_reason"] = reason,
-                ["quarantined_at"] = DateTime.UtcNow.ToString("o")
-            });
+            await tx.RollbackAsync();
+            throw;
         }
-
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE worker_pool_members
-            SET status = 'quarantined',
-                metadata = @metadata,
-                updated_at = datetime('now')
-            WHERE worker_identity = @workerIdentity
-            """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
-        cmd.Parameters.AddWithValue("@metadata", metadata);
-
-        return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
     // ── Summary ──────────────────────────────────────────────────────────

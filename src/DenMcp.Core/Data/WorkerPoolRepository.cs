@@ -128,7 +128,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             RETURNING {MemberColumns}
             """;
         cmd.Parameters.AddWithValue("@workerIdentity", member.WorkerIdentity);
-        cmd.Parameters.AddWithValue("@profileIdentity", (object?)member.ProfileIdentity ?? "");
+        cmd.Parameters.AddWithValue("@profileIdentity", member.ProfileIdentity);
         cmd.Parameters.AddWithValue("@workerRole", (object?)member.WorkerRole ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@displayName", (object?)member.DisplayName ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@capabilities", (object?)member.Capabilities ?? DBNull.Value);
@@ -1124,7 +1124,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         Role = reader.GetString(3),
         AssignedBy = reader.GetString(4),
         RunId = reader.GetString(5),
-        ProfileIdentity = reader.IsDBNull(6) ? null : reader.GetString(6),
+        ProfileIdentity = reader.IsDBNull(6) ? string.Empty : reader.GetString(6),
         WorkerRole = reader.IsDBNull(7) ? null : reader.GetString(7),
         RequiredCapabilities = reader.IsDBNull(8) ? null : reader.GetString(8),
         PreferredWorkerIdentity = reader.IsDBNull(9) ? null : reader.GetString(9),
@@ -1145,7 +1145,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     private static WorkerPoolMember ReadMember(SqliteDataReader reader) => new()
     {
         WorkerIdentity = reader.GetString(0),
-        ProfileIdentity = reader.IsDBNull(1) ? null : reader.GetString(1),
+        ProfileIdentity = reader.GetString(1),
         WorkerRole = reader.IsDBNull(2) ? null : reader.GetString(2),
         DisplayName = reader.IsDBNull(3) ? null : reader.GetString(3),
         Capabilities = reader.IsDBNull(4) ? null : reader.GetString(4),
@@ -1194,7 +1194,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         var assignment = ReadAssignment(reader);
         // Columns 15-18 are the LEFT JOIN denormalized fields
         assignment.PoolMemberId = assignment.WorkerIdentity; // PoolMemberId alias
-        assignment.ProfileIdentity = reader.IsDBNull(15) ? null : reader.GetString(15);
+        assignment.ProfileIdentity = reader.IsDBNull(15) ? string.Empty : reader.GetString(15);
         assignment.WorkerRole = reader.IsDBNull(16) ? null : reader.GetString(16);
         assignment.AgentInstanceId = reader.IsDBNull(17) ? null : reader.GetString(17);
         assignment.ChannelId = reader.IsDBNull(18) ? null : reader.GetString(18);

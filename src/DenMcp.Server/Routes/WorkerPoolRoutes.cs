@@ -47,7 +47,7 @@ public static class WorkerPoolRoutes
             {
                 Status = status,
                 WorkerIdentity = workerIdentity,
-                ProfileIdentity = profileIdentity,
+                ProfileIdentity = profileIdentity ?? string.Empty,
                 WorkerRole = workerRole,
                 Limit = limit
             });

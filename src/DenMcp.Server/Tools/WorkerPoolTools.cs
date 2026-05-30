@@ -44,7 +44,7 @@ public sealed class WorkerPoolTools
         var member = await repo.UpsertMemberAsync(new WorkerPoolMember
         {
             WorkerIdentity = worker_identity,
-            ProfileIdentity = profile_identity,
+            ProfileIdentity = profile_identity ?? string.Empty,
             WorkerRole = worker_role,
             DisplayName = display_name,
             Capabilities = capabilities,
@@ -84,7 +84,7 @@ public sealed class WorkerPoolTools
         {
             Status = status,
             WorkerIdentity = worker_identity,
-            ProfileIdentity = profile_identity,
+            ProfileIdentity = profile_identity ?? string.Empty,
             WorkerRole = worker_role,
             Limit = Math.Clamp(limit, 1, 200),
         });
@@ -143,7 +143,7 @@ public sealed class WorkerPoolTools
             RunId = run_id,
             RequiredCapabilities = capabilities,
             PreferredWorkerIdentity = preferred_worker_identity,
-            ProfileIdentity = profile_identity,
+            ProfileIdentity = profile_identity ?? string.Empty,
             WorkerRole = worker_role,
         });
 

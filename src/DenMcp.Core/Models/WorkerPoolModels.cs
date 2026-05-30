@@ -47,7 +47,7 @@ public sealed class WorkerPoolMember
     /// <see cref="WorkerIdentity"/>. Core uses profile_identity for pool-wide filtering
     /// and routing; lifecycle mutations use the concrete <see cref="WorkerIdentity"/>.
     /// </summary>
-    public string? ProfileIdentity { get; set; }
+    public string ProfileIdentity { get; set; } = string.Empty;
 
     /// <summary>
     /// Worker role category: e.g. "coder", "reviewer", "validator", "drift_checker", "packet_auditor".
@@ -139,7 +139,7 @@ public sealed class WorkerAssignment
     /// Shared profile identity (e.g. "spawned-coder") denormalized from the pool member
     /// for readback convenience. Not a lifecycle key.
     /// </summary>
-    public string? ProfileIdentity { get; set; }
+    public string ProfileIdentity { get; set; } = string.Empty;
 
     /// <summary>
     /// Worker role (e.g. "coder") denormalized from the pool member for readback convenience.
@@ -339,7 +339,7 @@ public sealed class WorkerPoolMemberListOptions
 {
     public string? Status { get; set; }
     public string? WorkerIdentity { get; set; }
-    public string? ProfileIdentity { get; set; }
+    public string ProfileIdentity { get; set; } = string.Empty;
     public string? WorkerRole { get; set; }
     public int Limit { get; set; } = 50;
 }
@@ -383,7 +383,7 @@ public sealed record LeaseWorkerInput
     /// <summary>Optional specific worker identity to lease.</summary>
     public string? PreferredWorkerIdentity { get; set; }
     /// <summary>Optional profile identity filter — only consider workers with matching profile.</summary>
-    public string? ProfileIdentity { get; set; }
+    public string ProfileIdentity { get; set; } = string.Empty;
     /// <summary>Optional worker role filter — only consider workers with matching role.</summary>
     public string? WorkerRole { get; set; }
 }
@@ -462,7 +462,7 @@ public sealed class WorkerNoCapacityRequest
     public required string RunId { get; set; }
 
     /// <summary>Optional profile identity filter from the request.</summary>
-    public string? ProfileIdentity { get; set; }
+    public string ProfileIdentity { get; set; } = string.Empty;
 
     /// <summary>Optional worker role filter from the request.</summary>
     public string? WorkerRole { get; set; }

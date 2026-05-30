@@ -2661,17 +2661,27 @@ public sealed class DatabaseInitializer
                 capability_id        TEXT PRIMARY KEY,
                 display_name         TEXT NOT NULL,
                 description          TEXT NOT NULL DEFAULT '',
-                status               TEXT NOT NULL DEFAULT 'enabled'
-                                     CHECK (status IN ('enabled', 'disabled', 'deprecated')),
-                http_endpoint        TEXT,
-                executor_kind        TEXT NOT NULL DEFAULT 'external_service'
-                                     CHECK (executor_kind IN ('http_endpoint', 'external_service')),
-                side_effect_level    TEXT NOT NULL DEFAULT 'none'
-                                     CHECK (side_effect_level IN ('none', 'auditable', 'destructive')),
                 owner_project_id     TEXT REFERENCES projects(id) ON DELETE SET NULL,
-                request_schema_json  TEXT,
-                response_schema_json TEXT,
-                metadata             TEXT,
+                implementation_kind  TEXT NOT NULL DEFAULT 'registry_only'
+                                     CHECK (implementation_kind IN ('http_endpoint', 'core_builtin', 'registry_only')),
+                service_endpoint     TEXT,
+                http_method          TEXT NOT NULL DEFAULT 'POST',
+                input_schema_ref     TEXT,
+                output_schema_ref    TEXT,
+                input_schema_json    TEXT,
+                output_schema_json   TEXT,
+                side_effect_level    TEXT NOT NULL DEFAULT 'read_only'
+                                     CHECK (side_effect_level IN ('read_only', 'notification_only', 'bounded_write', 'external_write')),
+                status               TEXT NOT NULL DEFAULT 'experimental'
+                                     CHECK (status IN ('experimental', 'active', 'degraded', 'disabled')),
+                default_model_json   TEXT,
+                fallback_models_json TEXT,
+                eval_refs_json       TEXT,
+                timeout_ms           INTEGER NOT NULL DEFAULT 30000
+                                     CHECK (timeout_ms BETWEEN 1000 AND 300000),
+                max_request_bytes    INTEGER NOT NULL DEFAULT 10485760
+                                     CHECK (max_request_bytes > 0),
+                metadata_json        TEXT,
                 created_at           TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -2687,40 +2697,58 @@ public sealed class DatabaseInitializer
             -- CAPABILITY INVOCATIONS (audit records)
             ------------------------------------------------------------
             CREATE TABLE IF NOT EXISTS capability_invocations (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                capability_id       TEXT NOT NULL,
-                caller_project_id   TEXT NOT NULL,
-                caller_task_id      TEXT,
-                caller_identity     TEXT NOT NULL,
-                status              TEXT NOT NULL
-                                    CHECK (status IN (
-                                        'pending',
-                                        'success',
-                                        'disabled',
-                                        'invalid_request',
-                                        'timeout',
-                                        'executor_failure',
-                                        'invalid_output',
-                                        'non_read_only_rejected'
-                                    )),
-                request_payload     TEXT,
-                response_payload    TEXT,
-                error_message       TEXT,
-                duration_ms         INTEGER,
-                metadata            TEXT,
-                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id          TEXT NOT NULL UNIQUE,
+                capability_id          TEXT NOT NULL,
+                capability_version     TEXT,
+                caller_agent           TEXT,
+                caller_project_id      TEXT NOT NULL,
+                caller_task_id         INTEGER,
+                caller_message_id      TEXT,
+                caller_surface         TEXT,
+                input_artifact_refs_json TEXT,
+                request_json           TEXT,
+                request_hash           TEXT,
+                status                 TEXT NOT NULL
+                                       CHECK (status IN (
+                                           'queued',
+                                           'running',
+                                           'completed',
+                                           'failed',
+                                           'invalid_request',
+                                           'invalid_output',
+                                           'timed_out',
+                                           'disabled'
+                                       )),
+                started_at             TEXT,
+                completed_at           TEXT,
+                duration_ms            INTEGER,
+                model_provider         TEXT,
+                model_name             TEXT,
+                model_version          TEXT,
+                timings_ms_json        TEXT,
+                cost_json              TEXT,
+                output_summary         TEXT,
+                output_json            TEXT,
+                output_artifact_refs_json TEXT,
+                error_type             TEXT,
+                error_message          TEXT,
+                metadata_json          TEXT,
+                created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at             TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_invocation
+                ON capability_invocations(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_cap_invocations_capability
                 ON capability_invocations(capability_id);
             CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_project
                 ON capability_invocations(caller_project_id);
-            CREATE INDEX IF NOT EXISTS idx_cap_invocations_status
-                ON capability_invocations(status);
             CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_task
                 ON capability_invocations(caller_task_id)
                 WHERE caller_task_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_status
+                ON capability_invocations(status);
             """;
         await cmd.ExecuteNonQueryAsync();
     }
@@ -2733,17 +2761,27 @@ public sealed class DatabaseInitializer
                 capability_id        TEXT PRIMARY KEY,
                 display_name         TEXT NOT NULL,
                 description          TEXT NOT NULL DEFAULT '',
-                status               TEXT NOT NULL DEFAULT 'enabled'
-                                     CHECK (status IN ('enabled', 'disabled', 'deprecated')),
-                http_endpoint        TEXT,
-                executor_kind        TEXT NOT NULL DEFAULT 'external_service'
-                                     CHECK (executor_kind IN ('http_endpoint', 'external_service')),
-                side_effect_level    TEXT NOT NULL DEFAULT 'none'
-                                     CHECK (side_effect_level IN ('none', 'auditable', 'destructive')),
                 owner_project_id     TEXT REFERENCES projects(id) ON DELETE SET NULL,
-                request_schema_json  TEXT,
-                response_schema_json TEXT,
-                metadata             TEXT,
+                implementation_kind  TEXT NOT NULL DEFAULT 'registry_only'
+                                     CHECK (implementation_kind IN ('http_endpoint', 'core_builtin', 'registry_only')),
+                service_endpoint     TEXT,
+                http_method          TEXT NOT NULL DEFAULT 'POST',
+                input_schema_ref     TEXT,
+                output_schema_ref    TEXT,
+                input_schema_json    TEXT,
+                output_schema_json   TEXT,
+                side_effect_level    TEXT NOT NULL DEFAULT 'read_only'
+                                     CHECK (side_effect_level IN ('read_only', 'notification_only', 'bounded_write', 'external_write')),
+                status               TEXT NOT NULL DEFAULT 'experimental'
+                                     CHECK (status IN ('experimental', 'active', 'degraded', 'disabled')),
+                default_model_json   TEXT,
+                fallback_models_json TEXT,
+                eval_refs_json       TEXT,
+                timeout_ms           INTEGER NOT NULL DEFAULT 30000
+                                     CHECK (timeout_ms BETWEEN 1000 AND 300000),
+                max_request_bytes    INTEGER NOT NULL DEFAULT 10485760
+                                     CHECK (max_request_bytes > 0),
+                metadata_json        TEXT,
                 created_at           TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
             )
@@ -2761,33 +2799,51 @@ public sealed class DatabaseInitializer
         await using var invCmd = connection.CreateCommand();
         invCmd.CommandText = """
             CREATE TABLE IF NOT EXISTS capability_invocations (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                capability_id       TEXT NOT NULL,
-                caller_project_id   TEXT NOT NULL,
-                caller_task_id      TEXT,
-                caller_identity     TEXT NOT NULL,
-                status              TEXT NOT NULL
-                                    CHECK (status IN (
-                                        'pending',
-                                        'success',
-                                        'disabled',
-                                        'invalid_request',
-                                        'timeout',
-                                        'executor_failure',
-                                        'invalid_output',
-                                        'non_read_only_rejected'
-                                    )),
-                request_payload     TEXT,
-                response_payload    TEXT,
-                error_message       TEXT,
-                duration_ms         INTEGER,
-                metadata            TEXT,
-                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id          TEXT NOT NULL UNIQUE,
+                capability_id          TEXT NOT NULL,
+                capability_version     TEXT,
+                caller_agent           TEXT,
+                caller_project_id      TEXT NOT NULL,
+                caller_task_id         INTEGER,
+                caller_message_id      TEXT,
+                caller_surface         TEXT,
+                input_artifact_refs_json TEXT,
+                request_json           TEXT,
+                request_hash           TEXT,
+                status                 TEXT NOT NULL
+                                       CHECK (status IN (
+                                           'queued',
+                                           'running',
+                                           'completed',
+                                           'failed',
+                                           'invalid_request',
+                                           'invalid_output',
+                                           'timed_out',
+                                           'disabled'
+                                       )),
+                started_at             TEXT,
+                completed_at           TEXT,
+                duration_ms            INTEGER,
+                model_provider         TEXT,
+                model_name             TEXT,
+                model_version          TEXT,
+                timings_ms_json        TEXT,
+                cost_json              TEXT,
+                output_summary         TEXT,
+                output_json            TEXT,
+                output_artifact_refs_json TEXT,
+                error_type             TEXT,
+                error_message          TEXT,
+                metadata_json          TEXT,
+                created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at             TEXT NOT NULL DEFAULT (datetime('now'))
             )
             """;
         await invCmd.ExecuteNonQueryAsync();
 
+        await EnsureIndexAsync(connection, "idx_cap_invocations_invocation",
+            "CREATE INDEX IF NOT EXISTS idx_cap_invocations_invocation ON capability_invocations(invocation_id)");
         await EnsureIndexAsync(connection, "idx_cap_invocations_capability",
             "CREATE INDEX IF NOT EXISTS idx_cap_invocations_capability ON capability_invocations(capability_id)");
         await EnsureIndexAsync(connection, "idx_cap_invocations_caller_project",

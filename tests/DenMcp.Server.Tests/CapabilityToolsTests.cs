@@ -51,9 +51,9 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
 
     // ── Helper ──────────────────────────────────────────────────────────
 
-    private async Task SeedDefinitionAsync(string id, string status = CapabilityStatuses.Enabled,
-        string executorKind = "http_endpoint", string sideEffectLevel = SideEffectLevels.None,
-        string? httpEndpoint = null)
+    private async Task SeedDefinitionAsync(string id, string status = CapabilityStatuses.Active,
+        string implKind = ImplementationKinds.HttpEndpoint, string sideEffectLevel = SideEffectLevels.ReadOnly,
+        string? serviceEndpoint = null)
     {
         await _repo.UpsertDefinitionAsync(new CapabilityDefinition
         {
@@ -61,15 +61,14 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
             DisplayName = $"Cap {id}",
             Description = $"Test cap {id}",
             Status = status,
-            ExecutorKind = executorKind,
+            ImplementationKind = implKind,
             SideEffectLevel = sideEffectLevel,
-            HttpEndpoint = httpEndpoint,
+            ServiceEndpoint = serviceEndpoint,
         });
     }
 
     private async Task<JsonElement> InvokeToolAsync(string toolName, object args)
     {
-        // MCP tools are invoked through the standard MCP endpoint
         var response = await _client.PostAsJsonAsync("/mcp", new
         {
             jsonrpc = "2.0",
@@ -95,6 +94,8 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     {
         var result = await _service.AnalyzeImageAsync(
             "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAA=",
+            null,
+            "general",
             _projectId,
             null,
             "test-agent");
@@ -109,6 +110,8 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     {
         var result = await _service.AnalyzeImageAsync(
             "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAg",
+            null,
+            "general",
             _projectId,
             null,
             "test-agent");
@@ -120,17 +123,15 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     [Fact]
     public async Task AnalyzeImage_MissingCapability_ReturnsStructuredError()
     {
-        // Use a unique capability ID that definitely doesn't exist
-        // (actual vision.analyze_image.v1 may have been registered by another parallel test)
         var result = await _service.AnalyzeImageAsync(
             "/path/to/image.jpg",
+            null,
+            "general",
             _projectId,
             null,
             "test-agent");
 
         Assert.False(result.Success);
-        // Default behavior: analyze_image always delegates to vision.analyze_image.v1.
-        // If it's not registered or not properly configured, we get a structured error.
         Assert.NotNull(result.Status);
         Assert.NotNull(result.Error);
     }
@@ -139,10 +140,12 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     public async Task AnalyzeImage_DisabledCapability_ReturnsStructuredError()
     {
         await SeedDefinitionAsync(CapabilityIds.VisionAnalyzeImageV1, CapabilityStatuses.Disabled,
-            "http_endpoint", SideEffectLevels.None, "http://localhost:9999/analyze");
+            ImplementationKinds.HttpEndpoint, SideEffectLevels.ReadOnly, "http://localhost:9999/analyze");
 
         var result = await _service.AnalyzeImageAsync(
             "/path/to/image.jpg",
+            null,
+            "general",
             _projectId,
             null,
             "test-agent");
@@ -157,13 +160,12 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     [Fact]
     public async Task InvokeAsync_AlwaysTerminalizesRecord()
     {
-        // Invoke a non-existent capability — should create a terminal record
         var invocation = await _service.InvokeAsync(
             "nonexistent-cap",
+            "{}",
             _projectId,
             null,
-            "test-agent",
-            "{}");
+            "test-agent");
 
         Assert.True(InvocationStatuses.IsTerminal(invocation.Status),
             $"Expected terminal status, got: {invocation.Status}");
@@ -173,17 +175,17 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     public async Task InvokeAsync_NonReadOnly_ReturnsTerminalRecord()
     {
         await SeedDefinitionAsync("destructive-tool",
-            executorKind: "external_service",
-            sideEffectLevel: SideEffectLevels.Destructive);
+            implKind: ImplementationKinds.HttpEndpoint,
+            sideEffectLevel: SideEffectLevels.ExternalWrite);
 
         var invocation = await _service.InvokeAsync(
             "destructive-tool",
+            "{}",
             _projectId,
             null,
-            "test-agent",
-            "{}");
+            "test-agent");
 
-        Assert.Equal(InvocationStatuses.NonReadOnlyRejected, invocation.Status);
+        Assert.Equal(InvocationStatuses.Failed, invocation.Status);
         Assert.True(InvocationStatuses.IsTerminal(invocation.Status));
     }
 
@@ -194,10 +196,10 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
 
         var invocation = await _service.InvokeAsync(
             "disabled-tool",
+            "{}",
             _projectId,
             null,
-            "test-agent",
-            "{}");
+            "test-agent");
 
         Assert.Equal(InvocationStatuses.Disabled, invocation.Status);
     }
@@ -224,11 +226,11 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     [Fact]
     public async Task ListCapabilities_FiltersByStatus()
     {
-        await SeedDefinitionAsync("tools-list-enabled", CapabilityStatuses.Enabled);
+        await SeedDefinitionAsync("tools-list-active", CapabilityStatuses.Active);
 
         var result = await CapabilityTools.ListCapabilities(
             _repo,
-            status: CapabilityStatuses.Enabled,
+            status: CapabilityStatuses.Active,
             side_effect_level: null,
             owner_project_id: null,
             limit: 50);
@@ -248,6 +250,33 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetCapability_ShowsNewFields()
+    {
+        await _repo.UpsertDefinitionAsync(new CapabilityDefinition
+        {
+            CapabilityId = "tools-new-fields",
+            DisplayName = "New Fields Test",
+            ImplementationKind = ImplementationKinds.HttpEndpoint,
+            SideEffectLevel = SideEffectLevels.BoundedWrite,
+            Status = CapabilityStatuses.Experimental,
+            HttpMethod = "PUT",
+            ServiceEndpoint = "http://example.com/api",
+            TimeoutMs = 60000,
+            MaxRequestBytes = 5242880,
+            DefaultModelJson = "{\"model\":\"gpt-4\"}",
+        });
+
+        var result = await CapabilityTools.GetCapability(_repo, "tools-new-fields");
+        using var doc = JsonDocument.Parse(result);
+        Assert.Equal("http_endpoint", doc.RootElement.GetProperty("implementation_kind").GetString());
+        Assert.Equal("bounded_write", doc.RootElement.GetProperty("side_effect_level").GetString());
+        Assert.Equal("experimental", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("PUT", doc.RootElement.GetProperty("http_method").GetString());
+        Assert.Equal(60000, doc.RootElement.GetProperty("timeout_ms").GetInt32());
+        Assert.Equal(5242880, doc.RootElement.GetProperty("max_request_bytes").GetInt32());
+    }
+
+    [Fact]
     public async Task GetCapability_NotFound_ReturnsError()
     {
         var result = await CapabilityTools.GetCapability(_repo, "nonexistent");
@@ -262,21 +291,70 @@ public sealed class CapabilityToolsTests : IAsyncLifetime
     {
         var id = $"tools-upsert-{Guid.NewGuid():N}";
         var result = await CapabilityTools.UpsertCapabilityDefinition(
-            _repo, id, "Tools Upsert", "Created by tools test",
-            "enabled", "http://localhost:9999/test",
-            "http_endpoint", "none", null, null, null, null);
+            _repo, id, "Tools Upsert", "Created by tools test", null,
+            ImplementationKinds.HttpEndpoint, "http://localhost:9999/test", null,
+            null, null, null, null,
+            SideEffectLevels.ReadOnly, CapabilityStatuses.Experimental, null, null, null,
+            30000, 10485760, null);
 
         using var doc = JsonDocument.Parse(result);
         Assert.Equal(id, doc.RootElement.GetProperty("capability_id").GetString());
-        Assert.Equal("enabled", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("experimental", doc.RootElement.GetProperty("status").GetString());
     }
 
     // ── analyze_image tool via MCP endpoint ─────────────────────────────
-
     // Note: Direct MCP endpoint testing requires proper JSON-RPC session
     // management. The service-level AnalyzeImage_RejectsDataUrl test above
     // covers the data URL rejection logic at the unit level.
-    // Full MCP integration testing is deferred to MCP endpoint test suites.
+
+    // ── Invocation record shape ─────────────────────────────────────────
+
+    [Fact]
+    public async Task InvokeAsync_ProducesInvocationId()
+    {
+        var invocation = await _service.InvokeAsync(
+            "nonexistent-cap",
+            "{}",
+            _projectId,
+            null,
+            "test-agent");
+
+        Assert.NotNull(invocation.InvocationId);
+        Assert.StartsWith("capinv_", invocation.InvocationId);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_RejectsTooLargeRequest()
+    {
+        await SeedDefinitionAsync("tools-max-bytes",
+            implKind: ImplementationKinds.HttpEndpoint,
+            sideEffectLevel: SideEffectLevels.ReadOnly,
+            serviceEndpoint: "http://localhost:9999/test");
+
+        // The default max_request_bytes is 10485760, so a normal payload should work
+        // This test checks that oversize is rejected; we need a definition with a very small limit
+        var smallCapId = "tools-small-max";
+        await _repo.UpsertDefinitionAsync(new CapabilityDefinition
+        {
+            CapabilityId = smallCapId,
+            DisplayName = "Small Max",
+            Status = CapabilityStatuses.Active,
+            ImplementationKind = ImplementationKinds.HttpEndpoint,
+            SideEffectLevel = SideEffectLevels.ReadOnly,
+            ServiceEndpoint = "http://localhost:9999/test",
+            MaxRequestBytes = 100, // very small max
+        });
+
+        var invocation = await _service.InvokeAsync(
+            smallCapId,
+            new string('x', 200), // 200 bytes, exceeds 100
+            _projectId,
+            null,
+            "test-agent");
+
+        Assert.Equal(InvocationStatuses.InvalidRequest, invocation.Status);
+        Assert.Equal("request_too_large", invocation.ErrorType);
+    }
 
     // ── AppFactory ──────────────────────────────────────────────────────
 

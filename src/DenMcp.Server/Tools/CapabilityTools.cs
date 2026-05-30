@@ -24,10 +24,11 @@ public sealed class CapabilityTools
         "Capabilities represent external services or executors that can be invoked through Core.")]
     public static async Task<string> ListCapabilities(
         ICapabilityRepository repo,
-        [Description("Optional status filter: enabled, disabled, deprecated.")] string? status = null,
-        [Description("Optional side-effect level filter: none, auditable, destructive.")] string? side_effect_level = null,
+        [Description("Optional status filter: experimental, active, degraded, disabled.")] string? status = null,
+        [Description("Optional side-effect level filter: read_only, notification_only, bounded_write, external_write.")] string? side_effect_level = null,
         [Description("Optional owner project id filter.")] string? owner_project_id = null,
-        [Description("Maximum items to return (max 200).")] int limit = 50)
+        [Description("Maximum items to return (max 200).")] int limit = 50,
+        [Description("Include full definition details.")] bool verbose = false)
     {
         var capabilities = await repo.ListDefinitionsAsync(new CapabilityListOptions
         {
@@ -35,14 +36,25 @@ public sealed class CapabilityTools
             SideEffectLevel = side_effect_level,
             OwnerProjectId = owner_project_id,
             Limit = Math.Clamp(limit, 1, 200),
+            Verbose = verbose,
         });
+
+        if (verbose)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"listed {capabilities.Count} capability definition(s)",
+                count = capabilities.Count,
+                capabilities,
+            }, JsonOpts.Default);
+        }
 
         var summaries = capabilities.Select(c => new
         {
             capability_id = c.CapabilityId,
             display_name = c.DisplayName,
             status = c.Status,
-            executor_kind = c.ExecutorKind,
+            implementation_kind = c.ImplementationKind,
             side_effect_level = c.SideEffectLevel,
             owner_project_id = c.OwnerProjectId,
         }).ToList();
@@ -59,7 +71,7 @@ public sealed class CapabilityTools
     [McpToolBundle("capability")]
     [McpServerTool(Name = "get_capability"), Description(
         "Get a single capability definition by its capability_id. " +
-        "Returns full record including endpoint configuration, schema, and metadata.")]
+        "Returns full record including endpoint configuration, schemas, model config, and metadata.")]
     public static async Task<string> GetCapability(
         ICapabilityRepository repo,
         [Description("Capability identifier (e.g. 'vision.analyze_image.v1').")] string capability_id)
@@ -77,14 +89,22 @@ public sealed class CapabilityTools
             capability_id = cap.CapabilityId,
             display_name = cap.DisplayName,
             description = cap.Description,
-            status = cap.Status,
-            executor_kind = cap.ExecutorKind,
-            side_effect_level = cap.SideEffectLevel,
-            http_endpoint = cap.HttpEndpoint,
             owner_project_id = cap.OwnerProjectId,
-            request_schema_json = cap.RequestSchemaJson,
-            response_schema_json = cap.ResponseSchemaJson,
-            metadata = cap.Metadata,
+            implementation_kind = cap.ImplementationKind,
+            service_endpoint = cap.ServiceEndpoint,
+            http_method = cap.HttpMethod,
+            input_schema_ref = cap.InputSchemaRef,
+            output_schema_ref = cap.OutputSchemaRef,
+            input_schema_json = cap.InputSchemaJson,
+            output_schema_json = cap.OutputSchemaJson,
+            side_effect_level = cap.SideEffectLevel,
+            status = cap.Status,
+            default_model_json = cap.DefaultModelJson,
+            fallback_models_json = cap.FallbackModelsJson,
+            eval_refs_json = cap.EvalRefsJson,
+            timeout_ms = cap.TimeoutMs,
+            max_request_bytes = cap.MaxRequestBytes,
+            metadata_json = cap.MetadataJson,
             created_at = cap.CreatedAt.ToString("o"),
             updated_at = cap.UpdatedAt.ToString("o"),
         }, JsonOpts.Default);
@@ -97,34 +117,50 @@ public sealed class CapabilityTools
     [McpServerTool(Name = "upsert_capability_definition"), Description(
         "Register or update a capability definition. Capabilities represent external " +
         "service executors that can be discovered and invoked through Core. " +
-        "Core only proxies read-only (side_effect_level='none') HTTP endpoint capabilities.")]
+        "Core only proxies read-only (side_effect_level='read_only') HTTP endpoint capabilities.")]
     public static async Task<string> UpsertCapabilityDefinition(
         ICapabilityRepository repo,
         [Description("Unique capability identifier (e.g. 'vision.analyze_image.v1').")] string capability_id,
         [Description("Human-readable display name.")] string display_name,
         [Description("Optional description of what this capability does.")] string? description = null,
-        [Description("Status: enabled, disabled, deprecated. Default: enabled.")] string status = "enabled",
-        [Description("HTTP endpoint URL for http_endpoint executor kind.")] string? http_endpoint = null,
-        [Description("Executor kind: 'http_endpoint' or 'external_service'. Default: external_service.")] string executor_kind = "external_service",
-        [Description("Side-effect level: 'none', 'auditable', 'destructive'. Default: none.")] string side_effect_level = "none",
         [Description("Optional project that owns this capability.")] string? owner_project_id = null,
-        [Description("Optional JSON schema string for request validation.")] string? request_schema_json = null,
-        [Description("Optional JSON schema string for response validation.")] string? response_schema_json = null,
-        [Description("Optional JSON metadata.")] string? metadata = null)
+        [Description("Implementation kind: http_endpoint, core_builtin, registry_only. Default: registry_only.")] string implementation_kind = "registry_only",
+        [Description("Service endpoint URL for http_endpoint implementation kind.")] string? service_endpoint = null,
+        [Description("HTTP method for the endpoint (default: POST).")] string? http_method = null,
+        [Description("Reference to an input schema definition.")] string? input_schema_ref = null,
+        [Description("Reference to an output schema definition.")] string? output_schema_ref = null,
+        [Description("Inline JSON schema for request validation.")] string? input_schema_json = null,
+        [Description("Inline JSON schema for response validation.")] string? output_schema_json = null,
+        [Description("Side-effect level: read_only, notification_only, bounded_write, external_write. Default: read_only.")] string side_effect_level = "read_only",
+        [Description("Status: experimental, active, degraded, disabled. Default: experimental.")] string status = "experimental",
+        [Description("Default model configuration as JSON.")] string? default_model_json = null,
+        [Description("Fallback model configurations as JSON array.")] string? fallback_models_json = null,
+        [Description("Evaluation references as JSON array.")] string? eval_refs_json = null,
+        [Description("Timeout in milliseconds (1000-300000, default: 30000).")] int timeout_ms = 30000,
+        [Description("Maximum request body size in bytes (default: 10485760).")] int max_request_bytes = 10485760,
+        [Description("Arbitrary JSON metadata.")] string? metadata_json = null)
     {
         var result = await repo.UpsertDefinitionAsync(new CapabilityDefinition
         {
             CapabilityId = capability_id,
             DisplayName = display_name,
             Description = description ?? "",
-            Status = status,
-            HttpEndpoint = http_endpoint,
-            ExecutorKind = executor_kind,
-            SideEffectLevel = side_effect_level,
             OwnerProjectId = owner_project_id,
-            RequestSchemaJson = request_schema_json,
-            ResponseSchemaJson = response_schema_json,
-            Metadata = metadata,
+            ImplementationKind = implementation_kind,
+            ServiceEndpoint = service_endpoint,
+            HttpMethod = http_method ?? DefaultMethods.HttpMethod,
+            InputSchemaRef = input_schema_ref,
+            OutputSchemaRef = output_schema_ref,
+            InputSchemaJson = input_schema_json,
+            OutputSchemaJson = output_schema_json,
+            SideEffectLevel = side_effect_level,
+            Status = status,
+            DefaultModelJson = default_model_json,
+            FallbackModelsJson = fallback_models_json,
+            EvalRefsJson = eval_refs_json,
+            TimeoutMs = timeout_ms,
+            MaxRequestBytes = max_request_bytes,
+            MetadataJson = metadata_json,
         });
 
         return JsonSerializer.Serialize(new
@@ -132,7 +168,7 @@ public sealed class CapabilityTools
             summary = $"upserted capability '{result.CapabilityId}' (status={result.Status})",
             capability_id = result.CapabilityId,
             status = result.Status,
-            executor_kind = result.ExecutorKind,
+            implementation_kind = result.ImplementationKind,
             side_effect_level = result.SideEffectLevel,
         }, JsonOpts.Default);
     }
@@ -149,29 +185,44 @@ public sealed class CapabilityTools
     public static async Task<string> InvokeCapability(
         ICapabilityInvocationService service,
         [Description("Capability identifier to invoke.")] string capability_id,
-        [Description("Caller project id (for audit).")] string caller_project_id,
-        [Description("Caller identity (for audit).")] string caller_identity,
-        [Description("Optional caller task id (for audit).")] string? caller_task_id = null,
-        [Description("Optional JSON request payload.")] string? payload = null,
-        [Description("Request timeout in milliseconds (1000-120000, default 30000).")] int timeout_ms = 30000)
+        [Description("Optional JSON request payload.")] string? request_json = null,
+        [Description("Optional caller project id (for audit).")] string? caller_project_id = null,
+        [Description("Optional caller task id (for audit).")] int? caller_task_id = null,
+        [Description("Optional caller agent (for audit).")] string? caller_agent = null,
+        [Description("Optional caller message id.")] string? caller_message_id = null,
+        [Description("Optional caller surface (e.g. 'mcp', 'rest').")] string? caller_surface = null,
+        [Description("Request timeout in milliseconds (1000-300000, default 30000).")] int timeout_ms = 30000,
+        [Description("Include full invocation record in response.")] bool verbose = false)
     {
         var invocation = await service.InvokeAsync(
             capability_id,
+            request_json,
             caller_project_id,
             caller_task_id,
-            caller_identity,
-            payload,
+            caller_agent,
+            caller_message_id,
+            caller_surface,
             timeout_ms);
+
+        if (verbose)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"invoked capability '{capability_id}': status={invocation.Status}",
+                invocation,
+            }, JsonOpts.Default);
+        }
 
         return JsonSerializer.Serialize(new
         {
             summary = $"invoked capability '{capability_id}': status={invocation.Status}",
-            invocation_id = invocation.Id,
+            invocation_id = invocation.InvocationId,
             capability_id = invocation.CapabilityId,
             status = invocation.Status,
+            error_type = invocation.ErrorType,
             error_message = invocation.ErrorMessage,
             duration_ms = invocation.DurationMs,
-            response_payload = invocation.ResponsePayload,
+            output_summary = invocation.OutputSummary,
             created_at = invocation.CreatedAt.ToString("o"),
         }, JsonOpts.Default);
     }
@@ -189,22 +240,25 @@ public sealed class CapabilityTools
         ICapabilityInvocationService service,
         [Description("Image reference (file path, artifact URL, or Den artifact ref). " +
                      "Data: URLs and raw base64 strings are rejected.")] string image_ref,
-        [Description("Caller project id (for audit).")] string caller_project_id,
-        [Description("Caller identity (for audit).")] string caller_identity,
-        [Description("Optional caller task id (for audit).")] string? caller_task_id = null,
-        [Description("Optional vision model prompt.")] string? prompt = null,
-        [Description("Optional model preference.")] string? model = null,
-        [Description("Optional max tokens for vision response.")] int? max_tokens = null,
-        [Description("Request timeout in milliseconds (1000-120000, default 60000).")] int timeout_ms = 60000)
+        [Description("Question or prompt for the vision model.")] string? question = null,
+        [Description("Analysis mode: general, ui_screenshot, diagram, ocr, error_screen, diff. Default: general.")] string mode = "general",
+        [Description("Optional caller project id (for audit).")] string? caller_project_id = null,
+        [Description("Optional caller task id (for audit).")] int? caller_task_id = null,
+        [Description("Optional caller agent (for audit).")] string? caller_agent = null,
+        [Description("Whether to include OCR text extraction.")] bool include_ocr = true,
+        [Description("Whether to include region detection.")] bool include_regions = false,
+        [Description("Request timeout in milliseconds (1000-300000, default 60000).")] int timeout_ms = 60000,
+        [Description("Include full invocation record in response.")] bool verbose = false)
     {
         var result = await service.AnalyzeImageAsync(
             image_ref,
+            question,
+            mode,
             caller_project_id,
             caller_task_id,
-            caller_identity,
-            prompt,
-            model,
-            max_tokens,
+            caller_agent,
+            include_ocr,
+            include_regions,
             timeout_ms);
 
         return JsonSerializer.Serialize(new
@@ -214,8 +268,10 @@ public sealed class CapabilityTools
                 : $"Image analysis failed: {result.Error}",
             success = result.Success,
             status = result.Status,
+            invocation_id = result.InvocationId,
             description = result.Description,
             error = result.Error,
+            error_type = result.ErrorType,
             duration_ms = result.DurationMs,
             raw_output = result.RawOutput,
         }, JsonOpts.Default);

@@ -21,13 +21,17 @@ public class CapabilityRepositoryTests : IAsyncLifetime
 
     public Task DisposeAsync() => _testDb.DisposeAsync();
 
-    private async Task SeedDefinition(string id, string status = CapabilityStatuses.Enabled)
+    private async Task SeedDefinition(string id, string status = CapabilityStatuses.Active,
+        string implKind = ImplementationKinds.HttpEndpoint,
+        string seLevel = SideEffectLevels.ReadOnly)
     {
         await _repo.UpsertDefinitionAsync(new CapabilityDefinition
         {
             CapabilityId = id,
             DisplayName = $"Cap {id}",
             Status = status,
+            ImplementationKind = implKind,
+            SideEffectLevel = seLevel,
         });
     }
 
@@ -47,13 +51,25 @@ public class CapabilityRepositoryTests : IAsyncLifetime
             Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
         }
 
+        // Verify new columns exist
+        await using var colsCmd = conn.CreateCommand();
+        colsCmd.CommandText = "SELECT count(*) FROM pragma_table_info('capability_definitions') WHERE name IN ('implementation_kind', 'service_endpoint', 'http_method', 'input_schema_ref', 'output_schema_ref', 'input_schema_json', 'output_schema_json', 'default_model_json', 'fallback_models_json', 'eval_refs_json', 'timeout_ms', 'max_request_bytes', 'metadata_json')";
+        Assert.Equal(13L, (await colsCmd.ExecuteScalarAsync())!);
+
+        // Verify invocation columns
+        await using var invColsCmd = conn.CreateCommand();
+        invColsCmd.CommandText = "SELECT count(*) FROM pragma_table_info('capability_invocations') WHERE name IN ('invocation_id', 'caller_agent', 'caller_task_id', 'caller_message_id', 'caller_surface', 'input_artifact_refs_json', 'request_json', 'request_hash', 'model_provider', 'model_name', 'model_version', 'timings_ms_json', 'cost_json', 'output_summary', 'output_json', 'output_artifact_refs_json', 'error_type', 'metadata_json')";
+        Assert.Equal(18L, (await invColsCmd.ExecuteScalarAsync())!);
+
         foreach (var idx in new[] {
             "idx_capability_definitions_status",
             "idx_capability_definitions_side_effect",
             "idx_capability_definitions_owner",
+            "idx_cap_invocations_invocation",
             "idx_cap_invocations_capability",
             "idx_cap_invocations_caller_project",
             "idx_cap_invocations_status",
+            "idx_cap_invocations_caller_task",
         })
         {
             await using var cmd = conn.CreateCommand();
@@ -74,17 +90,21 @@ public class CapabilityRepositoryTests : IAsyncLifetime
             CapabilityId = "vision.test.v1",
             DisplayName = "Test Vision",
             Description = "A test capability",
-            Status = CapabilityStatuses.Enabled,
-            ExecutorKind = "http_endpoint",
-            SideEffectLevel = SideEffectLevels.None,
-            HttpEndpoint = "http://localhost:9999/analyze",
+            Status = CapabilityStatuses.Active,
+            ImplementationKind = ImplementationKinds.HttpEndpoint,
+            SideEffectLevel = SideEffectLevels.ReadOnly,
+            ServiceEndpoint = "http://localhost:9999/analyze",
+            HttpMethod = "POST",
         });
 
         Assert.Equal("vision.test.v1", result.CapabilityId);
         Assert.Equal("Test Vision", result.DisplayName);
-        Assert.Equal(CapabilityStatuses.Enabled, result.Status);
-        Assert.Equal("http_endpoint", result.ExecutorKind);
-        Assert.Equal("http://localhost:9999/analyze", result.HttpEndpoint);
+        Assert.Equal(CapabilityStatuses.Active, result.Status);
+        Assert.Equal(ImplementationKinds.HttpEndpoint, result.ImplementationKind);
+        Assert.Equal("http://localhost:9999/analyze", result.ServiceEndpoint);
+        Assert.Equal("POST", result.HttpMethod);
+        Assert.Equal(30000, result.TimeoutMs);
+        Assert.Equal(10485760, result.MaxRequestBytes);
     }
 
     [Fact]
@@ -96,14 +116,14 @@ public class CapabilityRepositoryTests : IAsyncLifetime
             CapabilityId = "upd-cap",
             DisplayName = "Updated Cap",
             Status = CapabilityStatuses.Disabled,
-            ExecutorKind = "external_service",
-            SideEffectLevel = SideEffectLevels.Auditable,
+            ImplementationKind = ImplementationKinds.RegistryOnly,
+            SideEffectLevel = SideEffectLevels.NotificationOnly,
         });
 
         Assert.Equal("Updated Cap", updated.DisplayName);
         Assert.Equal(CapabilityStatuses.Disabled, updated.Status);
-        Assert.Equal("external_service", updated.ExecutorKind);
-        Assert.Equal(SideEffectLevels.Auditable, updated.SideEffectLevel);
+        Assert.Equal(ImplementationKinds.RegistryOnly, updated.ImplementationKind);
+        Assert.Equal(SideEffectLevels.NotificationOnly, updated.SideEffectLevel);
     }
 
     [Fact]
@@ -125,15 +145,15 @@ public class CapabilityRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task ListDefinitions_FiltersByStatus()
     {
-        await SeedDefinition("enabled-1", CapabilityStatuses.Enabled);
-        await SeedDefinition("enabled-2", CapabilityStatuses.Enabled);
+        await SeedDefinition("active-1", CapabilityStatuses.Active);
+        await SeedDefinition("active-2", CapabilityStatuses.Active);
         await SeedDefinition("disabled-1", CapabilityStatuses.Disabled);
 
-        var enabled = await _repo.ListDefinitionsAsync(new CapabilityListOptions
+        var active = await _repo.ListDefinitionsAsync(new CapabilityListOptions
         {
-            Status = CapabilityStatuses.Enabled,
+            Status = CapabilityStatuses.Active,
         });
-        Assert.Equal(2, enabled.Count);
+        Assert.Equal(2, active.Count);
 
         var disabled = await _repo.ListDefinitionsAsync(new CapabilityListOptions
         {
@@ -147,24 +167,24 @@ public class CapabilityRepositoryTests : IAsyncLifetime
     {
         await _repo.UpsertDefinitionAsync(new CapabilityDefinition
         {
-            CapabilityId = "none-1",
-            DisplayName = "None1",
-            Status = CapabilityStatuses.Enabled,
-            SideEffectLevel = SideEffectLevels.None,
+            CapabilityId = "readonly-1",
+            DisplayName = "RO1",
+            Status = CapabilityStatuses.Active,
+            SideEffectLevel = SideEffectLevels.ReadOnly,
         });
         await _repo.UpsertDefinitionAsync(new CapabilityDefinition
         {
-            CapabilityId = "destructive-1",
-            DisplayName = "Destructive1",
-            Status = CapabilityStatuses.Enabled,
-            SideEffectLevel = SideEffectLevels.Destructive,
+            CapabilityId = "bounded-1",
+            DisplayName = "BW1",
+            Status = CapabilityStatuses.Active,
+            SideEffectLevel = SideEffectLevels.BoundedWrite,
         });
 
-        var none = await _repo.ListDefinitionsAsync(new CapabilityListOptions
+        var readOnly = await _repo.ListDefinitionsAsync(new CapabilityListOptions
         {
-            SideEffectLevel = SideEffectLevels.None,
+            SideEffectLevel = SideEffectLevels.ReadOnly,
         });
-        Assert.Single(none);
+        Assert.Single(readOnly);
     }
 
     [Fact]
@@ -174,7 +194,7 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "proj-cap-1",
             DisplayName = "Project Cap",
-            Status = CapabilityStatuses.Enabled,
+            Status = CapabilityStatuses.Active,
             OwnerProjectId = "test-proj",
         });
 
@@ -208,14 +228,17 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-cap-1",
             CallerProjectId = "test-proj",
-            CallerIdentity = "test-agent",
-            Status = InvocationStatuses.Success,
-            RequestPayload = "{\"input\":\"test\"}",
+            CallerAgent = "test-agent",
+            Status = InvocationStatuses.Completed,
+            RequestJson = "{\"input\":\"test\"}",
         });
 
         Assert.True(inv.Id > 0);
+        Assert.NotNull(inv.InvocationId);
+        Assert.StartsWith("capinv_", inv.InvocationId);
         Assert.Equal("inv-cap-1", inv.CapabilityId);
         Assert.Equal("test-proj", inv.CallerProjectId);
+        Assert.Equal("test-agent", inv.CallerAgent);
     }
 
     [Fact]
@@ -226,17 +249,19 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-cap-2",
             CallerProjectId = "test-proj",
-            CallerIdentity = "test-agent",
-            Status = "pending",
+            CallerAgent = "test-agent",
+            Status = InvocationStatuses.Queued,
         });
 
         var updated = await _repo.UpdateInvocationStatusAsync(inv.Id,
-            InvocationStatuses.Timeout,
+            InvocationStatuses.TimedOut,
+            errorType: "timeout",
             errorMessage: "Timed out after 30000ms",
             durationMs: 30000);
 
         Assert.NotNull(updated);
-        Assert.Equal(InvocationStatuses.Timeout, updated.Status);
+        Assert.Equal(InvocationStatuses.TimedOut, updated.Status);
+        Assert.Equal("timeout", updated.ErrorType);
         Assert.Equal("Timed out after 30000ms", updated.ErrorMessage);
         Assert.Equal(30000, updated.DurationMs);
     }
@@ -244,7 +269,7 @@ public class CapabilityRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task GetInvocation_ReturnsNullForMissing()
     {
-        var result = await _repo.GetInvocationAsync(99999);
+        var result = await _repo.GetInvocationByIdAsync(99999);
         Assert.Null(result);
     }
 
@@ -256,13 +281,32 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-cap-3",
             CallerProjectId = "test-proj",
-            CallerIdentity = "test-agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "test-agent",
+            Status = InvocationStatuses.Completed,
         });
 
-        var fetched = await _repo.GetInvocationAsync(inv.Id);
+        var fetched = await _repo.GetInvocationByIdAsync(inv.Id);
         Assert.NotNull(fetched);
         Assert.Equal(inv.Id, fetched.Id);
+        Assert.Equal(inv.InvocationId, fetched.InvocationId);
+    }
+
+    [Fact]
+    public async Task GetInvocationByInvocationId_FindsByPublicId()
+    {
+        await SeedDefinition("inv-cap-pub");
+        var inv = await _repo.CreateInvocationAsync(new CapabilityInvocation
+        {
+            CapabilityId = "inv-cap-pub",
+            CallerProjectId = "test-proj",
+            CallerAgent = "test-agent",
+            Status = InvocationStatuses.Queued,
+        });
+
+        var fetched = await _repo.GetInvocationByInvocationIdAsync(inv.InvocationId!);
+        Assert.NotNull(fetched);
+        Assert.Equal(inv.Id, fetched.Id);
+        Assert.Equal(inv.InvocationId, fetched.InvocationId);
     }
 
     [Fact]
@@ -274,15 +318,15 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "list-inv-a",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
         await _repo.CreateInvocationAsync(new CapabilityInvocation
         {
             CapabilityId = "list-inv-b",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
 
         var results = await _repo.ListInvocationsAsync(new InvocationListOptions
@@ -301,24 +345,24 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-filter",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
         await _repo.CreateInvocationAsync(new CapabilityInvocation
         {
             CapabilityId = "inv-filter",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.ExecutorFailure,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Failed,
         });
 
         var successes = await _repo.ListInvocationsAsync(new InvocationListOptions
         {
             CapabilityId = "inv-filter",
-            Status = InvocationStatuses.Success,
+            Status = InvocationStatuses.Completed,
         });
         Assert.Single(successes);
-        Assert.Equal(InvocationStatuses.Success, successes[0].Status);
+        Assert.Equal(InvocationStatuses.Completed, successes[0].Status);
     }
 
     [Fact]
@@ -329,15 +373,15 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-caller",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
         await _repo.CreateInvocationAsync(new CapabilityInvocation
         {
             CapabilityId = "inv-caller",
             CallerProjectId = "other-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
 
         var results = await _repo.ListInvocationsAsync(new InvocationListOptions
@@ -356,23 +400,31 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         {
             CapabilityId = "inv-task",
             CallerProjectId = "test-proj",
-            CallerTaskId = "task-42",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            CallerTaskId = 42,
+            Status = InvocationStatuses.Completed,
         });
         await _repo.CreateInvocationAsync(new CapabilityInvocation
         {
             CapabilityId = "inv-task",
             CallerProjectId = "test-proj",
-            CallerIdentity = "agent",
-            Status = InvocationStatuses.Success,
+            CallerAgent = "agent",
+            Status = InvocationStatuses.Completed,
         });
 
         var results = await _repo.ListInvocationsAsync(new InvocationListOptions
         {
-            CallerTaskId = "task-42",
+            CallerTaskId = 42,
         });
         Assert.Single(results);
-        Assert.Equal("task-42", results[0].CallerTaskId);
+        Assert.Equal(42, results[0].CallerTaskId);
+    }
+
+    [Fact]
+    public async Task GenerateInvocationId_Format()
+    {
+        var ids = Enumerable.Range(0, 10).Select(_ => CapabilityRepository.GenerateInvocationId()).ToList();
+        Assert.All(ids, id => Assert.Matches("^capinv_\\d+_\\d{6}$", id));
+        Assert.Equal(10, ids.Distinct().Count());
     }
 }

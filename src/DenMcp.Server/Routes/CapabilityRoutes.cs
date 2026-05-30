@@ -42,21 +42,7 @@ public static class CapabilityRoutes
             if (string.IsNullOrWhiteSpace(req.CapabilityId))
                 return Results.BadRequest(new { error = "capability_id is required" });
 
-            var definition = new CapabilityDefinition
-            {
-                CapabilityId = req.CapabilityId,
-                DisplayName = req.DisplayName,
-                Description = req.Description,
-                Status = req.Status,
-                HttpEndpoint = req.HttpEndpoint,
-                ExecutorKind = req.ExecutorKind,
-                SideEffectLevel = req.SideEffectLevel,
-                OwnerProjectId = req.OwnerProjectId,
-                RequestSchemaJson = req.RequestSchemaJson,
-                ResponseSchemaJson = req.ResponseSchemaJson,
-                Metadata = req.Metadata,
-            };
-
+            var definition = MapToDefinition(req);
             var result = await repo.UpsertDefinitionAsync(definition);
             return Results.Ok(result);
         });
@@ -64,21 +50,8 @@ public static class CapabilityRoutes
         // PUT /api/capabilities/{capabilityId} (upsert by path)
         group.MapPut("/{capabilityId}", async (ICapabilityRepository repo, string capabilityId, UpsertCapabilityRequest req) =>
         {
-            var definition = new CapabilityDefinition
-            {
-                CapabilityId = capabilityId,
-                DisplayName = req.DisplayName,
-                Description = req.Description,
-                Status = req.Status,
-                HttpEndpoint = req.HttpEndpoint,
-                ExecutorKind = req.ExecutorKind,
-                SideEffectLevel = req.SideEffectLevel,
-                OwnerProjectId = req.OwnerProjectId,
-                RequestSchemaJson = req.RequestSchemaJson,
-                ResponseSchemaJson = req.ResponseSchemaJson,
-                Metadata = req.Metadata,
-            };
-
+            var definition = MapToDefinition(req);
+            definition.CapabilityId = capabilityId;
             var result = await repo.UpsertDefinitionAsync(definition);
             return Results.Ok(result);
         });
@@ -90,17 +63,14 @@ public static class CapabilityRoutes
             ICapabilityInvocationService service,
             string capabilityId, InvokeCapabilityRequest req) =>
         {
-            if (string.IsNullOrWhiteSpace(req.CallerProjectId))
-                return Results.BadRequest(new { error = "caller_project_id is required" });
-            if (string.IsNullOrWhiteSpace(req.CallerIdentity))
-                return Results.BadRequest(new { error = "caller_identity is required" });
-
             var invocation = await service.InvokeAsync(
                 capabilityId,
+                req.RequestJson,
                 req.CallerProjectId,
                 req.CallerTaskId,
-                req.CallerIdentity,
-                req.Payload,
+                req.CallerAgent,
+                req.CallerMessageId,
+                req.CallerSurface,
                 req.TimeoutMs);
 
             return Results.Ok(invocation);
@@ -110,7 +80,7 @@ public static class CapabilityRoutes
 
         // GET /api/capabilities/invocations?capabilityId=&callerProjectId=&callerTaskId=&status=&limit=
         group.MapGet("/invocations", async (ICapabilityRepository repo,
-            string? capabilityId, string? callerProjectId, string? callerTaskId,
+            string? capabilityId, string? callerProjectId, int? callerTaskId,
             string? status, int limit = 50) =>
         {
             var invocations = await repo.ListInvocationsAsync(new InvocationListOptions
@@ -124,13 +94,39 @@ public static class CapabilityRoutes
             return Results.Ok(new { invocations, count = invocations.Count });
         });
 
-        // GET /api/capabilities/invocations/{invocationId}
-        group.MapGet("/invocations/{invocationId:int}", async (ICapabilityRepository repo, int invocationId) =>
+        // GET /api/capabilities/invocations/{invocationId} (by public invocation_id string)
+        group.MapGet("/invocations/{invocationId}", async (ICapabilityRepository repo, string invocationId) =>
         {
-            var invocation = await repo.GetInvocationAsync(invocationId);
+            var invocation = await repo.GetInvocationByInvocationIdAsync(invocationId);
             if (invocation is null)
-                return Results.NotFound(new { error = $"Invocation {invocationId} not found" });
+                return Results.NotFound(new { error = $"Invocation '{invocationId}' not found" });
             return Results.Ok(invocation);
         });
+    }
+
+    private static CapabilityDefinition MapToDefinition(UpsertCapabilityRequest req)
+    {
+        return new CapabilityDefinition
+        {
+            CapabilityId = req.CapabilityId ?? "",
+            DisplayName = req.DisplayName,
+            Description = req.Description ?? "",
+            OwnerProjectId = req.OwnerProjectId,
+            ImplementationKind = req.ImplementationKind,
+            ServiceEndpoint = req.ServiceEndpoint,
+            HttpMethod = req.HttpMethod ?? DefaultMethods.HttpMethod,
+            InputSchemaRef = req.InputSchemaRef,
+            OutputSchemaRef = req.OutputSchemaRef,
+            InputSchemaJson = req.InputSchemaJson,
+            OutputSchemaJson = req.OutputSchemaJson,
+            SideEffectLevel = req.SideEffectLevel,
+            Status = req.Status,
+            DefaultModelJson = req.DefaultModelJson,
+            FallbackModelsJson = req.FallbackModelsJson,
+            EvalRefsJson = req.EvalRefsJson,
+            TimeoutMs = req.TimeoutMs ?? DefaultTimeouts.InvocationTimeoutMs,
+            MaxRequestBytes = req.MaxRequestBytes ?? DefaultTimeouts.MaxRequestBytes,
+            MetadataJson = req.MetadataJson,
+        };
     }
 }

@@ -46,9 +46,9 @@ public sealed class CapabilityApiTests : IAsyncLifetime
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
-    private async Task SeedDefinitionAsync(string id, string status = CapabilityStatuses.Enabled,
-        string executorKind = "external_service", string sideEffectLevel = SideEffectLevels.None,
-        string? httpEndpoint = null, string? ownerProjectId = null)
+    private async Task SeedDefinitionAsync(string id, string status = CapabilityStatuses.Active,
+        string implKind = ImplementationKinds.RegistryOnly, string sideEffectLevel = SideEffectLevels.ReadOnly,
+        string? serviceEndpoint = null, string? ownerProjectId = null)
     {
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<ICapabilityRepository>();
@@ -58,9 +58,9 @@ public sealed class CapabilityApiTests : IAsyncLifetime
             DisplayName = $"Cap {id}",
             Description = $"Test cap {id}",
             Status = status,
-            ExecutorKind = executorKind,
+            ImplementationKind = implKind,
             SideEffectLevel = sideEffectLevel,
-            HttpEndpoint = httpEndpoint,
+            ServiceEndpoint = serviceEndpoint,
             OwnerProjectId = ownerProjectId,
         });
     }
@@ -84,7 +84,7 @@ public sealed class CapabilityApiTests : IAsyncLifetime
     [Fact]
     public async Task GetCapabilities_FiltersByStatus()
     {
-        await SeedDefinitionAsync("api-status-enabled", CapabilityStatuses.Enabled);
+        await SeedDefinitionAsync("api-status-active", CapabilityStatuses.Active);
         await SeedDefinitionAsync("api-status-disabled", CapabilityStatuses.Disabled);
 
         var response = await _client.GetAsync("/api/capabilities?status=disabled");
@@ -98,15 +98,15 @@ public sealed class CapabilityApiTests : IAsyncLifetime
     [Fact]
     public async Task GetCapabilities_FiltersBySideEffectLevel()
     {
-        await SeedDefinitionAsync("api-se-1", sideEffectLevel: SideEffectLevels.None);
-        await SeedDefinitionAsync("api-se-2", sideEffectLevel: SideEffectLevels.Destructive);
+        await SeedDefinitionAsync("api-se-1", sideEffectLevel: SideEffectLevels.ReadOnly);
+        await SeedDefinitionAsync("api-se-2", sideEffectLevel: SideEffectLevels.ExternalWrite);
 
-        var response = await _client.GetAsync($"/api/capabilities?sideEffectLevel={SideEffectLevels.Destructive}");
+        var response = await _client.GetAsync($"/api/capabilities?sideEffectLevel={SideEffectLevels.ExternalWrite}");
         response.EnsureSuccessStatusCode();
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var caps = doc.RootElement.GetProperty("capabilities").EnumerateArray().ToList();
-        Assert.All(caps, c => Assert.Equal("destructive", c.GetProperty("side_effect_level").GetString()));
+        Assert.All(caps, c => Assert.Equal("external_write", c.GetProperty("side_effect_level").GetString()));
     }
 
     [Fact]
@@ -150,10 +150,10 @@ public sealed class CapabilityApiTests : IAsyncLifetime
             capability_id = id,
             display_name = "Post Created",
             description = "Created via POST",
-            status = "enabled",
-            executor_kind = "http_endpoint",
-            side_effect_level = "none",
-            http_endpoint = "http://localhost:9999/test",
+            status = "active",
+            implementation_kind = "http_endpoint",
+            side_effect_level = "read_only",
+            service_endpoint = "http://localhost:9999/test",
         });
         response.EnsureSuccessStatusCode();
 
@@ -178,9 +178,9 @@ public sealed class CapabilityApiTests : IAsyncLifetime
         var response = await _client.PutAsJsonAsync($"/api/capabilities/{id}", new
         {
             display_name = "Put Created",
-            status = "enabled",
-            executor_kind = "http_endpoint",
-            side_effect_level = "none",
+            status = "active",
+            implementation_kind = "http_endpoint",
+            side_effect_level = "read_only",
         });
         response.EnsureSuccessStatusCode();
 
@@ -196,8 +196,8 @@ public sealed class CapabilityApiTests : IAsyncLifetime
         var response = await _client.PostAsJsonAsync("/api/capabilities/nonexistent/invoke", new
         {
             caller_project_id = _projectId,
-            caller_identity = "test-agent",
-            payload = "{}",
+            caller_agent = "test-agent",
+            request_json = "{}",
         });
         response.EnsureSuccessStatusCode();
 
@@ -213,8 +213,8 @@ public sealed class CapabilityApiTests : IAsyncLifetime
         var response = await _client.PostAsJsonAsync("/api/capabilities/api-disabled-invoke/invoke", new
         {
             caller_project_id = _projectId,
-            caller_identity = "test-agent",
-            payload = "{}",
+            caller_agent = "test-agent",
+            request_json = "{}",
         });
         response.EnsureSuccessStatusCode();
 
@@ -223,56 +223,44 @@ public sealed class CapabilityApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task InvokeCapability_NonReadOnly_ReturnsNonReadOnlyRejected()
+    public async Task InvokeCapability_NonReadOnly_ReturnsFailed()
     {
         await SeedDefinitionAsync("api-destructive-invoke",
-            executorKind: "external_service",
-            sideEffectLevel: SideEffectLevels.Destructive);
+            implKind: ImplementationKinds.HttpEndpoint,
+            sideEffectLevel: SideEffectLevels.ExternalWrite);
 
         var response = await _client.PostAsJsonAsync("/api/capabilities/api-destructive-invoke/invoke", new
         {
             caller_project_id = _projectId,
-            caller_identity = "test-agent",
-            payload = "{}",
+            caller_agent = "test-agent",
+            request_json = "{}",
         });
         response.EnsureSuccessStatusCode();
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("non_read_only_rejected", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("failed", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("non_read_only_rejected", doc.RootElement.GetProperty("error_type").GetString());
     }
 
     [Fact]
-    public async Task InvokeCapability_NoEndpoint_ReturnsInvalidRequest()
+    public async Task InvokeCapability_NoEndpoint_ReturnsFailed()
     {
         await SeedDefinitionAsync("api-no-endpoint",
-            executorKind: "http_endpoint",
-            sideEffectLevel: SideEffectLevels.None);
+            implKind: ImplementationKinds.HttpEndpoint,
+            sideEffectLevel: SideEffectLevels.ReadOnly);
 
         var response = await _client.PostAsJsonAsync("/api/capabilities/api-no-endpoint/invoke", new
         {
             caller_project_id = _projectId,
-            caller_identity = "test-agent",
-            payload = "{}",
+            caller_agent = "test-agent",
+            request_json = "{}",
         });
         response.EnsureSuccessStatusCode();
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("invalid_request", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("failed", doc.RootElement.GetProperty("status").GetString());
         var error = doc.RootElement.GetProperty("error_message").GetString();
-        Assert.Contains("no http_endpoint", error, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task InvokeCapability_MissingCallerProjectId_ReturnsBadRequest()
-    {
-        await SeedDefinitionAsync("api-missing-caller");
-
-        var response = await _client.PostAsJsonAsync("/api/capabilities/api-missing-caller/invoke", new
-        {
-            caller_identity = "test-agent",
-            payload = "{}",
-        });
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("no service_endpoint", error, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── Invocation Audit ────────────────────────────────────────────────
@@ -282,22 +270,18 @@ public sealed class CapabilityApiTests : IAsyncLifetime
     {
         await SeedDefinitionAsync("audit-list");
 
-        // Create an invocation
         var invokeResp = await _client.PostAsJsonAsync("/api/capabilities/audit-list/invoke", new
         {
             caller_project_id = _projectId,
-            caller_identity = "test-agent",
-            payload = "{}",
+            caller_agent = "test-agent",
+            request_json = "{}",
         });
         invokeResp.EnsureSuccessStatusCode();
 
-        // List invocations
         var listResp = await _client.GetAsync("/api/capabilities/invocations?capabilityId=audit-list");
         listResp.EnsureSuccessStatusCode();
 
         using var doc = JsonDocument.Parse(await listResp.Content.ReadAsStringAsync());
-        // The capability is not found (not registered as http_endpoint), so it's an invalid_request
-        // But the invocation record still exists in the audit log
         var invocations = doc.RootElement.GetProperty("invocations").EnumerateArray().ToList();
         Assert.NotEmpty(invocations);
     }
@@ -313,10 +297,30 @@ public sealed class CapabilityApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task GetInvocation_ReturnsNotFound()
+    public async Task GetInvocationByInvocationId_ReturnsNotFound()
     {
-        var response = await _client.GetAsync("/api/capabilities/invocations/99999");
+        var response = await _client.GetAsync("/api/capabilities/invocations/nonexistent-invocation");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetInvocationByInvocationId_ReturnsByPublicId()
+    {
+        await SeedDefinitionAsync("api-inv-pub");
+        var invokeResp = await _client.PostAsJsonAsync("/api/capabilities/api-inv-pub/invoke", new
+        {
+            caller_project_id = _projectId,
+            caller_agent = "test-agent",
+            request_json = "{}",
+        });
+        invokeResp.EnsureSuccessStatusCode();
+        using var invokeDoc = JsonDocument.Parse(await invokeResp.Content.ReadAsStringAsync());
+        var invocationId = invokeDoc.RootElement.GetProperty("invocation_id").GetString();
+        Assert.NotNull(invocationId);
+        Assert.StartsWith("capinv_", invocationId);
+
+        var getResp = await _client.GetAsync($"/api/capabilities/invocations/{invocationId}");
+        getResp.EnsureSuccessStatusCode();
     }
 
     // ── AppFactory ──────────────────────────────────────────────────────

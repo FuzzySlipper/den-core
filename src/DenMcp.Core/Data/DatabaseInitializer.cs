@@ -1212,6 +1212,20 @@ public sealed class DatabaseInitializer
             """);
         await EnsureDiscussionSchemaAsync(connection);
         await EnsureWorkerPoolSchemaAsync(connection);
+
+        // Migration: add profile_identity column to worker_pool_members for existing DBs
+        await TryAddColumnAsync(connection, "worker_pool_members", "profile_identity", "TEXT NOT NULL DEFAULT ''");
+        // Migration: add worker_role, agent_instance_id, channel_id, session_id for existing DBs
+        await TryAddColumnAsync(connection, "worker_pool_members", "worker_role", "TEXT");
+        await TryAddColumnAsync(connection, "worker_pool_members", "agent_instance_id", "TEXT");
+        await TryAddColumnAsync(connection, "worker_pool_members", "channel_id", "TEXT");
+        await TryAddColumnAsync(connection, "worker_pool_members", "session_id", "TEXT");
+
+        // Migration: indexes for new columns (must happen after columns exist)
+        await EnsureIndexAsync(connection, "idx_worker_pool_members_profile",
+            "CREATE INDEX IF NOT EXISTS idx_worker_pool_members_profile ON worker_pool_members(profile_identity, status, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_worker_pool_members_role",
+            "CREATE INDEX IF NOT EXISTS idx_worker_pool_members_role ON worker_pool_members(worker_role, status, updated_at DESC) WHERE worker_role IS NOT NULL");
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2540,11 +2554,16 @@ public sealed class DatabaseInitializer
             ------------------------------------------------------------
             CREATE TABLE IF NOT EXISTS worker_pool_members (
                 worker_identity      TEXT PRIMARY KEY,
+                profile_identity     TEXT NOT NULL DEFAULT '',
+                worker_role          TEXT,
                 display_name         TEXT,
                 capabilities         TEXT,
                 status               TEXT NOT NULL DEFAULT 'available'
                                      CHECK (status IN ('available', 'busy', 'quarantined', 'offboarded')),
                 last_heartbeat       TEXT,
+                agent_instance_id    TEXT,
+                channel_id           TEXT,
+                session_id           TEXT,
                 metadata             TEXT,
                 created_at           TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at           TEXT NOT NULL DEFAULT (datetime('now'))

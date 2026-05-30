@@ -46,13 +46,14 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
-    private async Task<string> SeedMemberAsync(string identity)
+    private async Task<string> SeedMemberAsync(string identity, string profileIdentity = "")
     {
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
         var member = await repo.UpsertMemberAsync(new WorkerPoolMember
         {
             WorkerIdentity = identity,
+            ProfileIdentity = profileIdentity,
             DisplayName = "API Test Worker",
             Capabilities = """["coder","dotnet"]""",
             Status = WorkerPoolStates.MemberAvailable,
@@ -701,7 +702,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
         var identity = $"mcp-upsert-{Guid.NewGuid():N}";
 
-        var result = await WorkerPoolTools.UpsertPoolMember(repo, identity, "MCP Upsert", """["coder"]""", "available");
+        var result = await WorkerPoolTools.UpsertPoolMember(repo, identity, profile_identity: "MCP Upsert Profile", display_name: "MCP Upsert", capabilities: """["coder"]""", status: "available");
         using var doc = JsonDocument.Parse(result);
         Assert.Contains(identity, doc.RootElement.GetProperty("summary").GetString());
         Assert.Equal(identity, doc.RootElement.GetProperty("worker_identity").GetString());
@@ -971,16 +972,11 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
-            builder.ConfigureAppConfiguration((_, config) =>
-            {
-                config.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["db-path"] = _dbPath,
-                    ["llm-endpoint"] = "http://localhost/fake",
-                    ["llm-api-key"] = "test-key",
-                    ["llm-model"] = "fake"
-                });
-            });
+            // UseSetting makes config values available during Program.Main execution
+            builder.UseSetting("db-path", _dbPath);
+            builder.UseSetting("llm-endpoint", "http://localhost/fake");
+            builder.UseSetting("llm-api-key", "test-key");
+            builder.UseSetting("llm-model", "fake");
         }
 
         protected override void Dispose(bool disposing)

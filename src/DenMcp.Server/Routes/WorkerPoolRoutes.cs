@@ -8,6 +8,12 @@ namespace DenMcp.Server.Routes;
 /// REST API routes for Core worker pool management.
 /// These are Core-owned endpoints. Gateway/Channels/Hermes Bridge consume
 /// these APIs; they do not access the database schema directly.
+///
+/// IDENTITY CONTRACT (v2):
+/// All member endpoints accept and return profile_identity, worker_role,
+/// agent_instance_id, channel_id, session_id alongside worker_identity.
+/// Lifecycle operations (lease, quarantine, transition, release) key on
+/// concrete worker_identity only — never on profile_identity alone.
 /// </summary>
 public static class WorkerPoolRoutes
 {
@@ -35,12 +41,14 @@ public static class WorkerPoolRoutes
         });
 
         pool.MapGet("/members", async (IWorkerPoolRepository repo,
-            string? status, string? workerIdentity, int limit = 50) =>
+            string? status, string? workerIdentity, string? profileIdentity, string? workerRole, int limit = 50) =>
         {
             var members = await repo.ListMembersAsync(new WorkerPoolMemberListOptions
             {
                 Status = status,
                 WorkerIdentity = workerIdentity,
+                ProfileIdentity = profileIdentity,
+                WorkerRole = workerRole,
                 Limit = limit
             });
             return Results.Ok(new { members, count = members.Count });

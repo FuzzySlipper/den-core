@@ -35,11 +35,12 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         return task.Id;
     }
 
-    private async Task<string> SeedMemberAsync(string identity = "worker-1", string capabilities = "[\"coder\",\"dotnet\"]")
+    private async Task<string> SeedMemberAsync(string identity = "worker-1", string capabilities = "[\"coder\",\"dotnet\"]", string profileIdentity = "")
     {
         var member = await _repo.UpsertMemberAsync(new WorkerPoolMember
         {
             WorkerIdentity = identity,
+            ProfileIdentity = profileIdentity,
             DisplayName = "Test Worker",
             Capabilities = capabilities,
             Status = WorkerPoolStates.MemberAvailable,
@@ -706,5 +707,145 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.Equal(payload, checkpoints[0].Payload);
         Assert.Equal(WorkerPoolStates.CheckpointProgress, checkpoints[0].CheckpointType);
         Assert.Equal(lease.Id, checkpoints[0].AssignmentId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Shared Profile Identity — multiple members with the same profile
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SharedProfile_TwoMembersWithSameProfile_IndependentLifecycle()
+    {
+        // Register two members sharing the same profile identity
+        var profileId = "spawned-coder";
+        var member1 = "shared-coder-alpha";
+        var member2 = "shared-coder-beta";
+
+        await SeedMemberAsync(member1, "[\"coder\"]", profileId);
+        await SeedMemberAsync(member2, "[\"coder\"]", profileId);
+
+        // Both should be available initially
+        var m1 = await _repo.GetMemberAsync(member1);
+        Assert.NotNull(m1);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, m1.Status);
+        Assert.Equal(profileId, m1.ProfileIdentity);
+
+        var m2 = await _repo.GetMemberAsync(member2);
+        Assert.NotNull(m2);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, m2.Status);
+        Assert.Equal(profileId, m2.ProfileIdentity);
+
+        // Filter by profile identity should return both
+        var byProfile = await _repo.ListMembersAsync(new WorkerPoolMemberListOptions
+        {
+            ProfileIdentity = profileId,
+        });
+        Assert.Equal(2, byProfile.Count);
+
+        // Lease member1 by concrete identity
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-shared-alpha",
+            PreferredWorkerIdentity = member1,
+        });
+        Assert.NotNull(lease);
+        Assert.Equal(member1, lease.WorkerIdentity);
+
+        // member1 should now be busy
+        m1 = await _repo.GetMemberAsync(member1);
+        Assert.Equal(WorkerPoolStates.MemberBusy, m1!.Status);
+
+        // member2 should still be available (not affected)
+        m2 = await _repo.GetMemberAsync(member2);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, m2!.Status);
+
+        // Quarantine member2 by concrete identity
+        var quarantined = await _repo.QuarantineWorkerAsync(member2, "admin", "test quarantine isolation");
+        Assert.True(quarantined);
+
+        // member2 should now be quarantined
+        m2 = await _repo.GetMemberAsync(member2);
+        Assert.Equal(WorkerPoolStates.MemberQuarantined, m2!.Status);
+        Assert.Contains("quarantined_by", m2.Metadata ?? "");
+
+        // member1 should still be busy (not affected by member2's quarantine)
+        m1 = await _repo.GetMemberAsync(member1);
+        Assert.Equal(WorkerPoolStates.MemberBusy, m1!.Status);
+
+        // Complete member1's assignment — should return to available
+        await _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Running);
+        var completed = await _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Completed);
+        Assert.NotNull(completed);
+        Assert.Equal(WorkerPoolStates.Completed, completed.State);
+
+        m1 = await _repo.GetMemberAsync(member1);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, m1!.Status);
+
+        // member2 is still quarantined (independent lifecycle)
+        m2 = await _repo.GetMemberAsync(member2);
+        Assert.Equal(WorkerPoolStates.MemberQuarantined, m2!.Status);
+    }
+
+    [Fact]
+    public async Task SharedProfile_LeaseByProfileIdentity_FiltersCorrectly()
+    {
+        var profileId = "spawned-coder";
+        var member1 = "profile-filter-alpha";
+        var member2 = "profile-filter-beta";
+
+        await SeedMemberAsync(member1, "[\"coder\"]", profileId);
+        await SeedMemberAsync(member2, "[\"coder\"]", profileId);
+
+        // Also create a member with a different profile
+        await SeedMemberAsync("other-worker", "[\"coder\"]", "spawned-reviewer");
+
+        // Lease by profile identity should only find workers with that profile
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-profile-filter",
+            ProfileIdentity = profileId,
+        });
+        Assert.NotNull(lease);
+        Assert.Contains(lease.WorkerIdentity, new[] { member1, member2 });
+
+        // The other-profile worker should still be available
+        var other = await _repo.GetMemberAsync("other-worker");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, other!.Status);
+    }
+
+    [Fact]
+    public async Task SharedProfile_ProfileIdentityRoundTrips()
+    {
+        var identity = "profile-rt-worker";
+        var profileId = "spawned-coder";
+        await SeedMemberAsync(identity, "[\"coder\"]", profileId);
+
+        var member = await _repo.GetMemberAsync(identity);
+        Assert.NotNull(member);
+        Assert.Equal(profileId, member.ProfileIdentity);
+    }
+
+    [Fact]
+    public async Task SharedProfile_MembersListedByProfileIdentity()
+    {
+        var profileId = "profile-list-group";
+        await SeedMemberAsync("pl-alpha", "[\"coder\"]", profileId);
+        await SeedMemberAsync("pl-beta", "[\"coder\"]", profileId);
+        await SeedMemberAsync("pl-gamma", "[\"coder\"]", profileId);
+        // A member with different profile
+        await SeedMemberAsync("pl-other", "[\"coder\"]", "other-profile");
+
+        var result = await _repo.ListMembersAsync(new WorkerPoolMemberListOptions
+        {
+            ProfileIdentity = profileId,
+        });
+        Assert.Equal(3, result.Count);
+        Assert.All(result, m => Assert.Equal(profileId, m.ProfileIdentity));
     }
 }

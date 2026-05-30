@@ -11,6 +11,12 @@ namespace DenMcp.Server.Tools;
 /// MCP facade tools for Core worker pool management.
 /// These are Core-owned tools — Gateway/Channels/Hermes Bridge use the
 /// REST APIs or inject IWorkerPoolRepository for programmatic access.
+///
+/// IDENTITY CONTRACT (v2):
+/// All pool member tools accept profile_identity, worker_role, agent_instance_id,
+/// channel_id, session_id. Lifecycle operations use concrete worker_identity only.
+/// Assignment readback includes denormalized PoolMemberId, ProfileIdentity, WorkerRole,
+/// AgentInstanceId, ChannelId for disambiguation.
 /// </summary>
 [McpServerToolType]
 public sealed class WorkerPoolTools
@@ -19,40 +25,58 @@ public sealed class WorkerPoolTools
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "upsert_pool_member"), Description(
         "Register or update a worker pool member. Workers are tracked agents " +
-        "that can accept assignment leases for project/task/role work.")]
+        "that can accept assignment leases for project/task/role work. " +
+        "Multiple members can share the same profile_identity (e.g. 'spawned-coder') " +
+        "but each has a distinct worker_identity for concrete lifecycle tracking.")]
     public static async Task<string> UpsertPoolMember(
         IWorkerPoolRepository repo,
-        [Description("Unique worker identity (e.g. spawned-Hermes agent id).")] string worker_identity,
+        [Description("Unique worker identity (e.g. spawned-Hermes agent id / concrete member id).")] string worker_identity,
+        [Description("Shared role/profile identity (e.g. 'spawned-coder'). Multiple members can share this.")] string? profile_identity = null,
+        [Description("Worker role: coder, reviewer, validator, drift_checker, packet_auditor.")] string? worker_role = null,
         [Description("Optional display name.")] string? display_name = null,
-        [Description("JSON array of capability strings, e.g. [\"coder\",\"dotnet\"].")] string? capabilities = null,
+        [Description("JSON array of capability strings, e.g. [\"coder\",\"dotnet\"].)")] string? capabilities = null,
         [Description("Pool status: available, busy, quarantined, offboarded. Default: available.")] string status = "available",
+        [Description("Optional agent instance binding id.")] string? agent_instance_id = null,
+        [Description("Optional Den channel id for correlation.")] string? channel_id = null,
+        [Description("Optional Hermes/session id for correlation.")] string? session_id = null,
         [Description("Optional JSON metadata (provider, model, toolsets, etc.).")] string? metadata = null)
     {
         var member = await repo.UpsertMemberAsync(new WorkerPoolMember
         {
             WorkerIdentity = worker_identity,
+            ProfileIdentity = profile_identity,
+            WorkerRole = worker_role,
             DisplayName = display_name,
             Capabilities = capabilities,
             Status = status,
+            AgentInstanceId = agent_instance_id,
+            ChannelId = channel_id,
+            SessionId = session_id,
             Metadata = metadata,
         });
         return JsonSerializer.Serialize(new
         {
-            summary = $"upserted pool member '{member.WorkerIdentity}' (status={member.Status})",
+            summary = $"upserted pool member '{member.WorkerIdentity}' (status={member.Status}, profile={member.ProfileIdentity ?? "(none)"}, role={member.WorkerRole ?? "(none)"})",
             worker_identity = member.WorkerIdentity,
+            profile_identity = member.ProfileIdentity,
+            worker_role = member.WorkerRole,
             status = member.Status,
+            agent_instance_id = member.AgentInstanceId,
         }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "planner")]
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "list_pool_members"), Description(
-        "List worker pool members with optional status/capability filtering. " +
-        "For Agents Overview/caretaker reads of pool health.")]
+        "List worker pool members with optional status/profile/role/capability filtering. " +
+        "For Agents Overview/caretaker reads of pool health. " +
+        "Filter by profile_identity to find all members sharing a role profile (e.g. all spawned-coder instances).")]
     public static async Task<string> ListPoolMembers(
         IWorkerPoolRepository repo,
         [Description("Optional status filter: available, busy, quarantined, offboarded.")] string? status = null,
         [Description("Optional worker identity filter.")] string? worker_identity = null,
+        [Description("Optional profile identity filter (e.g. 'spawned-coder').")] string? profile_identity = null,
+        [Description("Optional worker role filter (e.g. 'coder', 'reviewer').")] string? worker_role = null,
         [Description("Maximum items to return (max 200).")] int limit = 50,
         [Description("If true, return full member records.")] bool verbose = false)
     {
@@ -60,6 +84,8 @@ public sealed class WorkerPoolTools
         {
             Status = status,
             WorkerIdentity = worker_identity,
+            ProfileIdentity = profile_identity,
+            WorkerRole = worker_role,
             Limit = Math.Clamp(limit, 1, 200),
         });
 
@@ -69,6 +95,8 @@ public sealed class WorkerPoolTools
         var summaries = members.Select(m => new
         {
             worker = m.WorkerIdentity,
+            profile = m.ProfileIdentity,
+            role = m.WorkerRole,
             status = m.Status,
             last_heartbeat = m.LastHeartbeat,
         });
@@ -84,7 +112,10 @@ public sealed class WorkerPoolTools
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "lease_worker"), Description(
         "Lease an available worker from the pool for a project/task/role. " +
-        "Returns the assignment record. Core-owned — Gateway/Channels use this to dispatch work.")]
+        "Returns the assignment record with denormalized pool member identity fields. " +
+        "Core-owned — Gateway/Channels use this to dispatch work. " +
+        "Lifecycle operations key on worker_identity (concrete member id). " +
+        "Use profile_identity to filter by shared role profile when multiple members share it.")]
     public static async Task<string> LeaseWorker(
         IWorkerPoolRepository repo,
         [Description("Project ID.")] string project_id,
@@ -93,7 +124,9 @@ public sealed class WorkerPoolTools
         [Description("Worker run id for this assignment.")] string run_id,
         [Description("Optional Den task id.")] int? task_id = null,
         [Description("Optional preferred specific worker identity.")] string? preferred_worker_identity = null,
-        [Description("JSON array of required capabilities, e.g. [\"coder\",\"dotnet\"].")] string? required_capabilities = null,
+        [Description("Optional profile identity filter (e.g. 'spawned-coder'). Only workers with this profile are considered.")] string? profile_identity = null,
+        [Description("Optional worker role filter (e.g. 'coder'). Only workers with this role are considered.")] string? worker_role = null,
+        [Description("JSON array of required capabilities, e.g. [\"coder\",\"dotnet\"].)")] string? required_capabilities = null,
         [Description("If true, return full assignment record.")] bool verbose = false)
     {
         var capabilities = required_capabilities is not null
@@ -109,6 +142,8 @@ public sealed class WorkerPoolTools
             RunId = run_id,
             RequiredCapabilities = capabilities,
             PreferredWorkerIdentity = preferred_worker_identity,
+            ProfileIdentity = profile_identity,
+            WorkerRole = worker_role,
         });
 
         if (assignment is null)
@@ -123,6 +158,10 @@ public sealed class WorkerPoolTools
             summary = $"leased worker '{assignment.WorkerIdentity}' for {role} in {project_id} (assignment #{assignment.Id})",
             assignment_id = assignment.Id,
             worker_identity = assignment.WorkerIdentity,
+            pool_member_id = assignment.PoolMemberId,
+            profile_identity = assignment.ProfileIdentity,
+            worker_role = assignment.WorkerRole,
+            agent_instance_id = assignment.AgentInstanceId,
             run_id = assignment.RunId,
             role = assignment.Role,
             state = assignment.State,
@@ -136,7 +175,8 @@ public sealed class WorkerPoolTools
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "list_assignments"), Description(
         "List worker assignments with optional project/task/worker/state/role filters. " +
-        "Use this for caretaker reads and overview projection.")]
+        "Use this for caretaker reads and overview projection. " +
+        "Assignment records include denormalized profile_identity, worker_role, agent_instance_id for display.")]
     public static async Task<string> ListAssignments(
         IWorkerPoolRepository repo,
         [Description("Optional project filter.")] string? project_id = null,
@@ -164,6 +204,10 @@ public sealed class WorkerPoolTools
         {
             id = a.Id,
             worker = a.WorkerIdentity,
+            pool_member_id = a.PoolMemberId,
+            profile = a.ProfileIdentity,
+            worker_role = a.WorkerRole,
+            agent_instance_id = a.AgentInstanceId,
             project = a.ProjectId,
             task = a.TaskId,
             role = a.Role,
@@ -230,11 +274,14 @@ public sealed class WorkerPoolTools
     [McpToolProfile("admin-current", "runner")]
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "quarantine_pool_member"), Description(
-        "Quarantine a worker pool member. Sets status to quarantined and records " +
-        "who quarantined them and why. This prevents the worker from receiving new leases.")]
+        "Quarantine a worker pool member by concrete worker_identity. " +
+        "Sets status to quarantined and records who quarantined them and why. " +
+        "This prevents the worker from receiving new leases. " +
+        "Uses concrete worker_identity — one quarantined member does not affect " +
+        "other members sharing the same profile_identity.")]
     public static async Task<string> QuarantinePoolMember(
         IWorkerPoolRepository repo,
-        [Description("Worker identity to quarantine.")] string worker_identity,
+        [Description("Worker identity to quarantine (concrete member id).")] string worker_identity,
         [Description("Entity requesting quarantine.")] string quarantined_by,
         [Description("Optional reason.")] string? reason = null)
     {
@@ -345,7 +392,8 @@ public sealed class WorkerPoolTools
     [McpToolProfile("admin-current", "runner", "planner")]
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "get_assignment"), Description(
-        "Get a single assignment by id or run id.")]
+        "Get a single assignment by id or run id. " +
+        "Returns denormalized profile_identity, worker_role, agent_instance_id for display.")]
     public static async Task<string> GetAssignment(
         IWorkerPoolRepository repo,
         [Description("Assignment id (mutually exclusive with run_id).")] int? assignment_id = null,
@@ -370,6 +418,10 @@ public sealed class WorkerPoolTools
             summary = $"assignment #{assignment.Id}: worker={assignment.WorkerIdentity} state={assignment.State} role={assignment.Role}",
             assignment_id = assignment.Id,
             worker_identity = assignment.WorkerIdentity,
+            pool_member_id = assignment.PoolMemberId,
+            profile_identity = assignment.ProfileIdentity,
+            worker_role = assignment.WorkerRole,
+            agent_instance_id = assignment.AgentInstanceId,
             run_id = assignment.RunId,
             state = assignment.State,
             role = assignment.Role,

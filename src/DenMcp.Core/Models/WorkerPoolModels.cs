@@ -3,13 +3,57 @@ namespace DenMcp.Core.Models;
 /// <summary>
 /// Core worker pool member record. Tracks an agent that can accept work assignments.
 /// Core owns this model; Gateway/Channels/Hermes Bridge consume it via APIs.
+///
+/// IDENTITY CONTRACT (v2 — shared profile with concrete members):
+/// - <see cref="WorkerIdentity"/>: Primary key / concrete member lifecycle identity.
+///   This is the canonical unique identifier for this specific pool member instance.
+///   All lifecycle mutations (lease, release, quarantine, status change) key on this.
+/// - <see cref="PoolMemberId"/>: Alias for WorkerIdentity. Exists for explicit naming
+///   in downstream consumers. When not supplied on upsert, defaults to WorkerIdentity.
+/// - <see cref="ProfileIdentity"/>: Shared role/profile identity (e.g. "spawned-coder").
+///   Multiple pool members can share the same profile identity; each has a distinct
+///   <see cref="WorkerIdentity"/>. Core uses profile_identity for pool-wide filtering
+///   and routing; lifecycle mutations use the concrete <see cref="WorkerIdentity"/>.
+/// - <see cref="WorkerRole"/>: Role category (e.g. "coder", "reviewer", "validator").
+/// - <see cref="AgentInstanceId"/>: Concrete Gateway/Core agent instance binding id
+///   when this member is bound to a running agent instance.
+/// - <see cref="ChannelId"/> / <see cref="SessionId"/>: Optional correlation fields
+///   for downstream channel/session routing.
+///
+/// Downstream consumers (#1769 Channels, #1770 Gateway, #1767 Bridge):
+///   Read WorkerIdentity + ProfileIdentity + WorkerRole for disambiguation.
+///   Use WorkerIdentity (or PoolMemberId) for lifecycle operations.
+///   Never use ProfileIdentity alone for mutation — it is a shared/group identity.
 /// </summary>
 public sealed class WorkerPoolMember
 {
     /// <summary>
-    /// The spawned-Hermes worker/agent identity. Unique across the pool.
+    /// The spawned-Hermes worker/agent identity (concrete member id).
+    /// Primary key and canonical lifecycle identity. Unique across the pool.
+    /// All lifecycle APIs use this as the primary lookup key.
     /// </summary>
     public required string WorkerIdentity { get; set; }
+
+    /// <summary>
+    /// Explicit pool member id alias. Defaults to <see cref="WorkerIdentity"/> when
+    /// not supplied. Provided for downstream consumers that prefer "pool_member_id"
+    /// naming for the concrete lifecycle identity.
+    /// </summary>
+    public string? PoolMemberId { get; set; }
+
+    /// <summary>
+    /// The shared role/profile identity (e.g. "spawned-coder", "spawned-reviewer").
+    /// Multiple pool members can share the same profile identity; each has a distinct
+    /// <see cref="WorkerIdentity"/>. Core uses profile_identity for pool-wide filtering
+    /// and routing; lifecycle mutations use the concrete <see cref="WorkerIdentity"/>.
+    /// </summary>
+    public string? ProfileIdentity { get; set; }
+
+    /// <summary>
+    /// Worker role category: e.g. "coder", "reviewer", "validator", "drift_checker", "packet_auditor".
+    /// This is the member's role classification, separate from assignment role.
+    /// </summary>
+    public string? WorkerRole { get; set; }
 
     /// <summary>
     /// Optional human-readable display name.
@@ -32,6 +76,24 @@ public sealed class WorkerPoolMember
     public string? LastHeartbeat { get; set; }
 
     /// <summary>
+    /// Concrete Gateway/Core agent instance binding id when this member is
+    /// bound to a running agent instance. Populated by Gateway on check-in.
+    /// </summary>
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// Optional Den channel id for correlation with channel membership.
+    /// Populated by Channels when this member is associated with a channel.
+    /// </summary>
+    public string? ChannelId { get; set; }
+
+    /// <summary>
+    /// Optional Hermes/worker session id for correlation with active sessions.
+    /// Populated by Gateway or Hermes Bridge on session establishment.
+    /// </summary>
+    public string? SessionId { get; set; }
+
+    /// <summary>
     /// Arbitrary JSON metadata (e.g. provider, model, tools).
     /// </summary>
     public string? Metadata { get; set; }
@@ -43,15 +105,56 @@ public sealed class WorkerPoolMember
 /// <summary>
 /// An assignment lease — a bounded work contract between a pool member and a task/role.
 /// Core owns lease lifecycle; Gateway/Channels query and respond via checkpoint exchange.
+///
+/// IDENTITY CONTRACT (v2):
+/// - <see cref="WorkerIdentity"/>: Concrete pool member identity (maps to
+///   <see cref="WorkerPoolMember.WorkerIdentity"/>). Used for lifecycle mutations.
+/// - <see cref="PoolMemberId"/>: Display/readback alias for WorkerIdentity.
+/// - <see cref="ProfileIdentity"/> / <see cref="WorkerRole"/>: Denormalized from
+///   the pool member for readback convenience. Not used for lifecycle keys.
+/// - <see cref="AgentInstanceId"/>: Binding id when available.
+/// - <see cref="RunId"/>: The worker run id tracking execution (e.g. spawned-Hermes run_id).
+/// - <see cref="ChannelId"/>: Optional channel correlation id.
+///
+/// Downstream consumers: use assignment_id for direct lifecycle operations.
+/// Use WorkerIdentity + ProfileIdentity for display/routing disambiguation.
 /// </summary>
 public sealed class WorkerAssignment
 {
     public int Id { get; set; }
 
     /// <summary>
-    /// The pool member performing the work.
+    /// The pool member performing the work (concrete identity).
+    /// Maps to <see cref="WorkerPoolMember.WorkerIdentity"/>.
     /// </summary>
     public required string WorkerIdentity { get; set; }
+
+    /// <summary>
+    /// Pool member id alias for display/readback convenience.
+    /// Denormalized from the pool member at lease time.
+    /// </summary>
+    public string? PoolMemberId { get; set; }
+
+    /// <summary>
+    /// Shared profile identity (e.g. "spawned-coder") denormalized from the pool member
+    /// for readback convenience. Not a lifecycle key.
+    /// </summary>
+    public string? ProfileIdentity { get; set; }
+
+    /// <summary>
+    /// Worker role (e.g. "coder") denormalized from the pool member for readback convenience.
+    /// </summary>
+    public string? WorkerRole { get; set; }
+
+    /// <summary>
+    /// Agent instance binding id denormalized from the pool member for readback convenience.
+    /// </summary>
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// Optional channel correlation id, denormalized from the pool member.
+    /// </summary>
+    public string? ChannelId { get; set; }
 
     /// <summary>
     /// The worker run id tracking execution (e.g. spawned-Hermes run_id).
@@ -221,6 +324,8 @@ public sealed class WorkerPoolMemberListOptions
 {
     public string? Status { get; set; }
     public string? WorkerIdentity { get; set; }
+    public string? ProfileIdentity { get; set; }
+    public string? WorkerRole { get; set; }
     public int Limit { get; set; } = 50;
 }
 
@@ -262,6 +367,10 @@ public sealed record LeaseWorkerInput
     public string[]? RequiredCapabilities { get; set; }
     /// <summary>Optional specific worker identity to lease.</summary>
     public string? PreferredWorkerIdentity { get; set; }
+    /// <summary>Optional profile identity filter — only consider workers with matching profile.</summary>
+    public string? ProfileIdentity { get; set; }
+    /// <summary>Optional worker role filter — only consider workers with matching role.</summary>
+    public string? WorkerRole { get; set; }
 }
 
 /// <summary>

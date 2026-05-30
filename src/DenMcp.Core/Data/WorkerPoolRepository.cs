@@ -858,7 +858,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
     /// <summary>
     /// Read a WorkerAssignment with denormalized profile fields from a LEFT JOIN.
-    /// Manual JOIN columns are at positions 15-19: profile_identity, worker_role, 
+    /// Manual JOIN columns are at positions 15-19: profile_identity, worker_role,
     /// agent_instance_id, channel_id. (15, 16, 17, 18)
     /// </summary>
     private static WorkerAssignment ReadAssignmentWithJoin(SqliteDataReader reader)

@@ -93,6 +93,9 @@ builder.Services.AddSingleton<IDesktopSessionEventRepository, DesktopSessionEven
 builder.Services.AddSingleton<ICollaborationRepository, CollaborationRepository>();
 builder.Services.AddSingleton<IDiscussionRepository, DiscussionRepository>();
 builder.Services.AddSingleton<IWorkerPoolRepository, WorkerPoolRepository>();
+builder.Services.AddSingleton<ICapabilityRepository, CapabilityRepository>();
+builder.Services.AddScoped<ICapabilityInvocationService, CapabilityInvocationService>();
+builder.Services.AddHttpClient<IHttpExecutorClient, DefaultHttpExecutorClient>();
 builder.Services.AddSingleton<AgentStreamRealtimeHub>();
 builder.Services.AddSingleton<INotificationChannel, NoOpNotificationChannel>();
 builder.Services.AddSingleton<IAgentStreamOpsService, AgentStreamOpsService>();
@@ -188,6 +191,7 @@ app.MapPiSessionRoutes();
 app.MapLibrarianRoutes();
 app.MapDiscussionRoutes();
 app.MapWorkerPoolRoutes();
+app.MapCapabilityRoutes();
 
 // MCP endpoint
 app.MapMcp("/mcp");

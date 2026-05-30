@@ -1095,6 +1095,7 @@ public sealed class DatabaseInitializer
         await EnsurePiSessionSchemaAsync(connection);
         await EnsureDesktopSnapshotSchemaAsync(connection);
         await EnsureBlackboardSchemaAsync(connection);
+        await EnsureCapabilitySchemaAsync(connection);
 
         // Add session_id column to agent_sessions if it doesn't exist.
         // SQLite has no ALTER TABLE ... ADD COLUMN IF NOT EXISTS,
@@ -2652,7 +2653,148 @@ public sealed class DatabaseInitializer
             CREATE INDEX IF NOT EXISTS idx_checkpoint_responses_assignment
                 ON checkpoint_responses(assignment_id, created_at DESC, id DESC)
                 WHERE assignment_id IS NOT NULL;
+
+            ------------------------------------------------------------
+            -- CAPABILITY DEFINITIONS
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS capability_definitions (
+                capability_id        TEXT PRIMARY KEY,
+                display_name         TEXT NOT NULL,
+                description          TEXT NOT NULL DEFAULT '',
+                status               TEXT NOT NULL DEFAULT 'enabled'
+                                     CHECK (status IN ('enabled', 'disabled', 'deprecated')),
+                http_endpoint        TEXT,
+                executor_kind        TEXT NOT NULL DEFAULT 'external_service'
+                                     CHECK (executor_kind IN ('http_endpoint', 'external_service')),
+                side_effect_level    TEXT NOT NULL DEFAULT 'none'
+                                     CHECK (side_effect_level IN ('none', 'auditable', 'destructive')),
+                owner_project_id     TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                request_schema_json  TEXT,
+                response_schema_json TEXT,
+                metadata             TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_capability_definitions_status
+                ON capability_definitions(status);
+            CREATE INDEX IF NOT EXISTS idx_capability_definitions_side_effect
+                ON capability_definitions(side_effect_level);
+            CREATE INDEX IF NOT EXISTS idx_capability_definitions_owner
+                ON capability_definitions(owner_project_id);
+
+            ------------------------------------------------------------
+            -- CAPABILITY INVOCATIONS (audit records)
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS capability_invocations (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                capability_id       TEXT NOT NULL,
+                caller_project_id   TEXT NOT NULL,
+                caller_task_id      TEXT,
+                caller_identity     TEXT NOT NULL,
+                status              TEXT NOT NULL
+                                    CHECK (status IN (
+                                        'pending',
+                                        'success',
+                                        'disabled',
+                                        'invalid_request',
+                                        'timeout',
+                                        'executor_failure',
+                                        'invalid_output',
+                                        'non_read_only_rejected'
+                                    )),
+                request_payload     TEXT,
+                response_payload    TEXT,
+                error_message       TEXT,
+                duration_ms         INTEGER,
+                metadata            TEXT,
+                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_capability
+                ON capability_invocations(capability_id);
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_project
+                ON capability_invocations(caller_project_id);
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_status
+                ON capability_invocations(status);
+            CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_task
+                ON capability_invocations(caller_task_id)
+                WHERE caller_task_id IS NOT NULL;
             """;
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task EnsureCapabilitySchemaAsync(SqliteConnection connection)
+    {
+        await using var tableCmd = connection.CreateCommand();
+        tableCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS capability_definitions (
+                capability_id        TEXT PRIMARY KEY,
+                display_name         TEXT NOT NULL,
+                description          TEXT NOT NULL DEFAULT '',
+                status               TEXT NOT NULL DEFAULT 'enabled'
+                                     CHECK (status IN ('enabled', 'disabled', 'deprecated')),
+                http_endpoint        TEXT,
+                executor_kind        TEXT NOT NULL DEFAULT 'external_service'
+                                     CHECK (executor_kind IN ('http_endpoint', 'external_service')),
+                side_effect_level    TEXT NOT NULL DEFAULT 'none'
+                                     CHECK (side_effect_level IN ('none', 'auditable', 'destructive')),
+                owner_project_id     TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                request_schema_json  TEXT,
+                response_schema_json TEXT,
+                metadata             TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """;
+        await tableCmd.ExecuteNonQueryAsync();
+
+        await EnsureIndexAsync(connection, "idx_capability_definitions_status",
+            "CREATE INDEX IF NOT EXISTS idx_capability_definitions_status ON capability_definitions(status)");
+        await EnsureIndexAsync(connection, "idx_capability_definitions_side_effect",
+            "CREATE INDEX IF NOT EXISTS idx_capability_definitions_side_effect ON capability_definitions(side_effect_level)");
+        await EnsureIndexAsync(connection, "idx_capability_definitions_owner",
+            "CREATE INDEX IF NOT EXISTS idx_capability_definitions_owner ON capability_definitions(owner_project_id)");
+
+        // invocations table
+        await using var invCmd = connection.CreateCommand();
+        invCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS capability_invocations (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                capability_id       TEXT NOT NULL,
+                caller_project_id   TEXT NOT NULL,
+                caller_task_id      TEXT,
+                caller_identity     TEXT NOT NULL,
+                status              TEXT NOT NULL
+                                    CHECK (status IN (
+                                        'pending',
+                                        'success',
+                                        'disabled',
+                                        'invalid_request',
+                                        'timeout',
+                                        'executor_failure',
+                                        'invalid_output',
+                                        'non_read_only_rejected'
+                                    )),
+                request_payload     TEXT,
+                response_payload    TEXT,
+                error_message       TEXT,
+                duration_ms         INTEGER,
+                metadata            TEXT,
+                created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """;
+        await invCmd.ExecuteNonQueryAsync();
+
+        await EnsureIndexAsync(connection, "idx_cap_invocations_capability",
+            "CREATE INDEX IF NOT EXISTS idx_cap_invocations_capability ON capability_invocations(capability_id)");
+        await EnsureIndexAsync(connection, "idx_cap_invocations_caller_project",
+            "CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_project ON capability_invocations(caller_project_id)");
+        await EnsureIndexAsync(connection, "idx_cap_invocations_status",
+            "CREATE INDEX IF NOT EXISTS idx_cap_invocations_status ON capability_invocations(status)");
+        await EnsureIndexAsync(connection, "idx_cap_invocations_caller_task",
+            "CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_task ON capability_invocations(caller_task_id) WHERE caller_task_id IS NOT NULL");
     }
 }

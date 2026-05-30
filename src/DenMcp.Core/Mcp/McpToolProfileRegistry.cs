@@ -284,6 +284,15 @@ public sealed class McpToolProfileRegistry
             "record_cleanup_evidence", "release_assignment",
             "get_worker_pool_summary");
 
+        // ---- capability bundle ----
+        // Capability service registry: definitions, invocation, and analyze_image wrapper.
+        // Core owns the registry and audit; external executors handle the real work.
+        m.Add(McpToolBundles.Capability,
+            "list_capabilities", "get_capability",
+            "upsert_capability_definition",
+            "invoke_capability",
+            "analyze_image");
+
         AddPublicSpecBundles();
 
         // ---- profile: planner ----
@@ -308,9 +317,12 @@ public sealed class McpToolProfileRegistry
         // worker-pool read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
             "list_pool_members", "list_assignments", "get_assignment", "get_worker_pool_summary");
+        // capability read-only subset for planner
+        m.ProfileAdd(McpToolProfiles.Planner,
+            "list_capabilities", "get_capability");
 
         // ---- profile: runner ----
-        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion
+        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion + capability
         m.Profile(McpToolProfiles.Runner,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -323,7 +335,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Worker,
             McpToolBundles.WorkerPool,
             McpToolBundles.Orchestrator,
-            McpToolBundles.Discussion);
+            McpToolBundles.Discussion,
+            McpToolBundles.Capability);
         // runner-specific packet subset
         m.ProfileAdd(McpToolProfiles.Runner,
             "get_latest_task_packet", "render_worker_prompt",
@@ -345,7 +358,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Packet,
             McpToolBundles.Orchestrator,
             McpToolBundles.Topics,
-            McpToolBundles.Discussion);
+            McpToolBundles.Discussion,
+            McpToolBundles.Capability);
 
         // ---- profile: legacy-full ----
         m.Profile(McpToolProfiles.LegacyFull,

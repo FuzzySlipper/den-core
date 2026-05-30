@@ -112,8 +112,9 @@ public sealed class WorkerPoolTools
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "lease_worker"), Description(
         "Lease an available worker from the pool for a project/task/role. " +
-        "Returns the assignment record with denormalized pool member identity fields. " +
-        "Core-owned — Gateway/Channels use this to dispatch work. " +
+        "Returns the assignment record with denormalized pool member identity fields on success. " +
+        "On failure, returns a typed no-capacity diagnostic with reason code, candidate statistics, " +
+        "and next-allowed guidance. Core-owned — Gateway/Channels use this to dispatch work. " +
         "Lifecycle operations key on worker_identity (concrete member id). " +
         "Use profile_identity to filter by shared role profile when multiple members share it.")]
     public static async Task<string> LeaseWorker(
@@ -133,7 +134,7 @@ public sealed class WorkerPoolTools
             ? JsonSerializer.Deserialize<string[]>(required_capabilities)
             : null;
 
-        var assignment = await repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        var result = await repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
         {
             ProjectId = project_id,
             TaskId = task_id,
@@ -146,28 +147,57 @@ public sealed class WorkerPoolTools
             WorkerRole = worker_role,
         });
 
-        if (assignment is null)
+        if (result.IsSuccess && result.Assignment is not null)
+        {
+            var a = result.Assignment;
             return JsonSerializer.Serialize(new
             {
-                summary = "no available worker matching criteria",
+                summary = $"leased worker '{a.WorkerIdentity}' for {role} in {project_id} (assignment #{a.Id})",
+                assignment_id = a.Id,
+                worker_identity = a.WorkerIdentity,
+                pool_member_id = a.PoolMemberId,
+                profile_identity = a.ProfileIdentity,
+                worker_role = a.WorkerRole,
+                agent_instance_id = a.AgentInstanceId,
+                run_id = a.RunId,
+                role = a.Role,
+                state = a.State,
+                project_id = a.ProjectId,
+                task_id = a.TaskId,
+                assignment_detail = verbose ? a : null,
+            }, JsonOpts.Default);
+        }
+
+        // No-capacity diagnostic
+        var nc = result.NoCapacity;
+        if (nc is null)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = "no available worker matching criteria (no diagnostic)",
                 error = true,
             }, JsonOpts.Default);
+        }
 
         return JsonSerializer.Serialize(new
         {
-            summary = $"leased worker '{assignment.WorkerIdentity}' for {role} in {project_id} (assignment #{assignment.Id})",
-            assignment_id = assignment.Id,
-            worker_identity = assignment.WorkerIdentity,
-            pool_member_id = assignment.PoolMemberId,
-            profile_identity = assignment.ProfileIdentity,
-            worker_role = assignment.WorkerRole,
-            agent_instance_id = assignment.AgentInstanceId,
-            run_id = assignment.RunId,
-            role = assignment.Role,
-            state = assignment.State,
-            project_id = assignment.ProjectId,
-            task_id = assignment.TaskId,
-            assignment_detail = verbose ? assignment : null,
+            summary = $"no capacity: {nc.ReasonCode} — {nc.DiagnosticMessage}",
+            error = true,
+            no_capacity = new
+            {
+                id = nc.Id,
+                reason_code = nc.ReasonCode,
+                diagnostic_message = nc.DiagnosticMessage,
+                candidate_details = nc.CandidateDetails,
+                run_id = nc.RunId,
+                project_id = nc.ProjectId,
+                role = nc.Role,
+                profile_identity = nc.ProfileIdentity,
+                worker_role = nc.WorkerRole,
+                required_capabilities = nc.RequiredCapabilities,
+                preferred_worker_identity = nc.PreferredWorkerIdentity,
+                created_at = nc.CreatedAt.ToString("o"),
+            },
         }, JsonOpts.Default);
     }
 
@@ -428,6 +458,92 @@ public sealed class WorkerPoolTools
             project_id = assignment.ProjectId,
             task_id = assignment.TaskId,
             detail = verbose ? assignment : null,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "list_no_capacity_requests"), Description(
+        "List worker pool no-capacity request records — typed diagnostics for lease " +
+        "attempts that could not be fulfilled. Each record includes the typed reason code, " +
+        "candidate statistics by status, the original request parameters, and a diagnostic message. " +
+        "Reason codes: no_matching_worker, all_busy, all_quarantined_or_offline, ambiguous, " +
+        "preferred_not_found_or_busy. Use this for readback, automation, and Den Web diagnostics.")]
+    public static async Task<string> ListNoCapacityRequests(
+        IWorkerPoolRepository repo,
+        [Description("Optional project filter.")] string? project_id = null,
+        [Description("Optional run id filter.")] string? run_id = null,
+        [Description("Optional reason code filter (no_matching_worker, all_busy, all_quarantined_or_offline, ambiguous, preferred_not_found_or_busy).")] string? reason_code = null,
+        [Description("Maximum items to return (max 200).")] int limit = 50,
+        [Description("If true, return full records.")] bool verbose = false)
+    {
+        var records = await repo.ListNoCapacityRequestsAsync(new NoCapacityRequestListOptions
+        {
+            ProjectId = project_id,
+            RunId = run_id,
+            ReasonCode = reason_code,
+            Limit = Math.Clamp(limit, 1, 200),
+        });
+
+        if (verbose)
+            return JsonSerializer.Serialize(new { records, count = records.Count }, JsonOpts.Default);
+
+        var summaries = records.Select(r => new
+        {
+            id = r.Id,
+            reason_code = r.ReasonCode,
+            diagnostic_message = r.DiagnosticMessage,
+            candidate_details = r.CandidateDetails,
+            project_id = r.ProjectId,
+            role = r.Role,
+            run_id = r.RunId,
+            created_at = r.CreatedAt.ToString("o"),
+        });
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"listed {records.Count} no-capacity request(s)",
+            count = records.Count,
+            records = summaries,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "get_no_capacity_request"), Description(
+        "Get a single worker pool no-capacity request record by id. " +
+        "Includes the typed reason code, candidate statistics, original request parameters, " +
+        "and diagnostic message explaining why a lease could not be fulfilled.")]
+    public static async Task<string> GetNoCapacityRequest(
+        IWorkerPoolRepository repo,
+        [Description("No-capacity request id.")] int id,
+        [Description("If true, return full record.")] bool verbose = false)
+    {
+        var record = await repo.GetNoCapacityRequestAsync(id);
+        if (record is null)
+            return JsonSerializer.Serialize(new
+            {
+                summary = "no-capacity request not found",
+                error = true,
+            }, JsonOpts.Default);
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"no-capacity request #{record.Id}: {record.ReasonCode} — {record.DiagnosticMessage}",
+            id = record.Id,
+            reason_code = record.ReasonCode,
+            diagnostic_message = record.DiagnosticMessage,
+            candidate_details = record.CandidateDetails,
+            project_id = record.ProjectId,
+            task_id = record.TaskId,
+            role = record.Role,
+            assigned_by = record.AssignedBy,
+            run_id = record.RunId,
+            profile_identity = record.ProfileIdentity,
+            worker_role = record.WorkerRole,
+            required_capabilities = record.RequiredCapabilities,
+            preferred_worker_identity = record.PreferredWorkerIdentity,
+            created_at = record.CreatedAt.ToString("o"),
+            detail = verbose ? record : null,
         }, JsonOpts.Default);
     }
 }

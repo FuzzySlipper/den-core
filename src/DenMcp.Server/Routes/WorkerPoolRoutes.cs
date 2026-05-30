@@ -81,10 +81,18 @@ public static class WorkerPoolRoutes
             }
             if (input is null || string.IsNullOrWhiteSpace(input.ProjectId) || string.IsNullOrWhiteSpace(input.Role) || string.IsNullOrWhiteSpace(input.RunId) || string.IsNullOrWhiteSpace(input.AssignedBy))
                 return Results.BadRequest(new { error = "project_id, role, run_id, and assigned_by are required" });
-            var assignment = await repo.LeaseAvailableWorkerAsync(input);
-            return assignment is not null
-                ? Results.Created($"/api/worker-pool/assignments/{assignment.Id}", assignment)
-                : Results.Conflict(new { error = "No available worker matching criteria" });
+            var result = await repo.LeaseWorkerWithDiagnosticsAsync(input);
+            if (result.IsSuccess && result.Assignment is not null)
+                return Results.Created($"/api/worker-pool/assignments/{result.Assignment.Id}", result.Assignment);
+            // No-capacity — return 409 Conflict with typed diagnostic
+            return Results.Conflict(new
+            {
+                error = "No available worker matching criteria",
+                reason_code = result.NoCapacity?.ReasonCode,
+                diagnostic_message = result.NoCapacity?.DiagnosticMessage,
+                candidate_details = result.NoCapacity?.CandidateDetails,
+                no_capacity_id = result.NoCapacity?.Id,
+            });
         });
 
         pool.MapGet("/assignments", async (IWorkerPoolRepository repo,
@@ -118,6 +126,27 @@ public static class WorkerPoolRoutes
         {
             var result = await repo.TransitionAssignmentStateAsync(assignmentId, req.State);
             return result is not null ? Results.Ok(result) : Results.BadRequest(new { error = $"Invalid transition to {req.State}" });
+        });
+
+        // ── No-Capacity Requests ────────────────────────────────────────
+
+        pool.MapGet("/no-capacity", async (IWorkerPoolRepository repo,
+            string? projectId, string? runId, string? reasonCode, int limit = 50) =>
+        {
+            var records = await repo.ListNoCapacityRequestsAsync(new NoCapacityRequestListOptions
+            {
+                ProjectId = projectId,
+                RunId = runId,
+                ReasonCode = reasonCode,
+                Limit = limit,
+            });
+            return Results.Ok(new { records, count = records.Count });
+        });
+
+        pool.MapGet("/no-capacity/{id:int}", async (IWorkerPoolRepository repo, int id) =>
+        {
+            var record = await repo.GetNoCapacityRequestAsync(id);
+            return record is not null ? Results.Ok(record) : Results.NotFound(new { error = $"No-capacity request {id} not found" });
         });
 
         // ── Checkpoints ──────────────────────────────────────────────

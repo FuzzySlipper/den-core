@@ -40,6 +40,25 @@ public interface IWorkerPoolRepository
 
     // ── Summary ──────────────────────────────────────────────────────────
     Task<WorkerPoolSummary> GetSummaryAsync();
+
+    // ── No-Capacity Diagnostics ─────────────────────────────────────────
+    /// <summary>
+    /// Lease an available worker with typed diagnostics on failure.
+    /// Returns a <see cref="LeaseWorkerResult"/> that distinguishes success
+    /// from typed no-capacity reasons. The diagnostics are persisted to the
+    /// <c>worker_no_capacity_requests</c> table for readback.
+    /// </summary>
+    Task<LeaseWorkerResult> LeaseWorkerWithDiagnosticsAsync(LeaseWorkerInput input);
+
+    /// <summary>
+    /// List no-capacity request records with optional filtering.
+    /// </summary>
+    Task<List<WorkerNoCapacityRequest>> ListNoCapacityRequestsAsync(NoCapacityRequestListOptions options);
+
+    /// <summary>
+    /// Get a single no-capacity request record by id.
+    /// </summary>
+    Task<WorkerNoCapacityRequest?> GetNoCapacityRequestAsync(int id);
 }
 
 public sealed class WorkerPoolRepository : IWorkerPoolRepository
@@ -805,6 +824,315 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         }
         return summary;
     }
+
+    // ── No-Capacity Diagnostics ──────────────────────────────────────
+
+    public async Task<LeaseWorkerResult> LeaseWorkerWithDiagnosticsAsync(LeaseWorkerInput input)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            // First try the normal lease path
+            WorkerAssignment? assignment;
+            var preferred = input.PreferredWorkerIdentity;
+
+            if (!string.IsNullOrWhiteSpace(preferred))
+            {
+                // Try preferred worker first
+                assignment = await TryLeaseSpecificWorkerAsync(conn, input);
+                if (assignment is not null)
+                {
+                    await tx.CommitAsync();
+                    return new LeaseWorkerResult
+                    {
+                        IsSuccess = true,
+                        Assignment = assignment,
+                    };
+                }
+
+                // Preferred worker failed — check why
+                var preferredWorker = await GetMemberByConnAsync(conn, preferred);
+                if (preferredWorker is null)
+                {
+                    // Worker doesn't exist at all
+                    var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
+                    var record = await InsertNoCapacityRequestAsync(conn, input,
+                        WorkerPoolStates.NoCapacityPreferredNotFoundOrBusy,
+                        stats,
+                        $"Preferred worker '{preferred}' not found in pool. {stats.Total} total workers matching filters.");
+                    await tx.CommitAsync();
+                    return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+                }
+
+                if (preferredWorker.Status != WorkerPoolStates.MemberAvailable)
+                {
+                    var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
+                    var busyCheck = await HasActiveAssignmentAsync(conn, preferred, input.RunId);
+                    var msg = busyCheck
+                        ? $"Preferred worker '{preferred}' has active assignment for run '{input.RunId}'"
+                        : $"Preferred worker '{preferred}' status is '{preferredWorker.Status}' (not available).";
+                    var record = await InsertNoCapacityRequestAsync(conn, input,
+                        WorkerPoolStates.NoCapacityPreferredNotFoundOrBusy,
+                        stats,
+                        msg);
+                    await tx.CommitAsync();
+                    return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+                }
+            }
+
+            // Find candidates
+            var candidates = await FindAvailableWorkersAsync(conn, input.RequiredCapabilities, input.ProfileIdentity, input.WorkerRole);
+            if (candidates.Count == 0)
+            {
+                // No matching workers — determine why
+                var reasonCode = await DiagnoseNoMatchingWorkersAsync(conn, input);
+                var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
+                var record = await InsertNoCapacityRequestAsync(conn, input, reasonCode, stats,
+                    stats.Available == 0 && stats.Busy > 0
+                        ? $"No available workers matching criteria. {stats.Busy} worker(s) are busy."
+                        : stats.Available == 0 && stats.Quarantined > 0
+                            ? $"No available workers matching criteria. {stats.Quarantined} worker(s) quarantined."
+                            : stats.Total == 0
+                                ? "No workers registered in the pool matching the requested role/profile/capabilities."
+                                : $"No matching candidate workers available. Total candidates: {stats.Total}.");
+                await tx.CommitAsync();
+                return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+            }
+
+            // Try each candidate
+            assignment = null;
+            foreach (var workerId in candidates)
+            {
+                var leased = await TryLeaseSpecificWorkerAsync(conn, input with { PreferredWorkerIdentity = workerId });
+                if (leased is not null)
+                {
+                    assignment = leased;
+                    break;
+                }
+            }
+
+            if (assignment is not null)
+            {
+                await tx.CommitAsync();
+                return new LeaseWorkerResult { IsSuccess = true, Assignment = assignment };
+            }
+
+            // All candidates failed — likely all busy now (race condition or conflicting constraints)
+            var finalStats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
+            var finalRecord = await InsertNoCapacityRequestAsync(conn, input,
+                WorkerPoolStates.NoCapacityAllBusy,
+                finalStats,
+                $"All {candidates.Count} matching workers became unavailable. {finalStats.Busy} busy, {finalStats.Available} available.");
+            await tx.CommitAsync();
+            return new LeaseWorkerResult { IsSuccess = false, NoCapacity = finalRecord };
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<List<WorkerNoCapacityRequest>> ListNoCapacityRequestsAsync(NoCapacityRequestListOptions options)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(options.ProjectId))
+        {
+            where.Add("project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (!string.IsNullOrWhiteSpace(options.RunId))
+        {
+            where.Add("run_id = @runId");
+            cmd.Parameters.AddWithValue("@runId", options.RunId);
+        }
+        if (!string.IsNullOrWhiteSpace(options.ReasonCode))
+        {
+            where.Add("reason_code = @reasonCode");
+            cmd.Parameters.AddWithValue("@reasonCode", options.ReasonCode);
+        }
+
+        var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
+        cmd.CommandText = $"""
+            SELECT id, project_id, task_id, role, assigned_by, run_id,
+                   profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                   reason_code, candidate_details, diagnostic_message, created_at
+            FROM worker_no_capacity_requests
+            {whereClause}
+            ORDER BY created_at DESC, id DESC
+            LIMIT @limit
+            """;
+        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+
+        var results = new List<WorkerNoCapacityRequest>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            results.Add(ReadNoCapacityRequest(reader));
+        return results;
+    }
+
+    public async Task<WorkerNoCapacityRequest?> GetNoCapacityRequestAsync(int id)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, project_id, task_id, role, assigned_by, run_id,
+                   profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                   reason_code, candidate_details, diagnostic_message, created_at
+            FROM worker_no_capacity_requests
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadNoCapacityRequest(reader) : null;
+    }
+
+    // ── No-Capacity Private Helpers ───────────────────────────────────
+
+    /// <summary>
+    /// Count matching workers by status to build candidate statistics.
+    /// </summary>
+    private static async Task<WorkerCandidateStats> CountCandidatesByStatusAsync(SqliteConnection conn, string? profileIdentity, string? workerRole)
+    {
+        var stats = new WorkerCandidateStats();
+        await using var cmd = conn.CreateCommand();
+
+        var sql = "SELECT status, count(*) FROM worker_pool_members";
+        var filters = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(profileIdentity))
+        {
+            filters.Add("profile_identity = @profileIdentity");
+            cmd.Parameters.AddWithValue("@profileIdentity", profileIdentity);
+        }
+        if (!string.IsNullOrWhiteSpace(workerRole))
+        {
+            filters.Add("worker_role = @workerRole");
+            cmd.Parameters.AddWithValue("@workerRole", workerRole);
+        }
+
+        if (filters.Count > 0)
+            sql += " WHERE " + string.Join(" AND ", filters);
+
+        sql += " GROUP BY status";
+        cmd.CommandText = sql;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var status = reader.GetString(0);
+            var count = Convert.ToInt32(reader.GetValue(1));
+            stats.Total += count;
+            switch (status)
+            {
+                case "available": stats.Available = count; break;
+                case "busy": stats.Busy = count; break;
+                case "quarantined": stats.Quarantined = count; break;
+                case "offboarded": stats.Offboarded = count; break;
+            }
+        }
+        return stats;
+    }
+
+    /// <summary>
+    /// Diagnose why no matching workers were found — distinguishes
+    /// no_matching_worker, all_busy, all_quarantined_or_offline, and ambiguous.
+    /// </summary>
+    private static async Task<string> DiagnoseNoMatchingWorkersAsync(SqliteConnection conn, LeaseWorkerInput input)
+    {
+        var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
+
+        if (stats.Total == 0)
+            return WorkerPoolStates.NoCapacityNoMatchingWorker;
+
+        if (stats.Busy > 0 && stats.Available == 0 && stats.Quarantined == 0 && stats.Offboarded == 0)
+            return WorkerPoolStates.NoCapacityAllBusy;
+
+        if (stats.Quarantined > 0 || stats.Offboarded > 0)
+        {
+            var hasUnavailable = stats.Quarantined > 0 || stats.Offboarded > 0;
+            var hasBusy = stats.Busy > 0;
+            if (stats.Available == 0 && !hasBusy && hasUnavailable)
+                return WorkerPoolStates.NoCapacityAllQuarantinedOrOffline;
+        }
+
+        // Multiple statuses present but none available: ambiguous
+        if (stats.Available == 0 && stats.Total > 0)
+            return WorkerPoolStates.NoCapacityAmbiguous;
+
+        // Workers exist but capabilities don't match — still no_matching_worker
+        return WorkerPoolStates.NoCapacityNoMatchingWorker;
+    }
+
+    /// <summary>
+    /// Insert a no-capacity request record and return the created entity.
+    /// </summary>
+    private static async Task<WorkerNoCapacityRequest> InsertNoCapacityRequestAsync(
+        SqliteConnection conn, LeaseWorkerInput input, string reasonCode,
+        WorkerCandidateStats stats, string? diagnosticMessage)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO worker_no_capacity_requests
+                (project_id, task_id, role, assigned_by, run_id,
+                 profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                 reason_code, candidate_details, diagnostic_message)
+            VALUES
+                (@projectId, @taskId, @role, @assignedBy, @runId,
+                 @profileIdentity, @workerRole, @requiredCapabilities, @preferredWorkerIdentity,
+                 @reasonCode, @candidateDetails, @diagnosticMessage)
+            RETURNING id, project_id, task_id, role, assigned_by, run_id,
+                      profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                      reason_code, candidate_details, diagnostic_message, created_at
+            """;
+        cmd.Parameters.AddWithValue("@projectId", input.ProjectId);
+        cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@role", input.Role);
+        cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
+        cmd.Parameters.AddWithValue("@runId", input.RunId);
+        cmd.Parameters.AddWithValue("@profileIdentity", (object?)input.ProfileIdentity ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@workerRole", (object?)input.WorkerRole ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@requiredCapabilities", (object?)(input.RequiredCapabilities is not null
+            ? System.Text.Json.JsonSerializer.Serialize(input.RequiredCapabilities)
+            : null) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@preferredWorkerIdentity", (object?)input.PreferredWorkerIdentity ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@reasonCode", reasonCode);
+        cmd.Parameters.AddWithValue("@candidateDetails", stats.ToJson());
+        cmd.Parameters.AddWithValue("@diagnosticMessage", (object?)diagnosticMessage ?? DBNull.Value);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        return ReadNoCapacityRequest(reader);
+    }
+
+    /// <summary>
+    /// Read a WorkerNoCapacityRequest from column order:
+    /// 0 id, 1 project_id, 2 task_id, 3 role, 4 assigned_by, 5 run_id,
+    /// 6 profile_identity, 7 worker_role, 8 required_capabilities, 9 preferred_worker_identity,
+    /// 10 reason_code, 11 candidate_details, 12 diagnostic_message, 13 created_at
+    /// </summary>
+    private static WorkerNoCapacityRequest ReadNoCapacityRequest(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt32(0),
+        ProjectId = reader.GetString(1),
+        TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+        Role = reader.GetString(3),
+        AssignedBy = reader.GetString(4),
+        RunId = reader.GetString(5),
+        ProfileIdentity = reader.IsDBNull(6) ? null : reader.GetString(6),
+        WorkerRole = reader.IsDBNull(7) ? null : reader.GetString(7),
+        RequiredCapabilities = reader.IsDBNull(8) ? null : reader.GetString(8),
+        PreferredWorkerIdentity = reader.IsDBNull(9) ? null : reader.GetString(9),
+        ReasonCode = reader.GetString(10),
+        CandidateDetails = reader.GetString(11),
+        DiagnosticMessage = reader.IsDBNull(12) ? null : reader.GetString(12),
+        CreatedAt = DateTime.Parse(reader.GetString(13)),
+    };
 
     // ── Private helpers ──────────────────────────────────────────────────
 

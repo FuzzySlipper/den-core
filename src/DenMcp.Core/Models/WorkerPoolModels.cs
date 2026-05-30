@@ -313,6 +313,21 @@ public static class WorkerPoolStates
     public static readonly string[] ValidCheckpointTypes = [CheckpointPeriodic, CheckpointProgress, CheckpointCompletion, CheckpointFailure, CheckpointStateSnapshot];
     public static readonly string[] ValidResponseTypes = [ResponseAck, ResponseGuidance, ResponseRedirect, ResponseAbort, ResponseCheckpointRequest];
 
+    // No-capacity reason codes
+    public const string NoCapacityNoMatchingWorker = "no_matching_worker";
+    public const string NoCapacityAllBusy = "all_busy";
+    public const string NoCapacityAllQuarantinedOrOffline = "all_quarantined_or_offline";
+    public const string NoCapacityAmbiguous = "ambiguous";
+    public const string NoCapacityPreferredNotFoundOrBusy = "preferred_not_found_or_busy";
+
+    public static readonly string[] ValidNoCapacityReasonCodes = [
+        NoCapacityNoMatchingWorker,
+        NoCapacityAllBusy,
+        NoCapacityAllQuarantinedOrOffline,
+        NoCapacityAmbiguous,
+        NoCapacityPreferredNotFoundOrBusy,
+    ];
+
     public static bool IsNonTerminal(string state) => Array.IndexOf(NonTerminalStates, state) >= 0;
     public static bool IsTerminal(string state) => Array.IndexOf(TerminalStates, state) >= 0;
 }
@@ -390,4 +405,116 @@ public sealed class QuarantineWorkerInput
     public required string WorkerIdentity { get; set; }
     public required string QuarantinedBy { get; set; }
     public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Typed result from a lease attempt. Either a successful <see cref="WorkerAssignment"/>
+/// or a typed no-capacity diagnostic. Core-owned; downstream consumers inspect
+/// <see cref="IsSuccess"/> to determine the outcome.
+/// </summary>
+public sealed class LeaseWorkerResult
+{
+    /// <summary>
+    /// True when a worker was successfully leased.
+    /// </summary>
+    public required bool IsSuccess { get; set; }
+
+    /// <summary>
+    /// The assignment record when <see cref="IsSuccess"/> is true.
+    /// </summary>
+    public WorkerAssignment? Assignment { get; set; }
+
+    /// <summary>
+    /// The no-capacity diagnostic when <see cref="IsSuccess"/> is false.
+    /// </summary>
+    public WorkerNoCapacityRequest? NoCapacity { get; set; }
+}
+
+/// <summary>
+/// Typed diagnostic for a failed lease attempt — the core's record of why a
+/// worker-pool assignment request could not be fulfilled. Persisted to the
+/// <c>worker_no_capacity_requests</c> table for readback.
+///
+/// Distinguishes at least:
+/// - <see cref="WorkerPoolStates.NoCapacityNoMatchingWorker"/>: no worker matches role/profile/capability.
+/// - <see cref="WorkerPoolStates.NoCapacityAllBusy"/>: matches exist but all are busy.
+/// - <see cref="WorkerPoolStates.NoCapacityAllQuarantinedOrOffline"/>: matches exist but all are quarantined/offline.
+/// - <see cref="WorkerPoolStates.NoCapacityAmbiguous"/>: ambiguous or misconfigured candidates.
+/// - <see cref="WorkerPoolStates.NoCapacityPreferredNotFoundOrBusy"/>: preferred worker not found or not available.
+/// </summary>
+public sealed class WorkerNoCapacityRequest
+{
+    public int Id { get; set; }
+
+    /// <summary>Project id from the original lease request.</summary>
+    public required string ProjectId { get; set; }
+
+    /// <summary>Optional task id from the original lease request.</summary>
+    public int? TaskId { get; set; }
+
+    /// <summary>Role requested (e.g. "coder", "reviewer").</summary>
+    public required string Role { get; set; }
+
+    /// <summary>Entity that requested the lease.</summary>
+    public required string AssignedBy { get; set; }
+
+    /// <summary>Worker run id for this request.</summary>
+    public required string RunId { get; set; }
+
+    /// <summary>Optional profile identity filter from the request.</summary>
+    public string? ProfileIdentity { get; set; }
+
+    /// <summary>Optional worker role filter from the request.</summary>
+    public string? WorkerRole { get; set; }
+
+    /// <summary>Required capabilities filter as JSON array string.</summary>
+    public string? RequiredCapabilities { get; set; }
+
+    /// <summary>Preferred worker identity if specified.</summary>
+    public string? PreferredWorkerIdentity { get; set; }
+
+    /// <summary>
+    /// Typed reason code from <see cref="WorkerPoolStates.ValidNoCapacityReasonCodes"/>.
+    /// </summary>
+    public required string ReasonCode { get; set; }
+
+    /// <summary>
+    /// JSON object with candidate statistics: total, available, busy, quarantined, offboarded counts.
+    /// e.g. {"total":3,"available":0,"busy":2,"quarantined":1,"offboarded":0}
+    /// </summary>
+    public string CandidateDetails { get; set; } = "{}";
+
+    /// <summary>Human-readable diagnostic message.</summary>
+    public string? DiagnosticMessage { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Options for listing no-capacity request records.
+/// </summary>
+public sealed class NoCapacityRequestListOptions
+{
+    public string? ProjectId { get; set; }
+    public string? RunId { get; set; }
+    public string? ReasonCode { get; set; }
+    public int Limit { get; set; } = 50;
+}
+
+/// <summary>
+/// Statistics about candidate workers during a no-capacity diagnostic.
+/// </summary>
+public sealed class WorkerCandidateStats
+{
+    public int Total { get; set; }
+    public int Available { get; set; }
+    public int Busy { get; set; }
+    public int Quarantined { get; set; }
+    public int Offboarded { get; set; }
+
+    public string ToJson() =>
+        System.Text.Json.JsonSerializer.Serialize(this, new System.Text.Json.JsonSerializerOptions
+        {
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        });
 }

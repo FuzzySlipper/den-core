@@ -2674,6 +2674,40 @@ public sealed class DatabaseInitializer
                 WHERE assignment_id IS NOT NULL;
 
             ------------------------------------------------------------
+            -- WORKER NO-CAPACITY REQUESTS (append-only typed failure log)
+            -- Core-owned. Records the typed reason why a lease request
+            -- could not be fulfilled. Downstream reads via Core APIs.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS worker_no_capacity_requests (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id               TEXT NOT NULL,
+                task_id                  INTEGER,
+                role                     TEXT NOT NULL,
+                assigned_by              TEXT NOT NULL,
+                run_id                   TEXT NOT NULL,
+                profile_identity         TEXT,
+                worker_role              TEXT,
+                required_capabilities    TEXT,
+                preferred_worker_identity TEXT,
+                reason_code              TEXT NOT NULL
+                                         CHECK (reason_code IN (
+                                             'no_matching_worker',
+                                             'all_busy',
+                                             'all_quarantined_or_offline',
+                                             'ambiguous',
+                                             'preferred_not_found_or_busy'
+                                         )),
+                candidate_details       TEXT NOT NULL DEFAULT '{}',
+                diagnostic_message      TEXT,
+                created_at              TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_no_capacity_project
+                ON worker_no_capacity_requests(project_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_no_capacity_run
+                ON worker_no_capacity_requests(run_id, created_at DESC);
+
+            ------------------------------------------------------------
             -- CAPABILITY DEFINITIONS
             ------------------------------------------------------------
             CREATE TABLE IF NOT EXISTS capability_definitions (

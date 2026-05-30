@@ -848,4 +848,263 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.Equal(3, result.Count);
         Assert.All(result, m => Assert.Equal(profileId, m.ProfileIdentity));
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // No-Capacity Diagnostics
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_EmptyPool_ReturnsNoMatchingWorker()
+    {
+        // No workers in pool at all
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-empty",
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityNoMatchingWorker, result.NoCapacity.ReasonCode);
+        Assert.Equal("test-proj", result.NoCapacity.ProjectId);
+        Assert.Equal("coder", result.NoCapacity.Role);
+        Assert.Equal("runner", result.NoCapacity.AssignedBy);
+        Assert.NotNull(result.NoCapacity.CandidateDetails);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_AllBusy_ReturnsAllBusy()
+    {
+        // Create a single busy worker (no available workers)
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "busy-worker-nc",
+            Status = WorkerPoolStates.MemberBusy,
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-busy",
+            ProfileIdentity = "spawned-coder",
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityAllBusy, result.NoCapacity.ReasonCode);
+        Assert.Contains("busy", result.NoCapacity.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_AllQuarantined_ReturnsAllQuarantined()
+    {
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "quar-worker-nc",
+            Status = WorkerPoolStates.MemberQuarantined,
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-quar",
+            ProfileIdentity = "spawned-coder",
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityAllQuarantinedOrOffline, result.NoCapacity.ReasonCode);
+        Assert.Contains("quarantined", result.NoCapacity.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_PreferredWorkerNotFound_ReturnsPreferredNotFound()
+    {
+        await SeedMemberAsync("existing-worker-nc", "[\"coder\"]", "spawned-coder");
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-pref",
+            PreferredWorkerIdentity = "nonexistent-pref",
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityPreferredNotFoundOrBusy, result.NoCapacity.ReasonCode);
+        Assert.Equal("nonexistent-pref", result.NoCapacity.PreferredWorkerIdentity);
+        Assert.Contains("not found", result.NoCapacity.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_PreferredWorkerBusy_ReturnsPreferredNotFound()
+    {
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "pref-busy-nc",
+            Status = WorkerPoolStates.MemberBusy,
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-pref-busy",
+            PreferredWorkerIdentity = "pref-busy-nc",
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityPreferredNotFoundOrBusy, result.NoCapacity.ReasonCode);
+        Assert.Contains("not available", result.NoCapacity.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_CapabilityMismatch_ReturnsNoMatchingWorker()
+    {
+        // Workers exist but none have the required capabilities
+        await SeedMemberAsync("cap-worker-1", "[\\\"reviewer\\\"]");
+        await SeedMemberAsync("cap-worker-2", "[\\\"reviewer\\\"]");
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-cap",
+            RequiredCapabilities = new[] { "coder", "dotnet" },
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityNoMatchingWorker, result.NoCapacity.ReasonCode);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_SuccessStillWorks()
+    {
+        await SeedMemberAsync("success-worker-nc");
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-success",
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Assignment);
+        Assert.Equal("success-worker-nc", result.Assignment.WorkerIdentity);
+        Assert.Equal(WorkerPoolStates.Ack, result.Assignment.State);
+        Assert.Null(result.NoCapacity);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_PreferredWorkerSuccess()
+    {
+        await SeedMemberAsync("pref-success-nc");
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-pref-ok",
+            PreferredWorkerIdentity = "pref-success-nc",
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Assignment);
+        Assert.Equal("pref-success-nc", result.Assignment.WorkerIdentity);
+    }
+
+    [Fact]
+    public async Task ListNoCapacityRequests_FiltersByProjectAndReason()
+    {
+        // Trigger a no-capacity event
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-list-1",
+        });
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+
+        // Trigger another
+        var result2 = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "reviewer",
+            AssignedBy = "planner",
+            RunId = "run-nocap-list-2",
+        });
+        Assert.False(result2.IsSuccess);
+
+        // List by project
+        var byProject = await _repo.ListNoCapacityRequestsAsync(new NoCapacityRequestListOptions
+        {
+            ProjectId = "test-proj",
+        });
+        Assert.Equal(2, byProject.Count);
+
+        // List by reason code
+        var byReason = await _repo.ListNoCapacityRequestsAsync(new NoCapacityRequestListOptions
+        {
+            ReasonCode = WorkerPoolStates.NoCapacityNoMatchingWorker,
+        });
+        Assert.Equal(2, byReason.Count);
+
+        // List by run id
+        var byRun = await _repo.ListNoCapacityRequestsAsync(new NoCapacityRequestListOptions
+        {
+            RunId = "run-nocap-list-1",
+        });
+        Assert.Single(byRun);
+        Assert.Equal("run-nocap-list-1", byRun[0].RunId);
+    }
+
+    [Fact]
+    public async Task GetNoCapacityRequest_ReturnsRecord()
+    {
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-nocap-get",
+        });
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.NoCapacity);
+
+        var fetched = await _repo.GetNoCapacityRequestAsync(result.NoCapacity.Id);
+        Assert.NotNull(fetched);
+        Assert.Equal(result.NoCapacity.Id, fetched.Id);
+        Assert.Equal("test-proj", fetched.ProjectId);
+        Assert.Equal("coder", fetched.Role);
+        Assert.Equal("runner", fetched.AssignedBy);
+        Assert.Equal(WorkerPoolStates.NoCapacityNoMatchingWorker, fetched.ReasonCode);
+    }
+
+    [Fact]
+    public async Task GetNoCapacityRequest_Missing_ReturnsNull()
+    {
+        var fetched = await _repo.GetNoCapacityRequestAsync(99999);
+        Assert.Null(fetched);
+    }
 }

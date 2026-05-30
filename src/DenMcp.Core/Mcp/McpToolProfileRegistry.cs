@@ -282,7 +282,8 @@ public sealed class McpToolProfileRegistry
             "append_checkpoint", "respond_to_checkpoint",
             "quarantine_pool_member",
             "record_cleanup_evidence", "release_assignment",
-            "get_worker_pool_summary");
+            "get_worker_pool_summary",
+            "list_no_capacity_requests", "get_no_capacity_request");
 
         // ---- capability bundle ----
         // Capability service registry: definitions, invocation, and analyze_image wrapper.
@@ -316,7 +317,8 @@ public sealed class McpToolProfileRegistry
             "get_latest_task_packet", "render_worker_prompt");
         // worker-pool read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
-            "list_pool_members", "list_assignments", "get_assignment", "get_worker_pool_summary");
+            "list_pool_members", "list_assignments", "get_assignment", "get_worker_pool_summary",
+            "list_no_capacity_requests", "get_no_capacity_request");
         // capability read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
             "list_capabilities", "get_capability");

@@ -14,6 +14,17 @@ public interface IMessageRepository
     Task<List<MessageFeedItem>> GetFeedAsync(string projectId, int limit = 20, MessageIntent? intent = null);
     Task<Thread> GetThreadAsync(int threadId);
     Task<int> MarkReadAsync(string agent, int[] messageIds);
+    Task<List<NotificationFeedItem>> GetNotificationFeedAsync(
+        string? projectId = null,
+        int? taskId = null,
+        string? sender = null,
+        string? metadataType = null,
+        string? urgency = null,
+        bool? isRead = null,
+        string? readForAgent = null,
+        int limit = 20,
+        int offset = 0);
+    Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds);
 }
 
 public sealed class MessageRepository : IMessageRepository
@@ -223,6 +234,153 @@ public sealed class MessageRepository : IMessageRepository
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "INSERT OR IGNORE INTO message_reads (message_id, agent) VALUES (@msgId, @agent)";
+            cmd.Parameters.AddWithValue("@msgId", msgId);
+            cmd.Parameters.AddWithValue("@agent", agent);
+            count += await cmd.ExecuteNonQueryAsync();
+        }
+
+        return count;
+    }
+
+    public async Task<List<NotificationFeedItem>> GetNotificationFeedAsync(
+        string? projectId = null,
+        int? taskId = null,
+        string? sender = null,
+        string? metadataType = null,
+        string? urgency = null,
+        bool? isRead = null,
+        string? readForAgent = null,
+        int limit = 20,
+        int offset = 0)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        offset = Math.Max(offset, 0);
+
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+
+        var where = new List<string> { "m.intent = 'notification'" };
+
+        if (projectId is not null)
+        {
+            where.Add("m.project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", projectId);
+        }
+
+        if (taskId is not null)
+        {
+            where.Add("m.task_id = @taskId");
+            cmd.Parameters.AddWithValue("@taskId", taskId.Value);
+        }
+
+        if (sender is not null)
+        {
+            where.Add("m.sender = @sender");
+            cmd.Parameters.AddWithValue("@sender", sender);
+        }
+
+        if (metadataType is not null)
+        {
+            where.Add("json_extract(m.metadata, '$.type') = @metadataType");
+            cmd.Parameters.AddWithValue("@metadataType", metadataType);
+        }
+
+        if (urgency is not null)
+        {
+            where.Add("json_extract(m.metadata, '$.urgency') = @urgency");
+            cmd.Parameters.AddWithValue("@urgency", urgency);
+        }
+
+        if (isRead is not null && readForAgent is not null)
+        {
+            if (isRead.Value)
+            {
+                where.Add("""
+                    EXISTS (
+                        SELECT 1 FROM message_reads mr
+                        WHERE mr.message_id = m.id AND mr.agent = @readForAgent
+                    )
+                    """);
+            }
+            else
+            {
+                where.Add("""
+                    NOT EXISTS (
+                        SELECT 1 FROM message_reads mr
+                        WHERE mr.message_id = m.id AND mr.agent = @readForAgent
+                    )
+                    """);
+            }
+            cmd.Parameters.AddWithValue("@readForAgent", readForAgent);
+        }
+
+        var isReadExpr = readForAgent is not null
+            ? """
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM message_reads mr
+                    WHERE mr.message_id = m.id AND mr.agent = @readForAgentResult
+                ) THEN 1 ELSE 0 END
+                """
+            : "0";
+
+        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.Parameters.AddWithValue("@offset", offset);
+
+        if (readForAgent is not null)
+            cmd.Parameters.AddWithValue("@readForAgentResult", readForAgent);
+
+        cmd.CommandText = $"""
+            SELECT
+                m.id, m.project_id, m.task_id, m.thread_id, m.sender, m.content,
+                m.metadata, m.created_at,
+                json_extract(m.metadata, '$.urgency') AS urgency,
+                {isReadExpr} AS is_read
+            FROM messages m
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT @limit OFFSET @offset
+            """;
+
+        var items = new List<NotificationFeedItem>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var metaJson = reader.IsDBNull(6) ? null : reader.GetString(6);
+            items.Add(new NotificationFeedItem
+            {
+                Id = reader.GetInt32(0),
+                ProjectId = reader.GetString(1),
+                TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                ThreadId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                Sender = reader.GetString(4),
+                Content = reader.GetString(5),
+                Metadata = metaJson is not null ? JsonSerializer.Deserialize<JsonElement>(metaJson) : null,
+                CreatedAt = DateTime.Parse(reader.GetString(7)),
+                Urgency = reader.IsDBNull(8) ? null : reader.GetString(8),
+                IsRead = reader.GetInt32(9) == 1
+            });
+        }
+
+        return items;
+    }
+
+    public async Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds)
+    {
+        if (notificationIds.Length == 0) return 0;
+
+        await using var conn = await _db.CreateConnectionAsync();
+        var count = 0;
+
+        foreach (var msgId in notificationIds)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT OR IGNORE INTO message_reads (message_id, agent)
+                SELECT @msgId, @agent
+                WHERE EXISTS (
+                    SELECT 1 FROM messages m WHERE m.id = @msgId AND m.intent = 'notification'
+                )
+                """;
             cmd.Parameters.AddWithValue("@msgId", msgId);
             cmd.Parameters.AddWithValue("@agent", agent);
             count += await cmd.ExecuteNonQueryAsync();

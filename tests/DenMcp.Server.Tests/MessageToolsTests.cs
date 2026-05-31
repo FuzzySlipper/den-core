@@ -41,6 +41,9 @@ public class MessageToolsTests
             => Task.FromResult(new List<MessageFeedItem>());
         public Task<DenMcp.Core.Models.Thread> GetThreadAsync(int threadId) => throw new NotSupportedException();
         public Task<int> MarkReadAsync(string agent, int[] messageIds) => Task.FromResult(0);
+        public Task<List<NotificationFeedItem>> GetNotificationFeedAsync(string? projectId = null, int? taskId = null, string? sender = null, string? metadataType = null, string? urgency = null, bool? isRead = null, string? readForAgent = null, int limit = 20, int offset = 0)
+            => Task.FromResult(new List<NotificationFeedItem>());
+        public Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds) => Task.FromResult(0);
     }
 
     private class FakeDispatchDetection : IDispatchDetectionService

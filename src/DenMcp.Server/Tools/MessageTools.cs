@@ -157,6 +157,45 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
     }
 
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
+    [McpServerTool(Name = "get_user_notifications"), Description(
+        "Get the canonical user notification feed. Returns notifications across projects, " +
+        "newest first, with optional filters for project, task, sender, metadata type, urgency, and read state. " +
+        "Each notification includes id, project_id, task_id, sender, content, metadata, urgency, is_read, and created_at.")]
+    public static async Task<string> GetUserNotifications(
+        IMessageRepository repo,
+        [Description("Filter to a specific project/space ID. Omit for cross-project listing.")] string? project_id = null,
+        [Description("Filter to a specific task ID.")] int? task_id = null,
+        [Description("Filter by sender/agent identity.")] string? sender = null,
+        [Description("Filter by metadata type, e.g. 'agent_work_complete'.")] string? metadata_type = null,
+        [Description("Filter by urgency: low, normal, or high.")] string? urgency = null,
+        [Description("Filter by read state. Must provide read_for_agent when set.")] bool? is_read = null,
+        [Description("Agent identity for read-state derivation. Required when is_read is set.")] string? read_for_agent = null,
+        [Description("Max results. Default 20, max 100.")] int limit = 20,
+        [Description("Offset for pagination. Default 0.")] int offset = 0)
+    {
+        var notifications = await repo.GetNotificationFeedAsync(
+            project_id, task_id, sender, metadata_type, urgency,
+            is_read, read_for_agent, limit, offset);
+        return JsonSerializer.Serialize(notifications, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("messaging")]
+    [McpServerTool(Name = "mark_notifications_read"), Description(
+        "Mark user notifications as read for an agent identity. Only marks messages with intent='notification'.")]
+    public static async Task<string> MarkNotificationsRead(
+        IMessageRepository repo,
+        [Description("Agent identity to mark read for.")] string agent,
+        [Description("Comma-separated notification IDs to mark as read.")] string notification_ids)
+    {
+        var ids = notification_ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(int.Parse).ToArray();
+        var count = await repo.MarkNotificationsReadAsync(agent, ids);
+        return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
+    }
+
     private static (MessageIntent? canonical, string? raw) ParseIntent(string? intent)
     {
         if (string.IsNullOrWhiteSpace(intent))

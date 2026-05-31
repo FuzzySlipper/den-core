@@ -113,6 +113,42 @@ public static class MessageRoutes
             var count = await repo.MarkReadAsync(req.Agent, req.MessageIds);
             return Results.Ok(new { marked = count });
         });
+
+        // Notification feed endpoints
+        app.MapGet("/api/user-notifications", async (IMessageRepository repo,
+            string? projectId, int? taskId, string? sender,
+            string? metadataType, string? urgency, bool? isRead,
+            string? readFor, int? limit, int? offset) =>
+        {
+            if (isRead is not null && readFor is null)
+                return Results.BadRequest(new { error = "readFor is required when isRead is specified" });
+
+            var notifications = await repo.GetNotificationFeedAsync(
+                projectId, taskId, sender, metadataType, urgency,
+                isRead, readFor, limit ?? 20, offset ?? 0);
+            return Results.Ok(notifications);
+        });
+
+        var notificationGroup = app.MapGroup("/api/projects/{projectId}/user-notifications");
+
+        notificationGroup.MapGet("/", async (IMessageRepository repo, string projectId,
+            int? taskId, string? sender, string? metadataType, string? urgency,
+            bool? isRead, string? readFor, int? limit, int? offset) =>
+        {
+            if (isRead is not null && readFor is null)
+                return Results.BadRequest(new { error = "readFor is required when isRead is specified" });
+
+            var notifications = await repo.GetNotificationFeedAsync(
+                projectId, taskId, sender, metadataType, urgency,
+                isRead, readFor, limit ?? 20, offset ?? 0);
+            return Results.Ok(notifications);
+        });
+
+        app.MapPost("/api/user-notifications/mark-read", async (IMessageRepository repo, MarkNotificationsReadRequest req) =>
+        {
+            var count = await repo.MarkNotificationsReadAsync(req.Agent, req.NotificationIds);
+            return Results.Ok(new { marked = count });
+        });
     }
 
     private static JsonElement? NormalizeMetadata(JsonElement? metadata)
@@ -141,3 +177,5 @@ public record SendMessageRequest(
     MessageIntent? Intent = null);
 
 public record MarkReadRequest(string Agent, int[] MessageIds);
+
+public record MarkNotificationsReadRequest(string Agent, int[] NotificationIds);

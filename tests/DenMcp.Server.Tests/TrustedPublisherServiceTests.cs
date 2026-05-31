@@ -729,6 +729,9 @@ public class TrustedPublisherServiceTests : IDisposable
         public Task<List<MessageFeedItem>> GetFeedAsync(string projectId, int limit = 20, MessageIntent? intent = null) => throw new NotSupportedException();
         public Task<Thread> GetThreadAsync(int threadId) => throw new NotSupportedException();
         public Task<int> MarkReadAsync(string agent, int[] messageIds) => throw new NotSupportedException();
+        public Task<List<NotificationFeedItem>> GetNotificationFeedAsync(string? projectId = null, int? taskId = null, string? sender = null, string? metadataType = null, string? urgency = null, bool? isRead = null, string? readForAgent = null, int limit = 20, int offset = 0)
+            => throw new NotSupportedException();
+        public Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds) => throw new NotSupportedException();
     }
 
     private sealed class FakeReviewRoundRepository : IReviewRoundRepository

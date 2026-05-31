@@ -204,7 +204,8 @@ public sealed class McpToolProfileRegistry
 
         // ---- messaging bundle ----
         m.Add(McpToolBundles.Messaging,
-            "send_message", "get_messages", "get_thread", "mark_read", "send_user_notification");
+            "send_message", "get_messages", "get_thread", "mark_read", "send_user_notification",
+            "get_user_notifications", "mark_notifications_read");
 
         // ---- document bundle ----
         m.Add(McpToolBundles.Document,
@@ -516,6 +517,7 @@ public sealed class McpToolProfileRegistry
             "create_task", "update_task", "add_dependency", "remove_dependency",
             "store_document", "delete_document",
             "send_message", "send_user_notification", "mark_read",
+            "get_user_notifications", "mark_notifications_read",
             "store_blackboard_entry", "delete_blackboard_entry");
 
         AddVirtualBundle(McpToolBundles.Planning,

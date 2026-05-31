@@ -94,6 +94,27 @@ public sealed class WorkerPoolMember
     public string? SessionId { get; set; }
 
     /// <summary>
+    /// Gateway adapter instance id for direct-message routing to this worker's
+    /// concrete Hermes session. Populated by Gateway on binding establishment.
+    /// Distinct from <see cref="AgentInstanceId"/> (the agent binding id);
+    /// adapter_instance_id identifies the child session's Gateway adapter instance.
+    /// </summary>
+    public string? AdapterInstanceId { get; set; }
+
+    /// <summary>
+    /// Path or URI pointer to the worker's log stream for drill-down evidence.
+    /// </summary>
+    public string? LogPointer { get; set; }
+
+    /// <summary>
+    /// Seconds after last_heartbeat before the member is considered stale.
+    /// When exceeded, capacity-aware queries compute the worker as unavailable
+    /// and stale-release operations can reclaim their non-terminal assignments.
+    /// Null means no staleness timeout (legacy default).
+    /// </summary>
+    public int? StaleAfterSeconds { get; set; }
+
+    /// <summary>
     /// Arbitrary JSON metadata (e.g. provider, model, tools).
     /// </summary>
     public string? Metadata { get; set; }
@@ -136,12 +157,6 @@ public sealed class WorkerAssignment
     public string? PoolMemberId { get; set; }
 
     /// <summary>
-    /// Shared profile identity (e.g. "spawned-coder") denormalized from the pool member
-    /// for readback convenience. Not a lifecycle key.
-    /// </summary>
-    public string ProfileIdentity { get; set; } = string.Empty;
-
-    /// <summary>
     /// Worker role (e.g. "coder") denormalized from the pool member for readback convenience.
     /// </summary>
     public string? WorkerRole { get; set; }
@@ -160,6 +175,20 @@ public sealed class WorkerAssignment
     /// The worker run id tracking execution (e.g. spawned-Hermes run_id).
     /// </summary>
     public required string RunId { get; set; }
+
+    /// <summary>
+    /// Unique lease identity for this assignment's capacity slot. Race-safe:
+    /// populated from a per-worker sequential counter at insert time and
+    /// guarded by a UNIQUE constraint in the assignments table.
+    /// Format: "{worker_identity}:{run_id}:{seq}".
+    /// </summary>
+    public string? LeaseId { get; set; }
+
+    /// <summary>
+    /// Shared profile identity (e.g. "spawned-coder") denormalized from the
+    /// pool member at lease time for capacity query efficiency.
+    /// </summary>
+    public string ProfileIdentity { get; set; } = string.Empty;
 
     public required string ProjectId { get; set; }
     public int? TaskId { get; set; }
@@ -268,6 +297,12 @@ public sealed class WorkerPoolSummary
     public int FailedAssignments { get; set; }
     public int ExpiredAssignments { get; set; }
     public int RecentCheckpoints { get; set; }
+
+    /// <summary>
+    /// JSON array of <see cref="ProfileCapacitySummary"/> — per-profile capacity
+    /// breakdown for capacity-aware pool management. Null for backward compatibility.
+    /// </summary>
+    public string? PerProfileBreakdown { get; set; }
 }
 
 /// <summary>
@@ -280,6 +315,13 @@ public static class WorkerPoolStates
     public const string MemberBusy = "busy";
     public const string MemberQuarantined = "quarantined";
     public const string MemberOffboarded = "offboarded";
+
+    // Pool lane statuses
+    public const string LaneActive = "active";
+    public const string LaneQuarantined = "quarantined";
+    public const string LaneDisabled = "disabled";
+
+    public static readonly string[] ValidLaneStatuses = [LaneActive, LaneQuarantined, LaneDisabled];
 
     // Assignment non-terminal states
     public const string Ack = "ack";
@@ -428,6 +470,13 @@ public sealed class LeaseWorkerResult
     /// The no-capacity diagnostic when <see cref="IsSuccess"/> is false.
     /// </summary>
     public WorkerNoCapacityRequest? NoCapacity { get; set; }
+
+    /// <summary>
+    /// Optional per-profile capacity summary for the lane associated with this
+    /// lease attempt. Provides context like "spawned-coder: 2/4 busy" after the
+    /// lease succeeds or when it fails due to capacity exhaustion.
+    /// </summary>
+    public ProfileCapacitySummary? Capacity { get; set; }
 }
 
 /// <summary>
@@ -517,4 +566,85 @@ public sealed class WorkerCandidateStats
         {
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         });
+}
+
+/// <summary>
+/// A pool lane definition — binds a profile identity to a worker role with a
+/// concurrency capacity. Multiple members share one lane's profile config;
+/// the lane governs how many concurrent active assignments those members can
+/// collectively hold. Quarantine targets the lane to block new leases without
+/// disrupting already-running assignments.
+/// </summary>
+public sealed class WorkerPoolLane
+{
+    /// <summary>Shared profile identity (e.g. "spawned-coder").</summary>
+    public required string ProfileIdentity { get; set; }
+
+    /// <summary>Worker role for this lane (e.g. "coder", "reviewer").</summary>
+    public required string WorkerRole { get; set; }
+
+    /// <summary>
+    /// Maximum concurrent active (non-terminal) assignments permitted for this
+    /// profile+role combination. Default 4.
+    /// </summary>
+    public int Capacity { get; set; } = 4;
+
+    /// <summary>
+    /// Lane status: active, quarantined, or disabled.
+    /// Quarantined lanes block new leases; existing assignments continue to run.
+    /// Disabled lanes prevent all operations.
+    /// </summary>
+    public required string Status { get; set; }
+
+    /// <summary>Arbitrary JSON metadata.</summary>
+    public string? Metadata { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Per-profile capacity summary. Answers "spawned-coder: 2/4 busy" queries.
+/// Aggregates across one or more lanes sharing the same profile_identity.
+/// </summary>
+public sealed class ProfileCapacitySummary
+{
+    /// <summary>The shared profile identity (e.g. "spawned-coder").</summary>
+    public required string ProfileIdentity { get; set; }
+
+    /// <summary>Sum of capacity across all active lanes for this profile.</summary>
+    public int TotalCapacity { get; set; }
+
+    /// <summary>Number of active non-terminal assignments across all lanes.</summary>
+    public int ActiveLeases { get; set; }
+
+    /// <summary>Unused capacity (TotalCapacity - ActiveLeases).</summary>
+    public int AvailableSlots { get; set; }
+
+    /// <summary>Per-lane breakdown of capacity and usage.</summary>
+    public List<LaneCapacitySummary> Lanes { get; set; } = [];
+}
+
+/// <summary>
+/// Per-lane capacity breakdown within a profile.
+/// </summary>
+public sealed class LaneCapacitySummary
+{
+    /// <summary>Shared profile identity.</summary>
+    public required string ProfileIdentity { get; set; }
+
+    /// <summary>Worker role for this lane.</summary>
+    public required string WorkerRole { get; set; }
+
+    /// <summary>Maximum concurrent assignments for this lane.</summary>
+    public int Capacity { get; set; }
+
+    /// <summary>Currently active non-terminal assignments in this lane.</summary>
+    public int BusyCount { get; set; }
+
+    /// <summary>Unused capacity (Capacity - BusyCount).</summary>
+    public int AvailableCount { get; set; }
+
+    /// <summary>Count of members in quarantined status for this lane.</summary>
+    public int QuarantinedCount { get; set; }
 }

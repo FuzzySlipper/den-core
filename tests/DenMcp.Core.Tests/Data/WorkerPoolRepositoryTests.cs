@@ -1107,4 +1107,378 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         var fetched = await _repo.GetNoCapacityRequestAsync(99999);
         Assert.Null(fetched);
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // New: Shared-profile capacity lanes (#1804)
+    // ─────────────────────────────────────────────────────────────────
+
+    private async Task<(string ProfileIdentity, string WorkerRole)> SeedLaneAsync(
+        string profileIdentity = "spawned-coder", string workerRole = "coder", int capacity = 4)
+    {
+        var lane = await _repo.UpsertLaneAsync(new WorkerPoolLane
+        {
+            ProfileIdentity = profileIdentity,
+            WorkerRole = workerRole,
+            Capacity = capacity,
+            Status = WorkerPoolStates.LaneActive,
+        });
+        return (lane.ProfileIdentity, lane.WorkerRole);
+    }
+
+    [Fact]
+    public async Task Lane_Crud_UpsertAndRetrieve()
+    {
+        var lane = await _repo.UpsertLaneAsync(new WorkerPoolLane
+        {
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Capacity = 4,
+            Status = WorkerPoolStates.LaneActive,
+        });
+        Assert.Equal("spawned-coder", lane.ProfileIdentity);
+        Assert.Equal("coder", lane.WorkerRole);
+        Assert.Equal(4, lane.Capacity);
+        Assert.Equal(WorkerPoolStates.LaneActive, lane.Status);
+
+        var fetched = await _repo.GetLaneAsync("spawned-coder", "coder");
+        Assert.NotNull(fetched);
+        Assert.Equal(4, fetched.Capacity);
+    }
+
+    [Fact]
+    public async Task Lane_Upsert_UpdatesExisting()
+    {
+        await SeedLaneAsync();
+        var updated = await _repo.UpsertLaneAsync(new WorkerPoolLane
+        {
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Capacity = 8,
+            Status = WorkerPoolStates.LaneActive,
+        });
+        Assert.Equal(8, updated.Capacity);
+    }
+
+    [Fact]
+    public async Task Lane_List_FiltersByProfile()
+    {
+        await SeedLaneAsync("spawned-coder", "coder");
+        await SeedLaneAsync("spawned-reviewer", "reviewer");
+
+        var lanes = await _repo.ListLanesAsync("spawned-coder");
+        Assert.Single(lanes);
+        Assert.Equal("coder", lanes[0].WorkerRole);
+    }
+
+    [Fact]
+    public async Task Lane_Quarantine_BlocksNewLeases()
+    {
+        await SeedLaneAsync("spawned-coder", "coder", capacity: 2);
+
+        // Seed two members so one remains available after the first lease.
+        for (var i = 1; i <= 2; i++)
+        {
+            await _repo.UpsertMemberAsync(new WorkerPoolMember
+            {
+                WorkerIdentity = $"lane-coder-{i}",
+                ProfileIdentity = "spawned-coder",
+                WorkerRole = "coder",
+                Status = WorkerPoolStates.MemberAvailable,
+                Capabilities = "[\"coder\"]",
+            });
+        }
+
+        // First lease should succeed and remain active.
+        var lease1 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-lane-q-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+        });
+        Assert.NotNull(lease1);
+
+        // Quarantine the lane. This blocks new leases without mutating concrete
+        // member statuses or disturbing the active assignment.
+        await _repo.SetLaneStatusAsync("spawned-coder", "coder", WorkerPoolStates.LaneQuarantined);
+
+        var busyMember = await _repo.GetMemberAsync("lane-coder-1");
+        var availableMember = await _repo.GetMemberAsync("lane-coder-2");
+        Assert.Equal(WorkerPoolStates.MemberBusy, busyMember!.Status);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, availableMember!.Status);
+
+        var assignment = await _repo.GetAssignmentAsync(lease1.Id);
+        Assert.NotNull(assignment);
+        Assert.False(WorkerPoolStates.IsTerminal(assignment.State));
+
+        // New lease should fail despite an available member because the lane is quarantined.
+        var lease2 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-lane-q-2",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+        });
+        Assert.Null(lease2);
+    }
+
+    [Fact]
+    public async Task Capacity_Accounting_ExhaustsAndSummarizes()
+    {
+        var capacity = 2;
+        await SeedLaneAsync("spawned-coder", "coder", capacity);
+
+        // Seed more concrete members than lane capacity. Capacity enforcement
+        // must stop at the lane cap, not merely when all members are busy.
+        var memberCount = 3;
+        for (int i = 0; i < memberCount; i++)
+        {
+            await _repo.UpsertMemberAsync(new WorkerPoolMember
+            {
+                WorkerIdentity = $"slot-{i + 1}",
+                ProfileIdentity = "spawned-coder",
+                WorkerRole = "coder",
+                Status = WorkerPoolStates.MemberAvailable,
+                Capabilities = "[\"coder\"]",
+            });
+        }
+
+        // Lease all 3 slots
+        for (int i = 0; i < capacity; i++)
+        {
+            var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+            {
+                ProjectId = "test-proj",
+                Role = "coder",
+                AssignedBy = "runner",
+                RunId = $"run-cap-{i}",
+                ProfileIdentity = "spawned-coder",
+                WorkerRole = "coder",
+            });
+            Assert.NotNull(lease);
+        }
+
+        // Capacity summary should show 3/3 busy (computed from non-terminal assignments)
+        var summary = await _repo.GetProfileCapacitySummaryAsync("spawned-coder");
+        Assert.Equal(capacity, summary.TotalCapacity);
+        Assert.Equal(capacity, summary.ActiveLeases);
+        Assert.Equal(0, summary.AvailableSlots);
+        Assert.Single(summary.Lanes);
+        Assert.Equal(capacity, summary.Lanes[0].BusyCount);
+
+        // Next lease should fail because lane capacity is full even though one member remains available.
+        var failed = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-cap-full",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+        });
+        Assert.Null(failed);
+    }
+
+    [Fact]
+    public async Task ProfileCapacitySummary_EmptyProfile_ReturnsZeroes()
+    {
+        var summary = await _repo.GetProfileCapacitySummaryAsync("nonexistent");
+        Assert.Equal("nonexistent", summary.ProfileIdentity);
+        Assert.Equal(0, summary.TotalCapacity);
+        Assert.Equal(0, summary.ActiveLeases);
+        Assert.Equal(0, summary.AvailableSlots);
+        Assert.Empty(summary.Lanes);
+    }
+
+    [Fact]
+    public async Task LeaseId_PopulatedAndRaceSafe()
+    {
+        await SeedMemberAsync("leaseid-worker", profileIdentity: "spawned-coder");
+
+        var lease1 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-leaseid-1",
+            PreferredWorkerIdentity = "leaseid-worker",
+        });
+        Assert.NotNull(lease1);
+        Assert.Equal("leaseid-worker:run-leaseid-1", lease1.LeaseId);
+
+        // Release the first assignment
+        await _repo.TransitionAssignmentStateAsync(lease1.Id, WorkerPoolStates.Completed);
+        await _repo.SetMemberStatusAsync("leaseid-worker", WorkerPoolStates.MemberAvailable);
+
+        // Lease again — different run_id, different lease_id
+        var lease2 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-leaseid-2",
+            PreferredWorkerIdentity = "leaseid-worker",
+        });
+        Assert.NotNull(lease2);
+        Assert.Equal("leaseid-worker:run-leaseid-2", lease2.LeaseId);
+        Assert.NotEqual(lease1.LeaseId, lease2.LeaseId);
+    }
+
+    [Fact]
+    public async Task RunIdMismatchGuard_RejectsWrongRunId()
+    {
+        await SeedMemberAsync("guard-worker");
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-guard-1",
+            PreferredWorkerIdentity = "guard-worker",
+        });
+        Assert.NotNull(lease);
+
+        // Try to append checkpoint with wrong run_id
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _repo.AppendCheckpointAsync(lease.Id, "wrong-run-id",
+                WorkerPoolStates.CheckpointProgress, "{}"));
+    }
+
+    [Fact]
+    public async Task StaleDetection_ReleasesOverdueWorkers()
+    {
+        // Seed as available first, then make stale after lease
+        await SeedMemberAsync("stale-worker", profileIdentity: "spawned-coder");
+
+        // Lease the worker (transitions to busy)
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-stale-1",
+            PreferredWorkerIdentity = "stale-worker",
+        });
+        Assert.NotNull(lease);
+
+        // Now make the worker stale by updating last_heartbeat and stale_after_seconds
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "stale-worker",
+            ProfileIdentity = "spawned-coder",
+            Status = WorkerPoolStates.MemberBusy,
+            StaleAfterSeconds = 1,
+            LastHeartbeat = DateTime.UtcNow.AddSeconds(-10).ToString("o"),
+        });
+
+        // Release stale leases
+        var count = await _repo.ReleaseStaleLeasesAsync();
+        Assert.Equal(1, count);
+
+        // Worker should be back to available
+        var member = await _repo.GetMemberAsync("stale-worker");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+
+        // Assignment should be expired
+        var assignment = await _repo.GetAssignmentByRunIdAsync("run-stale-1");
+        Assert.NotNull(assignment);
+        Assert.Equal(WorkerPoolStates.Expired, assignment.State);
+    }
+
+    [Fact]
+    public async Task StaleDetection_IgnoresNonStaleWorkers()
+    {
+        await SeedMemberAsync("fresh-worker", profileIdentity: "spawned-coder");
+
+        await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-fresh-1",
+            PreferredWorkerIdentity = "fresh-worker",
+        });
+
+        // Set a far-future stale timeout — not stale
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "fresh-worker",
+            ProfileIdentity = "spawned-coder",
+            Status = WorkerPoolStates.MemberBusy,
+            StaleAfterSeconds = 3600,
+            LastHeartbeat = DateTime.UtcNow.ToString("o"),
+        });
+
+        var count = await _repo.ReleaseStaleLeasesAsync();
+        Assert.Equal(0, count);
+
+        // Worker should still be busy
+        var member = await _repo.GetMemberAsync("fresh-worker");
+        Assert.Equal(WorkerPoolStates.MemberBusy, member!.Status);
+    }
+
+    [Fact]
+    public async Task GatewayFields_RoundTrip()
+    {
+        var member = await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "gw-worker",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            AgentInstanceId = "agent-inst-abc",
+            AdapterInstanceId = "adapter-inst-xyz",
+            SessionId = "session-123",
+            ChannelId = "ch-1",
+            LogPointer = "/var/log/worker-1.log",
+            StaleAfterSeconds = 60,
+            LastHeartbeat = DateTime.UtcNow.ToString("o"),
+            Capabilities = "[\"coder\"]",
+        });
+
+        Assert.Equal("gw-worker", member.WorkerIdentity);
+        Assert.Equal("agent-inst-abc", member.AgentInstanceId);
+        Assert.Equal("adapter-inst-xyz", member.AdapterInstanceId);
+        Assert.Equal("session-123", member.SessionId);
+        Assert.Equal("ch-1", member.ChannelId);
+        Assert.Equal("/var/log/worker-1.log", member.LogPointer);
+        Assert.Equal(60, member.StaleAfterSeconds);
+
+        // Read back
+        var fetched = await _repo.GetMemberAsync("gw-worker");
+        Assert.Equal("adapter-inst-xyz", fetched!.AdapterInstanceId);
+        Assert.Equal("/var/log/worker-1.log", fetched.LogPointer);
+        Assert.Equal(60, fetched.StaleAfterSeconds);
+    }
+
+    [Fact]
+    public async Task BackwardCompat_LegacyMemberWithoutNewFields()
+    {
+        // Seed using only legacy fields
+        var member = await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "legacy-worker",
+            Status = WorkerPoolStates.MemberAvailable,
+        });
+
+        Assert.Equal("legacy-worker", member.WorkerIdentity);
+        Assert.Null(member.AdapterInstanceId);
+        Assert.Null(member.LogPointer);
+        Assert.Null(member.StaleAfterSeconds);
+
+        // Lease should work without lane (unbounded capacity)
+        var lease = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-legacy-1",
+            PreferredWorkerIdentity = "legacy-worker",
+        });
+        Assert.NotNull(lease);
+    }
 }

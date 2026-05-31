@@ -1228,6 +1228,26 @@ public sealed class DatabaseInitializer
             "CREATE INDEX IF NOT EXISTS idx_worker_pool_members_profile ON worker_pool_members(profile_identity, status, updated_at DESC)");
         await EnsureIndexAsync(connection, "idx_worker_pool_members_role",
             "CREATE INDEX IF NOT EXISTS idx_worker_pool_members_role ON worker_pool_members(worker_role, status, updated_at DESC) WHERE worker_role IS NOT NULL");
+
+        // Migration: gateway observability columns for shared-profile capacity (#1804)
+        await TryAddColumnAsync(connection, "worker_pool_members", "adapter_instance_id", "TEXT");
+        await TryAddColumnAsync(connection, "worker_pool_members", "log_pointer", "TEXT");
+        await TryAddColumnAsync(connection, "worker_pool_members", "stale_after_seconds", "INTEGER");
+
+        // Migration: lease_id and denormalized profile_identity on assignments (#1804)
+        await TryAddColumnAsync(connection, "worker_assignments", "lease_id", "TEXT");
+        await TryAddColumnAsync(connection, "worker_assignments", "profile_identity", "TEXT NOT NULL DEFAULT ''");
+
+        // Unique index on lease_id (only enforced when non-null — race-safe slot allocation)
+        await EnsureIndexAsync(connection, "idx_worker_assignments_lease_id_unique",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_assignments_lease_id_unique ON worker_assignments(lease_id) WHERE lease_id IS NOT NULL");
+
+        // Index for stale detection queries
+        await EnsureIndexAsync(connection, "idx_worker_pool_members_stale",
+            "CREATE INDEX IF NOT EXISTS idx_worker_pool_members_stale ON worker_pool_members(stale_after_seconds, last_heartbeat, status) WHERE stale_after_seconds IS NOT NULL");
+
+        // Ensure worker_pool_lanes schema (migration for existing DBs)
+        await EnsureWorkerPoolLanesSchemaAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2790,6 +2810,31 @@ public sealed class DatabaseInitializer
                 ON worker_no_capacity_requests(run_id, created_at DESC);
 
             ------------------------------------------------------------
+            -- WORKER POOL LANES
+            -- Core-owned. Defines a pool lane: one profile_identity +
+            -- worker_role pair with a concurrency capacity. Multiple
+            -- members share the lane's profile config; the lane governs
+            -- how many concurrent active assignments are permitted.
+            -- Quarantine targets the lane to block new leases without
+            -- disrupting already-running assignments.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS worker_pool_lanes (
+                profile_identity     TEXT NOT NULL,
+                worker_role          TEXT NOT NULL,
+                capacity             INTEGER NOT NULL DEFAULT 4
+                                     CHECK (capacity > 0),
+                status               TEXT NOT NULL DEFAULT 'active'
+                                     CHECK (status IN ('active', 'quarantined', 'disabled')),
+                metadata             TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (profile_identity, worker_role)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_worker_pool_lanes_status
+                ON worker_pool_lanes(status, updated_at DESC);
+
+            ------------------------------------------------------------
             -- CAPABILITY DEFINITIONS
             ------------------------------------------------------------
             CREATE TABLE IF NOT EXISTS capability_definitions (
@@ -2886,6 +2931,29 @@ public sealed class DatabaseInitializer
                 ON capability_invocations(status);
             """;
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task EnsureWorkerPoolLanesSchemaAsync(SqliteConnection connection)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS worker_pool_lanes (
+                profile_identity     TEXT NOT NULL,
+                worker_role          TEXT NOT NULL,
+                capacity             INTEGER NOT NULL DEFAULT 4
+                                     CHECK (capacity > 0),
+                status               TEXT NOT NULL DEFAULT 'active'
+                                     CHECK (status IN ('active', 'quarantined', 'disabled')),
+                metadata             TEXT,
+                created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (profile_identity, worker_role)
+            )
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        await EnsureIndexAsync(connection, "idx_worker_pool_lanes_status",
+            "CREATE INDEX IF NOT EXISTS idx_worker_pool_lanes_status ON worker_pool_lanes(status, updated_at DESC)");
     }
 
     private static async Task EnsureCapabilitySchemaAsync(SqliteConnection connection)

@@ -62,11 +62,12 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     }
 
     /// <summary>Create a worker and lease it immediately, returning the assignment for follow-up ops.</summary>
-    private async Task<(string workerIdentity, int assignmentId)> SeedAndLeaseAsync(string prefix)
+    private async Task<(string workerIdentity, int assignmentId, string runId)> SeedAndLeaseAsync(string prefix)
     {
         var workerId = $"{prefix}-{Guid.NewGuid():N}";
         await SeedMemberAsync(workerId);
 
+        var runId = $"run-{prefix}-{Guid.NewGuid():N}";
         using var scope = _factory.Services.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
         var lease = await repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
@@ -74,11 +75,11 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
             ProjectId = _projectId,
             Role = "coder",
             AssignedBy = "runner",
-            RunId = $"run-{prefix}-{Guid.NewGuid():N}",
+            RunId = runId,
             PreferredWorkerIdentity = workerId,
         });
         Assert.NotNull(lease);
-        return (workerId, lease.Id);
+        return (workerId, lease.Id, runId);
     }
 
     // ── Member CRUD via REST ───────────────────────────────────────────
@@ -249,8 +250,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task GetAssignments_ReturnsList()
     {
-        var (w1, a1) = await SeedAndLeaseAsync("asgn-list-a");
-        var (w2, a2) = await SeedAndLeaseAsync("asgn-list-b");
+        var (w1, a1, _) = await SeedAndLeaseAsync("asgn-list-a");
+        var (w2, a2, _) = await SeedAndLeaseAsync("asgn-list-b");
 
         var response = await _client.GetAsync("/api/worker-pool/assignments");
         response.EnsureSuccessStatusCode();
@@ -265,7 +266,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task GetAssignmentById_ReturnsAssignment()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("asgn-id");
+        var (workerId, assignmentId, _) = await SeedAndLeaseAsync("asgn-id");
 
         var getResp = await _client.GetAsync($"/api/worker-pool/assignments/{assignmentId}");
         getResp.EnsureSuccessStatusCode();
@@ -301,7 +302,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task TransitionAssignment_ValidTransition()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("trans");
+        var (workerId, assignmentId, _) = await SeedAndLeaseAsync("trans");
 
         var transResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/transition", new
         {
@@ -318,9 +319,9 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task AppendCheckpoint_CreatesAndReturns()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("cp-rest");
+        var (workerId, assignmentId, cpRunId) = await SeedAndLeaseAsync("cp-rest");
 
-        var runId = $"run-cp-rest-{Guid.NewGuid():N}";
+        var runId = cpRunId;
         var cpResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
             run_id = runId,
@@ -380,8 +381,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task AppendCheckpoint_Failure_SetsState()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("cp-fail");
-        var runId = $"run-cp-fail-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, cpFailRunId) = await SeedAndLeaseAsync("cp-fail");
+        var runId = cpFailRunId;
 
         await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
@@ -399,8 +400,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task ListCheckpoints_Filters()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("cp-list");
-        var runId = $"run-cp-list-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, cpListRunId) = await SeedAndLeaseAsync("cp-list");
+        var runId = cpListRunId;
 
         await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
@@ -426,8 +427,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task AppendCheckpointResponse_Ack_RestoresRunning()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("resp-ack");
-        var runId = $"run-resp-ack-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, respAckRunId) = await SeedAndLeaseAsync("resp-ack");
+        var runId = respAckRunId;
 
         // Append a checkpoint (moves to checkpoint_waiting)
         var cpResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
@@ -460,8 +461,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task AppendCheckpointResponse_Abort_ExpiresAssignment()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("resp-abort");
-        var runId = $"run-resp-abort-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, respAbortRunId) = await SeedAndLeaseAsync("resp-abort");
+        var runId = respAbortRunId;
 
         var cpResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
@@ -490,8 +491,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task ListCheckpointResponses_ReturnsResponses()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("resp-list");
-        var runId = $"run-resp-list-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, respListRunId) = await SeedAndLeaseAsync("resp-list");
+        var runId = respListRunId;
 
         var cpResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
@@ -527,8 +528,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task ListResponsesByRunId_ReturnsResponses()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("resp-run");
-        var runId = $"run-resp-by-run-{Guid.NewGuid():N}";
+        var (workerId, assignmentId, runId) = await SeedAndLeaseAsync("resp-run");
 
         var cpResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {
@@ -603,7 +603,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task Cleanup_NonTerminal_ReturnsBadRequest()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("clean-no");
+        var (workerId, assignmentId, _) = await SeedAndLeaseAsync("clean-no");
 
         // Assignment is still in 'ack' — not terminal
         var cleanResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/cleanup", new
@@ -910,7 +910,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     [Fact]
     public async Task AppendCheckpoint_MissingFields_ReturnsBadRequest()
     {
-        var (workerId, assignmentId) = await SeedAndLeaseAsync("cp-bad");
+        var (workerId, assignmentId, cpBadRunId) = await SeedAndLeaseAsync("cp-bad");
 
         var badResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
         {

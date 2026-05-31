@@ -59,6 +59,47 @@ public interface IWorkerPoolRepository
     /// Get a single no-capacity request record by id.
     /// </summary>
     Task<WorkerNoCapacityRequest?> GetNoCapacityRequestAsync(int id);
+
+    // ── Pool Lanes (shared-profile capacity) ─────────────────────────────
+    /// <summary>
+    /// Upsert a pool lane definition. ProfileIdentity + WorkerRole is the
+    /// composite key. A lane defines the maximum concurrent active assignments
+    /// for workers sharing this profile+role combination.
+    /// </summary>
+    Task<WorkerPoolLane> UpsertLaneAsync(WorkerPoolLane lane);
+
+    /// <summary>
+    /// Get a pool lane by its composite key.
+    /// </summary>
+    Task<WorkerPoolLane?> GetLaneAsync(string profileIdentity, string workerRole);
+
+    /// <summary>
+    /// List pool lanes, optionally filtered by status or profile identity.
+    /// </summary>
+    Task<List<WorkerPoolLane>> ListLanesAsync(string? profileIdentity = null, string? status = null, int limit = 50);
+
+    /// <summary>
+    /// Set lane status (active/quarantined/disabled). Quarantining a lane
+    /// blocks new leases for that profile+role but preserves existing
+    /// non-terminal assignments.
+    /// </summary>
+    Task<int> SetLaneStatusAsync(string profileIdentity, string workerRole, string status);
+
+    /// <summary>
+    /// Get a per-profile capacity summary: total capacity, active leases,
+    /// available slots, and per-lane breakdown. Answers "spawned-coder: 2/4 busy".
+    /// Active leases count only non-terminal assignments.
+    /// </summary>
+    Task<ProfileCapacitySummary> GetProfileCapacitySummaryAsync(string profileIdentity);
+
+    // ── Stale Detection ───────────────────────────────────────────────────
+    /// <summary>
+    /// Release stale assignments: find members with stale_after_seconds
+    /// exceeded vs last_heartbeat, whose status is busy, and release all
+    /// their non-terminal assignments. Returns the count of released assignments.
+    /// Computed stale — no persistent 'stale' status on members.
+    /// </summary>
+    Task<int> ReleaseStaleLeasesAsync();
 }
 
 public sealed class WorkerPoolRepository : IWorkerPoolRepository
@@ -75,7 +116,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// </summary>
     private const string MemberColumns =
         "worker_identity, profile_identity, worker_role, display_name, capabilities, " +
-        "status, last_heartbeat, agent_instance_id, channel_id, session_id, metadata, " +
+        "status, last_heartbeat, agent_instance_id, channel_id, session_id, " +
+        "adapter_instance_id, log_pointer, stale_after_seconds, metadata, " +
         "created_at, updated_at";
 
     /// <summary>
@@ -84,16 +126,19 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// </summary>
     private const string AssignmentColumns =
         "id, worker_identity, run_id, project_id, task_id, role, assigned_by, state, " +
+        "lease_id, profile_identity, " +
         "latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, acquired_at, released_at, " +
         "created_at, updated_at";
 
     /// <summary>
     /// Column list for JOIN queries on worker_assignments with alias 'wa'.
     /// Must match the order expected by <see cref="ReadAssignment"/> then followed by
-    /// denormalized member fields (profile_identity, worker_role, agent_instance_id, channel_id).
+    /// denormalized member fields (worker_role, agent_instance_id, channel_id).
+    /// profile_identity is now a column on wa itself (denormalized at insert).
     /// </summary>
     private const string AssignmentColumnsPrefixed =
         "wa.id, wa.worker_identity, wa.run_id, wa.project_id, wa.task_id, wa.role, wa.assigned_by, wa.state, " +
+        "wa.lease_id, wa.profile_identity, " +
         "wa.latest_checkpoint_id, wa.cleanup_evidence, wa.cleanup_recorded_at, wa.acquired_at, wa.released_at, " +
         "wa.created_at, wa.updated_at";
 
@@ -111,8 +156,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            INSERT INTO worker_pool_members (worker_identity, profile_identity, worker_role, display_name, capabilities, status, last_heartbeat, agent_instance_id, channel_id, session_id, metadata)
-            VALUES (@workerIdentity, @profileIdentity, @workerRole, @displayName, @capabilities, @status, @lastHeartbeat, @agentInstanceId, @channelId, @sessionId, @metadata)
+            INSERT INTO worker_pool_members (worker_identity, profile_identity, worker_role, display_name, capabilities, status, last_heartbeat, agent_instance_id, channel_id, session_id, adapter_instance_id, log_pointer, stale_after_seconds, metadata)
+            VALUES (@workerIdentity, @profileIdentity, @workerRole, @displayName, @capabilities, @status, @lastHeartbeat, @agentInstanceId, @channelId, @sessionId, @adapterInstanceId, @logPointer, @staleAfterSeconds, @metadata)
             ON CONFLICT(worker_identity) DO UPDATE SET
                 profile_identity = excluded.profile_identity,
                 worker_role = COALESCE(excluded.worker_role, worker_pool_members.worker_role),
@@ -123,6 +168,9 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 agent_instance_id = COALESCE(excluded.agent_instance_id, worker_pool_members.agent_instance_id),
                 channel_id = COALESCE(excluded.channel_id, worker_pool_members.channel_id),
                 session_id = COALESCE(excluded.session_id, worker_pool_members.session_id),
+                adapter_instance_id = COALESCE(excluded.adapter_instance_id, worker_pool_members.adapter_instance_id),
+                log_pointer = COALESCE(excluded.log_pointer, worker_pool_members.log_pointer),
+                stale_after_seconds = COALESCE(excluded.stale_after_seconds, worker_pool_members.stale_after_seconds),
                 metadata = COALESCE(excluded.metadata, worker_pool_members.metadata),
                 updated_at = datetime('now')
             RETURNING {MemberColumns}
@@ -137,6 +185,9 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         cmd.Parameters.AddWithValue("@agentInstanceId", (object?)member.AgentInstanceId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@channelId", (object?)member.ChannelId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@sessionId", (object?)member.SessionId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@adapterInstanceId", (object?)member.AdapterInstanceId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@logPointer", (object?)member.LogPointer ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@staleAfterSeconds", (object?)member.StaleAfterSeconds ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@metadata", (object?)member.Metadata ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -278,15 +329,25 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (await HasActiveAssignmentAsync(conn, input.PreferredWorkerIdentity!, input.RunId))
             return null;
 
+        // If this member belongs to a configured shared-profile lane, enforce
+        // lane status and capacity before consuming the concrete member. Legacy
+        // members without a lane remain backward-compatible and lease as before.
+        if (!await LaneCanAcceptLeaseAsync(conn, worker, input.Role))
+            return null;
+
         // Update member to busy
         await SetMemberStatusByConnAsync(conn, input.PreferredWorkerIdentity!, WorkerPoolStates.MemberBusy);
 
-        // Create assignment — include denormalized pool member fields for readback
+        // Create assignment — include lease_id, profile_identity, and denormalized pool member fields
+        var leaseId = $"{input.PreferredWorkerIdentity!}:{input.RunId}";
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO worker_assignments (worker_identity, run_id, project_id, task_id, role, assigned_by, state, acquired_at)
-            VALUES (@workerIdentity, @runId, @projectId, @taskId, @role, @assignedBy, 'ack', datetime('now'))
+            INSERT INTO worker_assignments (worker_identity, run_id, project_id, task_id, role, assigned_by,
+                state, lease_id, profile_identity, acquired_at)
+            VALUES (@workerIdentity, @runId, @projectId, @taskId, @role, @assignedBy,
+                'ack', @leaseId, @profileIdentity, datetime('now'))
             RETURNING id, worker_identity, run_id, project_id, task_id, role, assigned_by, state,
+                      lease_id, profile_identity,
                       latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, acquired_at, released_at,
                       created_at, updated_at
             """;
@@ -296,6 +357,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@role", input.Role);
         cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
+        cmd.Parameters.AddWithValue("@leaseId", leaseId);
+        cmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -313,7 +376,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT {AssignmentColumnsPrefixed}, wm.profile_identity, wm.worker_role, wm.agent_instance_id, wm.channel_id
+            SELECT {AssignmentColumnsPrefixed}, wm.worker_role, wm.agent_instance_id, wm.channel_id
             FROM worker_assignments wa
             LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
             WHERE wa.run_id = @runId
@@ -360,7 +423,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
         cmd.CommandText = $"""
-            SELECT {AssignmentColumnsPrefixed}, wm.profile_identity, wm.worker_role, wm.agent_instance_id, wm.channel_id
+            SELECT {AssignmentColumnsPrefixed}, wm.worker_role, wm.agent_instance_id, wm.channel_id
             FROM worker_assignments wa
             LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
             {whereClause}
@@ -450,6 +513,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var tx = await conn.BeginTransactionAsync();
         try
         {
+            // Run ID mismatch guard: verify assignment exists and run_id matches
+            var assignment = await GetAssignmentByIdAsync(conn, assignmentId);
+            if (assignment is null)
+                throw new InvalidOperationException($"Assignment {assignmentId} not found");
+            if (assignment.RunId != runId)
+                throw new InvalidOperationException(
+                    $"Run ID mismatch for assignment {assignmentId}: checkpoint claims '{runId}', assignment has '{assignment.RunId}'");
+
             // Insert checkpoint
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -1154,16 +1225,19 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         AgentInstanceId = reader.IsDBNull(7) ? null : reader.GetString(7),
         ChannelId = reader.IsDBNull(8) ? null : reader.GetString(8),
         SessionId = reader.IsDBNull(9) ? null : reader.GetString(9),
-        Metadata = reader.IsDBNull(10) ? null : reader.GetString(10),
-        CreatedAt = DateTime.Parse(reader.GetString(11)),
-        UpdatedAt = DateTime.Parse(reader.GetString(12)),
+        AdapterInstanceId = reader.IsDBNull(10) ? null : reader.GetString(10),
+        LogPointer = reader.IsDBNull(11) ? null : reader.GetString(11),
+        StaleAfterSeconds = reader.IsDBNull(12) ? null : reader.GetInt32(12),
+        Metadata = reader.IsDBNull(13) ? null : reader.GetString(13),
+        CreatedAt = DateTime.Parse(reader.GetString(14)),
+        UpdatedAt = DateTime.Parse(reader.GetString(15)),
     };
 
     /// <summary>
     /// Read a WorkerAssignment from column order (standalone, no JOIN):
     /// 0 id, 1 worker_identity, 2 run_id, 3 project_id, 4 task_id, 5 role, 6 assigned_by,
-    /// 7 state, 8 latest_checkpoint_id, 9 cleanup_evidence, 10 cleanup_recorded_at,
-    /// 11 acquired_at, 12 released_at, 13 created_at, 14 updated_at
+    /// 7 state, 8 lease_id, 9 profile_identity, 10 latest_checkpoint_id, 11 cleanup_evidence,
+    /// 12 cleanup_recorded_at, 13 acquired_at, 14 released_at, 15 created_at, 16 updated_at
     /// </summary>
     private static WorkerAssignment ReadAssignment(SqliteDataReader reader) => new()
     {
@@ -1175,35 +1249,40 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         Role = reader.GetString(5),
         AssignedBy = reader.GetString(6),
         State = reader.GetString(7),
-        LatestCheckpointId = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-        CleanupEvidence = reader.IsDBNull(9) ? null : reader.GetString(9),
-        CleanupRecordedAt = reader.IsDBNull(10) ? null : reader.GetString(10),
-        AcquiredAt = reader.IsDBNull(11) ? null : reader.GetString(11),
-        ReleasedAt = reader.IsDBNull(12) ? null : reader.GetString(12),
-        CreatedAt = DateTime.Parse(reader.GetString(13)),
-        UpdatedAt = DateTime.Parse(reader.GetString(14)),
+        LeaseId = reader.IsDBNull(8) ? null : reader.GetString(8),
+        ProfileIdentity = reader.IsDBNull(9) ? string.Empty : reader.GetString(9),
+        LatestCheckpointId = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+        CleanupEvidence = reader.IsDBNull(11) ? null : reader.GetString(11),
+        CleanupRecordedAt = reader.IsDBNull(12) ? null : reader.GetString(12),
+        AcquiredAt = reader.IsDBNull(13) ? null : reader.GetString(13),
+        ReleasedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
+        CreatedAt = DateTime.Parse(reader.GetString(15)),
+        UpdatedAt = DateTime.Parse(reader.GetString(16)),
     };
 
     /// <summary>
     /// Read a WorkerAssignment with denormalized profile fields from a LEFT JOIN.
-    /// Manual JOIN columns are at positions 15-19: profile_identity, worker_role,
-    /// agent_instance_id, channel_id. (15, 16, 17, 18)
+    /// Manual JOIN columns are at positions 17-19: worker_role, agent_instance_id, channel_id.
+    /// profile_identity is now a column on wa itself (denormalized at insert).
     /// </summary>
     private static WorkerAssignment ReadAssignmentWithJoin(SqliteDataReader reader)
     {
         var assignment = ReadAssignment(reader);
-        // Columns 15-18 are the LEFT JOIN denormalized fields
+        // Columns 17-19 are the LEFT JOIN denormalized fields
         assignment.PoolMemberId = assignment.WorkerIdentity; // PoolMemberId alias
-        assignment.ProfileIdentity = reader.IsDBNull(15) ? string.Empty : reader.GetString(15);
-        assignment.WorkerRole = reader.IsDBNull(16) ? null : reader.GetString(16);
-        assignment.AgentInstanceId = reader.IsDBNull(17) ? null : reader.GetString(17);
-        assignment.ChannelId = reader.IsDBNull(18) ? null : reader.GetString(18);
+        assignment.WorkerRole = reader.IsDBNull(17) ? null : reader.GetString(17);
+        assignment.AgentInstanceId = reader.IsDBNull(18) ? null : reader.GetString(18);
+        assignment.ChannelId = reader.IsDBNull(19) ? null : reader.GetString(19);
         return assignment;
     }
 
     /// <summary>
     /// Read a WorkerAssignment with denormalized profile fields, passing the known worker.
     /// Used in TryLeaseSpecificWorkerAsync where we already have the worker.
+    /// Column order: 0 id, 1 worker_identity, 2 run_id, 3 project_id, 4 task_id, 5 role,
+    /// 6 assigned_by, 7 state, 8 lease_id, 9 profile_identity, 10 latest_checkpoint_id,
+    /// 11 cleanup_evidence, 12 cleanup_recorded_at, 13 acquired_at, 14 released_at,
+    /// 15 created_at, 16 updated_at
     /// </summary>
     private static WorkerAssignment ReadAssignment(SqliteDataReader reader, WorkerPoolMember worker) => new()
     {
@@ -1220,13 +1299,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         Role = reader.GetString(5),
         AssignedBy = reader.GetString(6),
         State = reader.GetString(7),
-        LatestCheckpointId = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-        CleanupEvidence = reader.IsDBNull(9) ? null : reader.GetString(9),
-        CleanupRecordedAt = reader.IsDBNull(10) ? null : reader.GetString(10),
-        AcquiredAt = reader.IsDBNull(11) ? null : reader.GetString(11),
-        ReleasedAt = reader.IsDBNull(12) ? null : reader.GetString(12),
-        CreatedAt = DateTime.Parse(reader.GetString(13)),
-        UpdatedAt = DateTime.Parse(reader.GetString(14)),
+        LeaseId = reader.IsDBNull(8) ? null : reader.GetString(8),
+        LatestCheckpointId = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+        CleanupEvidence = reader.IsDBNull(11) ? null : reader.GetString(11),
+        CleanupRecordedAt = reader.IsDBNull(12) ? null : reader.GetString(12),
+        AcquiredAt = reader.IsDBNull(13) ? null : reader.GetString(13),
+        ReleasedAt = reader.IsDBNull(14) ? null : reader.GetString(14),
+        CreatedAt = DateTime.Parse(reader.GetString(15)),
+        UpdatedAt = DateTime.Parse(reader.GetString(16)),
     };
 
     private static async Task<WorkerPoolMember?> GetMemberByConnAsync(SqliteConnection conn, string workerIdentity)
@@ -1324,7 +1404,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT {AssignmentColumnsPrefixed}, wm.profile_identity, wm.worker_role, wm.agent_instance_id, wm.channel_id
+            SELECT {AssignmentColumnsPrefixed}, wm.worker_role, wm.agent_instance_id, wm.channel_id
             FROM worker_assignments wa
             LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
             WHERE wa.id = @id
@@ -1379,5 +1459,305 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             WorkerPoolStates.Expired => currentState != WorkerPoolStates.Expired && !WorkerPoolStates.IsTerminal(currentState),
             _ => false,
         };
+    }
+
+    // ── Pool Lanes ────────────────────────────────────────────────────────
+
+    private const string LaneColumns =
+        "profile_identity, worker_role, capacity, status, metadata, created_at, updated_at";
+
+    private static WorkerPoolLane ReadLane(SqliteDataReader reader) => new()
+    {
+        ProfileIdentity = reader.GetString(0),
+        WorkerRole = reader.GetString(1),
+        Capacity = reader.GetInt32(2),
+        Status = reader.GetString(3),
+        Metadata = reader.IsDBNull(4) ? null : reader.GetString(4),
+        CreatedAt = DateTime.Parse(reader.GetString(5)),
+        UpdatedAt = DateTime.Parse(reader.GetString(6)),
+    };
+
+    public async Task<WorkerPoolLane> UpsertLaneAsync(WorkerPoolLane lane)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO worker_pool_lanes (profile_identity, worker_role, capacity, status, metadata)
+            VALUES (@profileIdentity, @workerRole, @capacity, @status, @metadata)
+            ON CONFLICT(profile_identity, worker_role) DO UPDATE SET
+                capacity = excluded.capacity,
+                status = excluded.status,
+                metadata = COALESCE(excluded.metadata, worker_pool_lanes.metadata),
+                updated_at = datetime('now')
+            RETURNING {LaneColumns}
+            """;
+        cmd.Parameters.AddWithValue("@profileIdentity", lane.ProfileIdentity);
+        cmd.Parameters.AddWithValue("@workerRole", lane.WorkerRole);
+        cmd.Parameters.AddWithValue("@capacity", lane.Capacity);
+        cmd.Parameters.AddWithValue("@status", lane.Status);
+        cmd.Parameters.AddWithValue("@metadata", (object?)lane.Metadata ?? DBNull.Value);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        return ReadLane(reader);
+    }
+
+    public async Task<WorkerPoolLane?> GetLaneAsync(string profileIdentity, string workerRole)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {LaneColumns}
+            FROM worker_pool_lanes
+            WHERE profile_identity = @pi AND worker_role = @wr
+            """;
+        cmd.Parameters.AddWithValue("@pi", profileIdentity);
+        cmd.Parameters.AddWithValue("@wr", workerRole);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadLane(reader) : null;
+    }
+
+    public async Task<List<WorkerPoolLane>> ListLanesAsync(string? profileIdentity = null, string? status = null, int limit = 50)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(profileIdentity))
+        {
+            where.Add("profile_identity = @pi");
+            cmd.Parameters.AddWithValue("@pi", profileIdentity);
+        }
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            where.Add("status = @status");
+            cmd.Parameters.AddWithValue("@status", status);
+        }
+
+        var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
+        cmd.CommandText = $"""
+            SELECT {LaneColumns}
+            FROM worker_pool_lanes
+            {whereClause}
+            ORDER BY updated_at DESC
+            LIMIT @limit
+            """;
+        cmd.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 200));
+
+        var results = new List<WorkerPoolLane>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            results.Add(ReadLane(reader));
+        return results;
+    }
+
+    public async Task<int> SetLaneStatusAsync(string profileIdentity, string workerRole, string status)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                UPDATE worker_pool_lanes
+                SET status = @status, updated_at = datetime('now')
+                WHERE profile_identity = @pi AND worker_role = @wr
+                """;
+            cmd.Parameters.AddWithValue("@pi", profileIdentity);
+            cmd.Parameters.AddWithValue("@wr", workerRole);
+            cmd.Parameters.AddWithValue("@status", status);
+
+            var rows = await cmd.ExecuteNonQueryAsync();
+
+            await tx.CommitAsync();
+            return rows;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<ProfileCapacitySummary> GetProfileCapacitySummaryAsync(string profileIdentity)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+
+        var laneRows = new List<(string WorkerRole, int Capacity, int BusyCount)>();
+
+        // Count active non-terminal assignments per lane — collect rows first
+        await using (var laneCmd = conn.CreateCommand())
+        {
+            laneCmd.CommandText = """
+                SELECT wl.worker_role, wl.capacity,
+                       COUNT(wa.id) as busy_count
+                FROM worker_pool_lanes wl
+                LEFT JOIN worker_assignments wa ON wa.profile_identity = wl.profile_identity
+                    AND wa.role = wl.worker_role
+                    AND wa.state NOT IN ('completed', 'failed', 'expired')
+                WHERE wl.profile_identity = @pi AND wl.status = 'active'
+                GROUP BY wl.worker_role
+                """;
+            laneCmd.Parameters.AddWithValue("@pi", profileIdentity);
+
+            await using var reader = await laneCmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                laneRows.Add((reader.GetString(0), reader.GetInt32(1), Convert.ToInt32(reader.GetValue(2))));
+            }
+        }
+
+        var lanes = new List<LaneCapacitySummary>();
+        foreach (var (wr, cap, busy) in laneRows)
+        {
+            // Count quarantined members for this lane
+            var quarantinedCount = 0;
+            await using (var qCmd = conn.CreateCommand())
+            {
+                qCmd.CommandText = """
+                    SELECT count(*) FROM worker_pool_members
+                    WHERE profile_identity = @pi2 AND worker_role = @wr AND status = 'quarantined'
+                    """;
+                qCmd.Parameters.AddWithValue("@pi2", profileIdentity);
+                qCmd.Parameters.AddWithValue("@wr", wr);
+                var result = await qCmd.ExecuteScalarAsync();
+                quarantinedCount = Convert.ToInt32(result ?? 0L);
+            }
+
+            lanes.Add(new LaneCapacitySummary
+            {
+                ProfileIdentity = profileIdentity,
+                WorkerRole = wr,
+                Capacity = cap,
+                BusyCount = busy,
+                AvailableCount = Math.Max(0, cap - busy),
+                QuarantinedCount = quarantinedCount,
+            });
+        }
+
+        var totalCapacity = lanes.Sum(l => l.Capacity);
+        var activeLeases = lanes.Sum(l => l.BusyCount);
+
+        return new ProfileCapacitySummary
+        {
+            ProfileIdentity = profileIdentity,
+            TotalCapacity = totalCapacity,
+            ActiveLeases = activeLeases,
+            AvailableSlots = Math.Max(0, totalCapacity - activeLeases),
+            Lanes = lanes,
+        };
+    }
+
+    // ── Stale Detection ───────────────────────────────────────────────────
+
+    public async Task<int> ReleaseStaleLeasesAsync()
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            // Find busy members whose last_heartbeat + stale_after_seconds < now.
+            // Computed stale — no persistent 'stale' member status.
+            await using var findCmd = conn.CreateCommand();
+            findCmd.CommandText = """
+                SELECT wm.worker_identity
+                FROM worker_pool_members wm
+                WHERE wm.status = 'busy'
+                  AND wm.stale_after_seconds IS NOT NULL
+                  AND wm.last_heartbeat IS NOT NULL
+                  AND datetime(wm.last_heartbeat, '+' || wm.stale_after_seconds || ' seconds') < datetime('now')
+                """;
+
+            var staleWorkers = new List<string>();
+            await using (var reader = await findCmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                    staleWorkers.Add(reader.GetString(0));
+            }
+
+            var releasedCount = 0;
+            foreach (var workerId in staleWorkers)
+            {
+                await using var relCmd = conn.CreateCommand();
+                relCmd.CommandText = """
+                    UPDATE worker_assignments
+                    SET state = 'expired',
+                        released_at = datetime('now'),
+                        updated_at = datetime('now')
+                    WHERE worker_identity = @workerId
+                      AND state NOT IN ('completed', 'failed', 'expired')
+                      RETURNING id
+                    """;
+                relCmd.Parameters.AddWithValue("@workerId", workerId);
+
+                await using var relReader = await relCmd.ExecuteReaderAsync();
+                while (await relReader.ReadAsync())
+                    releasedCount++;
+
+                await using var availCmd = conn.CreateCommand();
+                availCmd.CommandText = """
+                    UPDATE worker_pool_members
+                    SET status = 'available', updated_at = datetime('now')
+                    WHERE worker_identity = @workerId
+                    """;
+                availCmd.Parameters.AddWithValue("@workerId", workerId);
+                await availCmd.ExecuteNonQueryAsync();
+            }
+
+            await tx.CommitAsync();
+            return releasedCount;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    private static async Task<bool> LaneCanAcceptLeaseAsync(SqliteConnection conn, WorkerPoolMember worker, string assignmentRole)
+    {
+        if (string.IsNullOrWhiteSpace(worker.ProfileIdentity))
+            return true;
+
+        var workerRole = !string.IsNullOrWhiteSpace(worker.WorkerRole)
+            ? worker.WorkerRole!
+            : assignmentRole;
+
+        await using (var laneCmd = conn.CreateCommand())
+        {
+            laneCmd.CommandText = """
+                SELECT capacity, status
+                FROM worker_pool_lanes
+                WHERE profile_identity = @profileIdentity
+                  AND worker_role = @workerRole
+                """;
+            laneCmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
+            laneCmd.Parameters.AddWithValue("@workerRole", workerRole);
+
+            await using var reader = await laneCmd.ExecuteReaderAsync();
+            if (!await reader.ReadAsync())
+                return true;
+
+            var capacity = reader.GetInt32(0);
+            var status = reader.GetString(1);
+            if (status != WorkerPoolStates.LaneActive)
+                return false;
+
+            await using var countCmd = conn.CreateCommand();
+            countCmd.CommandText = """
+                SELECT COUNT(*)
+                FROM worker_assignments wa
+                LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
+                WHERE COALESCE(NULLIF(wa.profile_identity, ''), wm.profile_identity) = @profileIdentity
+                  AND COALESCE(wm.worker_role, wa.role) = @workerRole
+                  AND wa.state NOT IN ('completed', 'failed', 'expired')
+                """;
+            countCmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
+            countCmd.Parameters.AddWithValue("@workerRole", workerRole);
+            var active = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0L);
+
+            return active < capacity;
+        }
     }
 }

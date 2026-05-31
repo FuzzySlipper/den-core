@@ -1126,6 +1126,89 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LeaseWithDiagnostics_ReturnsCapacityOnSuccess()
+    {
+        await SeedLaneAsync("diag-cap-success", "coder", capacity: 2);
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "diag-cap-success-1",
+            ProfileIdentity = "diag-cap-success",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"coder\"]",
+        });
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "diag-cap-success-2",
+            ProfileIdentity = "diag-cap-success",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"coder\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-diag-cap-success",
+            ProfileIdentity = "diag-cap-success",
+            WorkerRole = "coder",
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.NotNull(result.Capacity);
+        Assert.Equal("diag-cap-success", result.Capacity.ProfileIdentity);
+        Assert.Equal(2, result.Capacity.TotalCapacity);
+        Assert.Equal(1, result.Capacity.ActiveLeases);
+        Assert.Equal(1, result.Capacity.AvailableSlots);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_ReturnsCapacityWhenLaneFull()
+    {
+        await SeedLaneAsync("diag-cap-full", "coder", capacity: 1);
+        for (var i = 1; i <= 2; i++)
+        {
+            await _repo.UpsertMemberAsync(new WorkerPoolMember
+            {
+                WorkerIdentity = $"diag-cap-full-{i}",
+                ProfileIdentity = "diag-cap-full",
+                WorkerRole = "coder",
+                Status = WorkerPoolStates.MemberAvailable,
+                Capabilities = "[\"coder\"]",
+            });
+        }
+
+        var first = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-diag-cap-full-1",
+            ProfileIdentity = "diag-cap-full",
+            WorkerRole = "coder",
+        });
+        Assert.True(first.IsSuccess);
+
+        var full = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-diag-cap-full-2",
+            ProfileIdentity = "diag-cap-full",
+            WorkerRole = "coder",
+        });
+
+        Assert.False(full.IsSuccess);
+        Assert.NotNull(full.Capacity);
+        Assert.Equal(1, full.Capacity.TotalCapacity);
+        Assert.Equal(1, full.Capacity.ActiveLeases);
+        Assert.Equal(0, full.Capacity.AvailableSlots);
+    }
+
+    [Fact]
     public async Task Lane_Crud_UpsertAndRetrieve()
     {
         var lane = await _repo.UpsertLaneAsync(new WorkerPoolLane

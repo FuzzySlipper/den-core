@@ -936,10 +936,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 if (assignment is not null)
                 {
                     await tx.CommitAsync();
+                    var capacity = await GetCapacityForLeaseResultAsync(assignment.ProfileIdentity);
                     return new LeaseWorkerResult
                     {
                         IsSuccess = true,
                         Assignment = assignment,
+                        Capacity = capacity,
                     };
                 }
 
@@ -954,7 +956,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                         stats,
                         $"Preferred worker '{preferred}' not found in pool. {stats.Total} total workers matching filters.");
                     await tx.CommitAsync();
-                    return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+                    return new LeaseWorkerResult
+                    {
+                        IsSuccess = false,
+                        NoCapacity = record,
+                        Capacity = await GetCapacityForLeaseResultAsync(input.ProfileIdentity),
+                    };
                 }
 
                 if (preferredWorker.Status != WorkerPoolStates.MemberAvailable)
@@ -969,7 +976,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                         stats,
                         msg);
                     await tx.CommitAsync();
-                    return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+                    return new LeaseWorkerResult
+                    {
+                        IsSuccess = false,
+                        NoCapacity = record,
+                        Capacity = await GetCapacityForLeaseResultAsync(input.ProfileIdentity ?? preferredWorker.ProfileIdentity),
+                    };
                 }
             }
 
@@ -989,7 +1001,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                                 ? "No workers registered in the pool matching the requested role/profile/capabilities."
                                 : $"No matching candidate workers available. Total candidates: {stats.Total}.");
                 await tx.CommitAsync();
-                return new LeaseWorkerResult { IsSuccess = false, NoCapacity = record };
+                return new LeaseWorkerResult
+                {
+                    IsSuccess = false,
+                    NoCapacity = record,
+                    Capacity = await GetCapacityForLeaseResultAsync(input.ProfileIdentity),
+                };
             }
 
             // Try each candidate
@@ -1007,7 +1024,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             if (assignment is not null)
             {
                 await tx.CommitAsync();
-                return new LeaseWorkerResult { IsSuccess = true, Assignment = assignment };
+                return new LeaseWorkerResult
+                {
+                    IsSuccess = true,
+                    Assignment = assignment,
+                    Capacity = await GetCapacityForLeaseResultAsync(assignment.ProfileIdentity),
+                };
             }
 
             // All candidates failed — likely all busy now (race condition or conflicting constraints)
@@ -1017,13 +1039,27 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 finalStats,
                 $"All {candidates.Count} matching workers became unavailable. {finalStats.Busy} busy, {finalStats.Available} available.");
             await tx.CommitAsync();
-            return new LeaseWorkerResult { IsSuccess = false, NoCapacity = finalRecord };
+            return new LeaseWorkerResult
+            {
+                IsSuccess = false,
+                NoCapacity = finalRecord,
+                Capacity = await GetCapacityForLeaseResultAsync(input.ProfileIdentity),
+            };
         }
         catch
         {
             await tx.RollbackAsync();
             throw;
         }
+    }
+
+    private async Task<ProfileCapacitySummary?> GetCapacityForLeaseResultAsync(string? profileIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(profileIdentity))
+            return null;
+
+        var summary = await GetProfileCapacitySummaryAsync(profileIdentity);
+        return summary.TotalCapacity > 0 || summary.Lanes.Count > 0 ? summary : null;
     }
 
     public async Task<List<WorkerNoCapacityRequest>> ListNoCapacityRequestsAsync(NoCapacityRequestListOptions options)

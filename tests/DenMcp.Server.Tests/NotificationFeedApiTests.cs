@@ -430,6 +430,196 @@ public class NotificationFeedApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // ---- Dual-mode mark-read validation tests (#868, #869, #870) ----
+
+    [Fact]
+    public async Task MarkRead_NullIdsNoMarkAll_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("Must provide either", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task MarkRead_EmptyIdsNoMarkAll_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch",
+            notification_ids = Array.Empty<int>()
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("Must provide either", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task MarkRead_BothModes_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch",
+            notification_ids = new[] { 1 },
+            mark_all = true,
+            scope = new { project_id = "proj-a" }
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("Cannot specify both", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task MarkAll_NoProjectId_ReturnsBadRequest()
+    {
+        var response = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch",
+            mark_all = true
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("scope.project_id is required", body.GetProperty("error").GetString());
+    }
+
+    // ---- Scoped mark-all tests (#867) ----
+
+    [Fact]
+    public async Task MarkAll_ProjectScope_MarksAllProjectNotifications()
+    {
+        // Seed 3 in proj-a, 1 in proj-b
+        var a1 = await SeedNotificationAsync("proj-a", "agent-1", "A-1");
+        var a2 = await SeedNotificationAsync("proj-a", "agent-1", "A-2");
+        var a3 = await SeedNotificationAsync("proj-a", "agent-1", "A-3");
+        await SeedNotificationAsync("proj-b", "agent-2", "B-1");
+
+        var markResp = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch",
+            mark_all = true,
+            scope = new { project_id = "proj-a" }
+        });
+        markResp.EnsureSuccessStatusCode();
+        var markResult = await markResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3, markResult.GetProperty("marked").GetInt32());
+
+        // Verify proj-a notifications are read for patch
+        var readResp = await _client.GetAsync("/api/user-notifications?projectId=proj-a&isRead=true&readFor=patch");
+        readResp.EnsureSuccessStatusCode();
+        var read = await readResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Equal(3, read!.Length);
+
+        // Verify proj-b notification is still unread for patch
+        var unreadResp = await _client.GetAsync("/api/user-notifications?projectId=proj-b&isRead=false&readFor=patch");
+        unreadResp.EnsureSuccessStatusCode();
+        var unread = await unreadResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(unread!);
+    }
+
+    [Fact]
+    public async Task MarkAll_TaskScope_MarksOnlyTaskNotifications()
+    {
+        var taskId = await SeedTaskAsync("proj-a");
+
+        await SeedNotificationAsync("proj-a", "agent-1", "On task", taskId: taskId);
+        await SeedNotificationAsync("proj-a", "agent-1", "On task 2", taskId: taskId);
+        await SeedNotificationAsync("proj-a", "agent-1", "No task");
+
+        var markResp = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "patch",
+            mark_all = true,
+            scope = new { project_id = "proj-a", task_id = taskId }
+        });
+        markResp.EnsureSuccessStatusCode();
+        var markResult = await markResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, markResult.GetProperty("marked").GetInt32());
+
+        // Verify task-scoped notifications are read
+        var readResp = await _client.GetAsync($"/api/user-notifications?projectId=proj-a&taskId={taskId}&isRead=true&readFor=patch");
+        readResp.EnsureSuccessStatusCode();
+        var read = await readResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Equal(2, read!.Length);
+
+        // Verify non-task notification is still unread
+        var unreadResp = await _client.GetAsync("/api/user-notifications?projectId=proj-a&isRead=false&readFor=patch");
+        unreadResp.EnsureSuccessStatusCode();
+        var unread = await unreadResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(unread!);
+        Assert.Equal("No task", unread![0].GetProperty("content").GetString());
+    }
+
+    // ---- Cross-agent identity isolation (#869) ----
+
+    [Fact]
+    public async Task MarkRead_CrossAgentIsolation()
+    {
+        var n1 = await SeedNotificationAsync("proj-a", "agent-1", "Isolation test");
+
+        // Mark read for agent-x
+        var markResp = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "agent-x",
+            notification_ids = new[] { n1.Id }
+        });
+        markResp.EnsureSuccessStatusCode();
+
+        // Verify read for agent-x
+        var readX = await _client.GetAsync("/api/user-notifications?isRead=true&readFor=agent-x");
+        readX.EnsureSuccessStatusCode();
+        var readXItems = await readX.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(readXItems!);
+
+        // Verify still unread for agent-y
+        var unreadY = await _client.GetAsync("/api/user-notifications?isRead=false&readFor=agent-y");
+        unreadY.EnsureSuccessStatusCode();
+        var unreadYItems = await unreadY.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(unreadYItems!);
+    }
+
+    [Fact]
+    public async Task Feed_WithoutReadFor_ReturnsIsReadFalse()
+    {
+        await SeedNotificationAsync("proj-a", "agent-1", "Unread by default");
+
+        var response = await _client.GetAsync("/api/user-notifications");
+        response.EnsureSuccessStatusCode();
+        var items = await response.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(items!);
+        Assert.False(items![0].GetProperty("is_read").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Feed_WithReadFor_ReflectsAgentState()
+    {
+        var n1 = await SeedNotificationAsync("proj-a", "agent-1", "State test");
+
+        // Mark read for agent-1 (the reader, not sender)
+        var markResp = await _client.PostAsJsonAsync("/api/user-notifications/mark-read", new
+        {
+            agent = "reader-agent",
+            notification_ids = new[] { n1.Id }
+        });
+        markResp.EnsureSuccessStatusCode();
+
+        // Verify read for reader-agent
+        var readResp = await _client.GetAsync("/api/user-notifications?readFor=reader-agent");
+        readResp.EnsureSuccessStatusCode();
+        var readItems = await readResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(readItems!);
+        Assert.True(readItems![0].GetProperty("is_read").GetBoolean());
+
+        // Verify unread for other-agent
+        var unreadResp = await _client.GetAsync("/api/user-notifications?readFor=other-agent");
+        unreadResp.EnsureSuccessStatusCode();
+        var unreadItems = await unreadResp.Content.ReadFromJsonAsync<JsonElement[]>();
+        Assert.Single(unreadItems!);
+        Assert.False(unreadItems![0].GetProperty("is_read").GetBoolean());
+    }
+
     // ---- Feed item shape test ----
 
     [Fact]

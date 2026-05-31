@@ -146,8 +146,31 @@ public static class MessageRoutes
 
         app.MapPost("/api/user-notifications/mark-read", async (IMessageRepository repo, MarkNotificationsReadRequest req) =>
         {
-            var count = await repo.MarkNotificationsReadAsync(req.Agent, req.NotificationIds);
-            return Results.Ok(new { marked = count });
+            if (string.IsNullOrWhiteSpace(req.Agent))
+                return Results.BadRequest(new { error = "agent is required" });
+
+            var hasIds = req.NotificationIds is not null && req.NotificationIds.Length > 0;
+            var isMarkAll = req.MarkAll == true;
+
+            if (hasIds && isMarkAll)
+                return Results.BadRequest(new { error = "Cannot specify both notification_ids and mark_all" });
+
+            if (isMarkAll)
+            {
+                if (string.IsNullOrWhiteSpace(req.Scope?.ProjectId))
+                    return Results.BadRequest(new { error = "scope.project_id is required when mark_all is true" });
+
+                var count = await repo.MarkAllNotificationsReadAsync(req.Agent, req.Scope.ProjectId, req.Scope.TaskId);
+                return Results.Ok(new { marked = count });
+            }
+
+            if (hasIds)
+            {
+                var count = await repo.MarkNotificationsReadAsync(req.Agent, req.NotificationIds);
+                return Results.Ok(new { marked = count });
+            }
+
+            return Results.BadRequest(new { error = "Must provide either notification_ids or mark_all with scope" });
         });
     }
 
@@ -178,4 +201,10 @@ public record SendMessageRequest(
 
 public record MarkReadRequest(string Agent, int[] MessageIds);
 
-public record MarkNotificationsReadRequest(string Agent, int[] NotificationIds);
+public record MarkNotificationsReadRequest(
+    string Agent,
+    int[]? NotificationIds = null,
+    bool? MarkAll = null,
+    MarkAllScope? Scope = null);
+
+public record MarkAllScope(string ProjectId, int? TaskId = null);

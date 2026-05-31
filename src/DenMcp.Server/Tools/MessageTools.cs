@@ -184,16 +184,54 @@ public sealed class MessageTools
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "mark_notifications_read"), Description(
-        "Mark user notifications as read for an agent identity. Only marks messages with intent='notification'.")]
+        "Mark user notifications as read for an agent identity. Supports two modes:\n" +
+        "1) Explicit IDs: pass notification_ids (comma-separated).\n" +
+        "2) Scoped mark-all: pass mark_all=\"true\" with scope_project_id (required) and optional scope_task_id.\n" +
+        "The two modes are mutually exclusive. Only marks messages with intent='notification'.")]
     public static async Task<string> MarkNotificationsRead(
         IMessageRepository repo,
         [Description("Agent identity to mark read for.")] string agent,
-        [Description("Comma-separated notification IDs to mark as read.")] string notification_ids)
+        [Description("Comma-separated notification IDs to mark as read.")] string? notification_ids = null,
+        [Description("Set to \"true\" to mark all notifications in scope as read.")] string? mark_all = null,
+        [Description("Project ID for mark-all scope. Required when mark_all is true.")] string? scope_project_id = null,
+        [Description("Optional task ID to narrow mark-all scope to a specific task.")] int? scope_task_id = null)
     {
-        var ids = notification_ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(int.Parse).ToArray();
-        var count = await repo.MarkNotificationsReadAsync(agent, ids);
-        return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
+        var isMarkAll = string.Equals(mark_all, "true", StringComparison.OrdinalIgnoreCase);
+
+        // Parse explicit IDs if provided
+        List<int>? parsedIds = null;
+        if (!string.IsNullOrWhiteSpace(notification_ids))
+        {
+            parsedIds = new List<int>();
+            foreach (var segment in notification_ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!int.TryParse(segment, out var id))
+                    return JsonSerializer.Serialize(new { error = $"Invalid notification ID: '{segment}'" }, JsonOpts.Default);
+                parsedIds.Add(id);
+            }
+        }
+
+        var hasIds = parsedIds is not null && parsedIds.Count > 0;
+
+        if (hasIds && isMarkAll)
+            return JsonSerializer.Serialize(new { error = "Cannot specify both notification_ids and mark_all" }, JsonOpts.Default);
+
+        if (isMarkAll)
+        {
+            if (string.IsNullOrWhiteSpace(scope_project_id))
+                return JsonSerializer.Serialize(new { error = "scope_project_id is required when mark_all is true" }, JsonOpts.Default);
+
+            var count = await repo.MarkAllNotificationsReadAsync(agent, scope_project_id, scope_task_id);
+            return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
+        }
+
+        if (hasIds)
+        {
+            var count = await repo.MarkNotificationsReadAsync(agent, parsedIds!.ToArray());
+            return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
+        }
+
+        return JsonSerializer.Serialize(new { error = "Must provide either notification_ids or mark_all with scope" }, JsonOpts.Default);
     }
 
     private static (MessageIntent? canonical, string? raw) ParseIntent(string? intent)

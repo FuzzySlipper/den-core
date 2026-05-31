@@ -24,7 +24,8 @@ public interface IMessageRepository
         string? readForAgent = null,
         int limit = 20,
         int offset = 0);
-    Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds);
+    Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds);
+    Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null);
 }
 
 public sealed class MessageRepository : IMessageRepository
@@ -364,9 +365,9 @@ public sealed class MessageRepository : IMessageRepository
         return items;
     }
 
-    public async Task<int> MarkNotificationsReadAsync(string agent, int[] notificationIds)
+    public async Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds)
     {
-        if (notificationIds.Length == 0) return 0;
+        if (notificationIds is null || notificationIds.Length == 0) return 0;
 
         await using var conn = await _db.CreateConnectionAsync();
         var count = 0;
@@ -387,6 +388,28 @@ public sealed class MessageRepository : IMessageRepository
         }
 
         return count;
+    }
+
+    public async Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+
+        var taskClause = taskId is not null ? "AND m.task_id = @taskId" : "";
+        cmd.CommandText = $"""
+            INSERT OR IGNORE INTO message_reads (message_id, agent)
+            SELECT m.id, @agent
+            FROM messages m
+            WHERE m.intent = 'notification'
+              AND m.project_id = @projectId
+              {taskClause}
+            """;
+        cmd.Parameters.AddWithValue("@agent", agent);
+        cmd.Parameters.AddWithValue("@projectId", projectId);
+        if (taskId is not null)
+            cmd.Parameters.AddWithValue("@taskId", taskId.Value);
+
+        return await cmd.ExecuteNonQueryAsync();
     }
 
     private static Message ReadMessage(SqliteDataReader reader, int offset = 0)

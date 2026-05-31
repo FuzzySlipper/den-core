@@ -1129,9 +1129,11 @@ public sealed class DatabaseInitializer
                 'review_feedback',
                 'review_approval',
                 'task_ready',
-                'task_blocked'
+                'task_blocked',
+                'notification'
             ))
             """);
+        await EnsureMessageIntentAllowsNotificationAsync(connection);
         await TryAddColumnAsync(connection, "review_rounds", "preferred_diff_base_ref", "TEXT");
         await TryAddColumnAsync(connection, "review_rounds", "preferred_diff_base_commit", "TEXT");
         await TryAddColumnAsync(connection, "review_rounds", "preferred_diff_head_ref", "TEXT");
@@ -2228,6 +2230,86 @@ public sealed class DatabaseInitializer
         catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
         {
             // A parallel initializer may have added the column between the PRAGMA check and ALTER TABLE.
+        }
+    }
+
+    private async Task EnsureMessageIntentAllowsNotificationAsync(SqliteConnection connection)
+    {
+        await using (var checkCmd = connection.CreateCommand())
+        {
+            checkCmd.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'";
+            var tableSql = (await checkCmd.ExecuteScalarAsync()) as string;
+            if (tableSql is null || tableSql.Contains("'notification'", StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        _logger.LogInformation("Migrating messages.intent CHECK constraint to allow notification intent");
+
+        await using (var fkOffCmd = connection.CreateCommand())
+        {
+            fkOffCmd.CommandText = "PRAGMA foreign_keys = OFF";
+            await fkOffCmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await using var rebuildCmd = connection.CreateCommand();
+            rebuildCmd.CommandText = """
+                BEGIN IMMEDIATE;
+
+                CREATE TABLE messages_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    task_id     INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                    thread_id   INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    sender      TEXT NOT NULL,
+                    content     TEXT NOT NULL,
+                    intent      TEXT NOT NULL DEFAULT 'general'
+                                CHECK (intent IN (
+                                    'general',
+                                    'note',
+                                    'status_update',
+                                    'question',
+                                    'answer',
+                                    'handoff',
+                                    'review_request',
+                                    'review_feedback',
+                                    'review_approval',
+                                    'task_ready',
+                                    'task_blocked',
+                                    'notification'
+                                )),
+                    metadata    TEXT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                INSERT INTO messages_new (id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at)
+                SELECT id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at
+                FROM messages;
+
+                DROP TABLE messages;
+                ALTER TABLE messages_new RENAME TO messages;
+
+                CREATE INDEX IF NOT EXISTS idx_messages_project_task ON messages(project_id, task_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_project_intent ON messages(project_id, intent);
+
+                COMMIT;
+                """;
+            await rebuildCmd.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            await using var rollbackCmd = connection.CreateCommand();
+            rollbackCmd.CommandText = "ROLLBACK";
+            try { await rollbackCmd.ExecuteNonQueryAsync(); } catch (SqliteException) { }
+            throw;
+        }
+        finally
+        {
+            await using var fkOnCmd = connection.CreateCommand();
+            fkOnCmd.CommandText = "PRAGMA foreign_keys = ON";
+            await fkOnCmd.ExecuteNonQueryAsync();
         }
     }
 

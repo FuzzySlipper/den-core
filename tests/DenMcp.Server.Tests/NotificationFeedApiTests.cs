@@ -8,6 +8,7 @@ using DenMcp.Core.Services;
 using DenMcp.Server.Tools;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -618,6 +619,107 @@ public class NotificationFeedApiTests : IAsyncLifetime
         var unreadItems = await unreadResp.Content.ReadFromJsonAsync<JsonElement[]>();
         Assert.Single(unreadItems!);
         Assert.False(unreadItems![0].GetProperty("is_read").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Initializer_UpgradesLegacyMessagesIntentConstraintForNotifications()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"den-mcp-legacy-notif-intent-{Guid.NewGuid()}.db");
+        try
+        {
+            await using (var connection = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                await connection.OpenAsync();
+                await using var cmd = connection.CreateCommand();
+                cmd.CommandText = """
+                    CREATE TABLE projects (
+                        id            TEXT PRIMARY KEY,
+                        name          TEXT NOT NULL,
+                        kind          TEXT NOT NULL DEFAULT 'project'
+                                      CHECK (kind IN ('project', 'personal', 'assistant', 'knowledge_base', 'system')),
+                        visibility    TEXT NOT NULL DEFAULT 'normal'
+                                      CHECK (visibility IN ('normal', 'hidden', 'archived')),
+                        owner         TEXT,
+                        root_path     TEXT,
+                        description   TEXT,
+                        settings_json TEXT,
+                        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+
+                    CREATE TABLE tasks (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        parent_id   INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+                        title       TEXT NOT NULL,
+                        description TEXT,
+                        status      TEXT NOT NULL DEFAULT 'planned'
+                                    CHECK (status IN ('planned', 'in_progress', 'review', 'blocked', 'done', 'cancelled')),
+                        priority    INTEGER NOT NULL DEFAULT 3
+                                    CHECK (priority BETWEEN 1 AND 5),
+                        assigned_to TEXT,
+                        tags        TEXT,
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+
+                    CREATE TABLE messages (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        task_id     INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                        thread_id   INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                        sender      TEXT NOT NULL,
+                        content     TEXT NOT NULL,
+                        intent      TEXT NOT NULL DEFAULT 'general'
+                                    CHECK (intent IN (
+                                        'general',
+                                        'note',
+                                        'status_update',
+                                        'question',
+                                        'answer',
+                                        'handoff',
+                                        'review_request',
+                                        'review_feedback',
+                                        'review_approval',
+                                        'task_ready',
+                                        'task_blocked'
+                                    )),
+                        metadata    TEXT,
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+
+                    INSERT INTO projects (id, name) VALUES ('legacy-proj', 'Legacy Project');
+                    INSERT INTO messages (project_id, sender, content, intent, metadata)
+                    VALUES ('legacy-proj', 'legacy-agent', 'Existing message', 'general', '{}');
+                    """;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            var initializer = new DatabaseInitializer(dbPath,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<DatabaseInitializer>.Instance);
+            await initializer.InitializeAsync();
+
+            var db = new DbConnectionFactory(initializer.ConnectionString);
+            var messages = new MessageRepository(db);
+            var created = await messages.CreateAsync(new Message
+            {
+                ProjectId = "legacy-proj",
+                Sender = "den-mcp-runner",
+                Content = "Notification after migration",
+                Intent = MessageIntent.Notification,
+                Metadata = JsonSerializer.Deserialize<JsonElement>("{\"type\":\"agent_work_complete\"}")
+            });
+
+            Assert.Equal(MessageIntent.Notification, created.Intent);
+
+            var feed = await messages.GetNotificationFeedAsync(projectId: "legacy-proj", metadataType: "agent_work_complete");
+            Assert.Single(feed);
+            Assert.Equal(created.Id, feed[0].Id);
+        }
+        finally
+        {
+            try { File.Delete(dbPath); } catch { }
+        }
     }
 
     // ---- Feed item shape test ----

@@ -217,8 +217,64 @@ public static class WorkerPoolRoutes
             return result is not null ? Results.Ok(result) : Results.BadRequest(new { error = "Assignment must be terminal with cleanup evidence to release" });
         });
 
-        // ── Summary ──────────────────────────────────────────────────
+        // ── Lanes / Capacity ──────────────────────────────────────────
 
+        pool.MapPost("/lanes", async (IWorkerPoolRepository repo, JsonElement body) =>
+        {
+            WorkerPoolLane? lane;
+            try
+            {
+                lane = JsonSerializer.Deserialize<WorkerPoolLane>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid request body" });
+            }
+
+            if (lane is null || string.IsNullOrWhiteSpace(lane.ProfileIdentity) || string.IsNullOrWhiteSpace(lane.WorkerRole))
+                return Results.BadRequest(new { error = "profile_identity and worker_role are required" });
+            if (lane.Capacity <= 0)
+                return Results.BadRequest(new { error = "capacity must be greater than zero" });
+            if (!WorkerPoolStates.ValidLaneStatuses.Contains(lane.Status))
+                return Results.BadRequest(new { error = "status must be active, quarantined, or disabled" });
+
+            var result = await repo.UpsertLaneAsync(lane);
+            return Results.Ok(result);
+        });
+
+        pool.MapGet("/lanes", async (IWorkerPoolRepository repo, string? profileIdentity, string? status, int limit = 50) =>
+        {
+            var lanes = await repo.ListLanesAsync(profileIdentity, status, limit);
+            return Results.Ok(new { lanes, count = lanes.Count });
+        });
+
+        pool.MapGet("/lanes/{profileIdentity}/{workerRole}", async (IWorkerPoolRepository repo, string profileIdentity, string workerRole) =>
+        {
+            var lane = await repo.GetLaneAsync(profileIdentity, workerRole);
+            return lane is not null ? Results.Ok(lane) : Results.NotFound(new { error = $"Lane {profileIdentity}/{workerRole} not found" });
+        });
+
+        pool.MapPost("/lanes/{profileIdentity}/{workerRole}/status", async (IWorkerPoolRepository repo, string profileIdentity, string workerRole, LaneStatusRequest req) =>
+        {
+            if (!WorkerPoolStates.ValidLaneStatuses.Contains(req.Status))
+                return Results.BadRequest(new { error = "status must be active, quarantined, or disabled" });
+            var rows = await repo.SetLaneStatusAsync(profileIdentity, workerRole, req.Status);
+            return rows > 0 ? Results.Ok(new { profile_identity = profileIdentity, worker_role = workerRole, status = req.Status }) : Results.NotFound(new { error = $"Lane {profileIdentity}/{workerRole} not found" });
+        });
+
+        pool.MapGet("/capacity/{profileIdentity}", async (IWorkerPoolRepository repo, string profileIdentity) =>
+        {
+            var summary = await repo.GetProfileCapacitySummaryAsync(profileIdentity);
+            return Results.Ok(summary);
+        });
+
+        pool.MapPost("/stale/release", async (IWorkerPoolRepository repo) =>
+        {
+            var released = await repo.ReleaseStaleLeasesAsync();
+            return Results.Ok(new { released });
+        });
+
+        // ── Summary ──────────────────────────────────────────────────
         pool.MapGet("/summary", async (IWorkerPoolRepository repo) =>
         {
             var summary = await repo.GetSummaryAsync();
@@ -233,4 +289,5 @@ public static class WorkerPoolRoutes
     public sealed record AppendCheckpointRequest(string RunId, string CheckpointType, string Payload);
     public sealed record AppendResponseRequest(int? AssignmentId, string RunId, string ResponseType, string Payload);
     public sealed record CleanupRequest(string Evidence);
+    public sealed record LaneStatusRequest(string Status);
 }

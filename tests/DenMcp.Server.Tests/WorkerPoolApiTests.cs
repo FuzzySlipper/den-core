@@ -905,6 +905,123 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         Assert.Equal(assignmentId, byRunDoc.RootElement.GetProperty("assignment_id").GetInt32());
     }
 
+    // ── Lane/capacity REST ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task LaneCapacityRoutes_ExposeSharedProfileUsage()
+    {
+        var profile = $"spawned-coder-api-{Guid.NewGuid():N}";
+        var laneResp = await _client.PostAsJsonAsync("/api/worker-pool/lanes", new
+        {
+            profile_identity = profile,
+            worker_role = "coder",
+            capacity = 2,
+            status = "active",
+        });
+        laneResp.EnsureSuccessStatusCode();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+            for (var i = 1; i <= 3; i++)
+            {
+                await repo.UpsertMemberAsync(new WorkerPoolMember
+                {
+                    WorkerIdentity = $"lane-api-{i}-{Guid.NewGuid():N}",
+                    ProfileIdentity = profile,
+                    WorkerRole = "coder",
+                    Status = WorkerPoolStates.MemberAvailable,
+                    Capabilities = """["coder"]""",
+                });
+            }
+
+            for (var i = 1; i <= 2; i++)
+            {
+                var lease = await repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+                {
+                    ProjectId = _projectId,
+                    Role = "coder",
+                    AssignedBy = "runner",
+                    RunId = $"run-lane-api-{i}-{Guid.NewGuid():N}",
+                    ProfileIdentity = profile,
+                    WorkerRole = "coder",
+                });
+                Assert.NotNull(lease);
+            }
+        }
+
+        var capacityResp = await _client.GetAsync($"/api/worker-pool/capacity/{profile}");
+        capacityResp.EnsureSuccessStatusCode();
+        using var capacityDoc = JsonDocument.Parse(await capacityResp.Content.ReadAsStringAsync());
+        Assert.Equal(2, capacityDoc.RootElement.GetProperty("total_capacity").GetInt32());
+        Assert.Equal(2, capacityDoc.RootElement.GetProperty("active_leases").GetInt32());
+        Assert.Equal(0, capacityDoc.RootElement.GetProperty("available_slots").GetInt32());
+
+        var thirdLease = await _client.PostAsJsonAsync("/api/worker-pool/leases", new
+        {
+            project_id = _projectId,
+            role = "coder",
+            assigned_by = "runner",
+            run_id = $"run-lane-api-over-{Guid.NewGuid():N}",
+            profile_identity = profile,
+            worker_role = "coder",
+        });
+        Assert.Equal(HttpStatusCode.Conflict, thirdLease.StatusCode);
+    }
+
+    [Fact]
+    public async Task LaneStatusRoute_QuarantineBlocksNewLeasesWithoutMemberMutation()
+    {
+        var profile = $"spawned-quarantine-api-{Guid.NewGuid():N}";
+        var laneResp = await _client.PostAsJsonAsync("/api/worker-pool/lanes", new
+        {
+            profile_identity = profile,
+            worker_role = "coder",
+            capacity = 1,
+            status = "active",
+        });
+        laneResp.EnsureSuccessStatusCode();
+
+        string workerId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+            workerId = $"lane-quarantine-api-{Guid.NewGuid():N}";
+            await repo.UpsertMemberAsync(new WorkerPoolMember
+            {
+                WorkerIdentity = workerId,
+                ProfileIdentity = profile,
+                WorkerRole = "coder",
+                Status = WorkerPoolStates.MemberAvailable,
+                Capabilities = """["coder"]""",
+            });
+        }
+
+        var statusResp = await _client.PostAsJsonAsync($"/api/worker-pool/lanes/{profile}/coder/status", new
+        {
+            status = "quarantined",
+        });
+        statusResp.EnsureSuccessStatusCode();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+            var member = await repo.GetMemberAsync(workerId);
+            Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+        }
+
+        var leaseResp = await _client.PostAsJsonAsync("/api/worker-pool/leases", new
+        {
+            project_id = _projectId,
+            role = "coder",
+            assigned_by = "runner",
+            run_id = $"run-lane-quarantined-{Guid.NewGuid():N}",
+            profile_identity = profile,
+            worker_role = "coder",
+        });
+        Assert.Equal(HttpStatusCode.Conflict, leaseResp.StatusCode);
+    }
+
     // ── Bad request handling ───────────────────────────────────────────
 
     [Fact]

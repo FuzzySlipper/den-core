@@ -893,6 +893,27 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             var result = await cmd.ExecuteScalarAsync();
             summary.RecentCheckpoints = Convert.ToInt32(result ?? 0L);
         }
+        // Per-profile lane capacity breakdown for observability ("spawned-coder: 2/4 busy").
+        var laneProfiles = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT DISTINCT profile_identity
+                FROM worker_pool_lanes
+                ORDER BY profile_identity
+                """;
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                laneProfiles.Add(reader.GetString(0));
+        }
+        if (laneProfiles.Count > 0)
+        {
+            var breakdown = new List<ProfileCapacitySummary>();
+            foreach (var profileIdentity in laneProfiles)
+                breakdown.Add(await GetProfileCapacitySummaryAsync(profileIdentity));
+            summary.PerProfileBreakdown = JsonSerializer.Serialize(breakdown, JsonOptions);
+        }
+
         return summary;
     }
 

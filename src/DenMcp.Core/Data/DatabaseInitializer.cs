@@ -1248,6 +1248,12 @@ public sealed class DatabaseInitializer
 
         // Ensure worker_pool_lanes schema (migration for existing DBs)
         await EnsureWorkerPoolLanesSchemaAsync(connection);
+
+        // Migration: add lease_kind column to worker_assignments for project-orchestrator distinction
+        await TryAddColumnAsync(connection, "worker_assignments", "lease_kind", "TEXT NOT NULL DEFAULT 'task_worker'");
+
+        // Ensure orchestrator_leases schema (migration for existing DBs)
+        await EnsureOrchestratorLeasesSchemaAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2835,6 +2841,74 @@ public sealed class DatabaseInitializer
                 ON worker_pool_lanes(status, updated_at DESC);
 
             ------------------------------------------------------------
+            -- ORCHESTRATOR LEASES
+            -- Project-duration orchestrator residency leases. Distinct
+            -- from bounded task-scoped worker assignments. Tracks pooled
+            -- orchestrator temporary assignment to a project/channel/task/workstream.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS orchestrator_leases (
+                id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+                lease_id                  TEXT NOT NULL UNIQUE,
+                lease_kind                TEXT NOT NULL DEFAULT 'project_orchestrator'
+                                          CHECK (lease_kind IN ('task_worker', 'project_orchestrator')),
+                scope_type                TEXT NOT NULL DEFAULT 'project'
+                                          CHECK (scope_type IN ('project', 'channel', 'task', 'workstream')),
+                project_id                TEXT NOT NULL REFERENCES projects(id),
+                channel_id                TEXT,
+                task_id                   INTEGER,
+                workstream_handle         TEXT,
+                objective                 TEXT,
+                lease_owner               TEXT NOT NULL,
+                orchestrator_identity     TEXT NOT NULL
+                                          REFERENCES worker_pool_members(worker_identity),
+                profile_identity          TEXT NOT NULL DEFAULT '',
+                display_name              TEXT,
+                capability_metadata       TEXT,
+                state                     TEXT NOT NULL DEFAULT 'leased'
+                                          CHECK (state IN (
+                                              'proposed',
+                                              'leased',
+                                              'active',
+                                              'checkpoint_waiting',
+                                              'draining',
+                                              'released',
+                                              'quarantined',
+                                              'expired',
+                                              'degraded'
+                                          )),
+                requested_duration_seconds INTEGER,
+                actual_duration_seconds    INTEGER,
+                lease_expires_at          TEXT,
+                renewal_policy            TEXT NOT NULL DEFAULT 'deny'
+                                          CHECK (renewal_policy IN ('allow', 'deny', 'auto')),
+                drain_policy              TEXT NOT NULL DEFAULT 'graceful'
+                                          CHECK (drain_policy IN ('graceful', 'immediate')),
+                agent_instance_id         TEXT,
+                adapter_instance_id       TEXT,
+                session_id                TEXT,
+                run_id                    TEXT,
+                last_seen_at              TEXT,
+                latest_checkpoint_id      INTEGER,
+                cleanup_evidence          TEXT,
+                cleanup_recorded_at       TEXT,
+                metadata                  TEXT,
+                created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_project
+                ON orchestrator_leases(project_id, state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_orchestrator
+                ON orchestrator_leases(orchestrator_identity, state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_state
+                ON orchestrator_leases(state, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_expires
+                ON orchestrator_leases(lease_expires_at, state)
+                WHERE lease_expires_at IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_lease_kind
+                ON orchestrator_leases(lease_kind, project_id, state);
+
+            ------------------------------------------------------------
             -- CAPABILITY DEFINITIONS
             ------------------------------------------------------------
             CREATE TABLE IF NOT EXISTS capability_definitions (
@@ -2954,6 +3028,74 @@ public sealed class DatabaseInitializer
 
         await EnsureIndexAsync(connection, "idx_worker_pool_lanes_status",
             "CREATE INDEX IF NOT EXISTS idx_worker_pool_lanes_status ON worker_pool_lanes(status, updated_at DESC)");
+    }
+
+    private static async Task EnsureOrchestratorLeasesSchemaAsync(SqliteConnection connection)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS orchestrator_leases (
+                id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+                lease_id                  TEXT NOT NULL UNIQUE,
+                lease_kind                TEXT NOT NULL DEFAULT 'project_orchestrator'
+                                          CHECK (lease_kind IN ('task_worker', 'project_orchestrator')),
+                scope_type                TEXT NOT NULL DEFAULT 'project'
+                                          CHECK (scope_type IN ('project', 'channel', 'task', 'workstream')),
+                project_id                TEXT NOT NULL REFERENCES projects(id),
+                channel_id                TEXT,
+                task_id                   INTEGER,
+                workstream_handle         TEXT,
+                objective                 TEXT,
+                lease_owner               TEXT NOT NULL,
+                orchestrator_identity     TEXT NOT NULL
+                                          REFERENCES worker_pool_members(worker_identity),
+                profile_identity          TEXT NOT NULL DEFAULT '',
+                display_name              TEXT,
+                capability_metadata       TEXT,
+                state                     TEXT NOT NULL DEFAULT 'leased'
+                                          CHECK (state IN (
+                                              'proposed',
+                                              'leased',
+                                              'active',
+                                              'checkpoint_waiting',
+                                              'draining',
+                                              'released',
+                                              'quarantined',
+                                              'expired',
+                                              'degraded'
+                                          )),
+                requested_duration_seconds INTEGER,
+                actual_duration_seconds    INTEGER,
+                lease_expires_at          TEXT,
+                renewal_policy            TEXT NOT NULL DEFAULT 'deny'
+                                          CHECK (renewal_policy IN ('allow', 'deny', 'auto')),
+                drain_policy              TEXT NOT NULL DEFAULT 'graceful'
+                                          CHECK (drain_policy IN ('graceful', 'immediate')),
+                agent_instance_id         TEXT,
+                adapter_instance_id       TEXT,
+                session_id                TEXT,
+                run_id                    TEXT,
+                last_seen_at              TEXT,
+                latest_checkpoint_id      INTEGER,
+                cleanup_evidence          TEXT,
+                cleanup_recorded_at       TEXT,
+                metadata                  TEXT,
+                created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_project",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_project ON orchestrator_leases(project_id, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_orchestrator",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_orchestrator ON orchestrator_leases(orchestrator_identity, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_state",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_state ON orchestrator_leases(state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_expires",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_expires ON orchestrator_leases(lease_expires_at, state) WHERE lease_expires_at IS NOT NULL");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_lease_kind",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_lease_kind ON orchestrator_leases(lease_kind, project_id, state)");
     }
 
     private static async Task EnsureCapabilitySchemaAsync(SqliteConnection connection)

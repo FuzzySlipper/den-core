@@ -546,4 +546,266 @@ public sealed class WorkerPoolTools
             detail = verbose ? record : null,
         }, JsonOpts.Default);
     }
+
+    // ── Orchestrator Lease Tools ──────────────────────────────────────────
+
+    [McpToolProfile("admin-current", "runner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "create_orchestrator_lease"), Description(
+        "Create a project-duration orchestrator lease. Selects an available pool member " +
+        "matching the profile/capability filter and assigns them as a temporary orchestrator " +
+        "for the specified project/channel/task/workstream scope. Distinct from bounded " +
+        "task-scoped worker assignments — represents pooled orchestrator residency.")]
+    public static async Task<string> CreateOrchestratorLease(
+        IWorkerPoolRepository repo,
+        [Description("Project ID for the orchestrator lease.")] string project_id,
+        [Description("Entity that owns this lease (e.g. 'den-mcp-runner').")] string lease_owner,
+        [Description("Scope type: project, channel, task, or workstream. Default: project.")] string scope_type = "project",
+        [Description("Optional channel ID for channel-scoped leases.")] string? channel_id = null,
+        [Description("Optional task ID for task-scoped engagement.")] int? task_id = null,
+        [Description("Optional workstream handle.")] string? workstream_handle = null,
+        [Description("Optional objective/mission for this lease.")] string? objective = null,
+        [Description("Preferred orchestrator pool member identity.")] string? preferred_orchestrator_identity = null,
+        [Description("Profile identity filter (e.g. 'pooled-orchestrator').")] string? profile_identity = null,
+        [Description("Requested duration in seconds. Null = indefinite.")] int? requested_duration_seconds = null,
+        [Description("Renewal policy: allow, deny, auto. Default: deny.")] string renewal_policy = "deny",
+        [Description("Drain policy: graceful, immediate. Default: graceful.")] string drain_policy = "graceful",
+        [Description("Optional JSON array of required capabilities.")] string? required_capabilities = null,
+        [Description("Optional run id for correlation.")] string? run_id = null)
+    {
+        var capabilities = required_capabilities is not null
+            ? System.Text.Json.JsonSerializer.Deserialize<string[]>(required_capabilities)
+            : null;
+
+        try
+        {
+            var lease = await repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+            {
+                ProjectId = project_id,
+                LeaseOwner = lease_owner,
+                ScopeType = scope_type,
+                ChannelId = channel_id,
+                TaskId = task_id,
+                WorkstreamHandle = workstream_handle,
+                Objective = objective,
+                PreferredOrchestratorIdentity = preferred_orchestrator_identity,
+                ProfileIdentity = profile_identity ?? string.Empty,
+                RequestedDurationSeconds = requested_duration_seconds,
+                RenewalPolicy = renewal_policy,
+                DrainPolicy = drain_policy,
+                RequiredCapabilities = capabilities,
+                RunId = run_id,
+            });
+
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"created orchestrator lease '{lease.LeaseId}' for {project_id} (state={lease.State}, scope={lease.ScopeType})",
+                lease_id = lease.LeaseId,
+                id = lease.Id,
+                orchestrator_identity = lease.OrchestratorIdentity,
+                profile_identity = lease.ProfileIdentity,
+                scope_type = lease.ScopeType,
+                state = lease.State,
+                lease_expires_at = lease.LeaseExpiresAt,
+                renewal_policy = lease.RenewalPolicy,
+                drain_policy = lease.DrainPolicy,
+            }, JsonOpts.Default);
+        }
+        catch (ArgumentException ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"failed to create orchestrator lease: {ex.Message}",
+                error = true,
+            }, JsonOpts.Default);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"failed to create orchestrator lease: {ex.Message}",
+                error = true,
+            }, JsonOpts.Default);
+        }
+    }
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "list_orchestrator_leases"), Description(
+        "List project-duration orchestrator leases with optional project/scope/state/identity filtering. " +
+        "By default excludes terminal leases; use include_terminal=true to see all.")]
+    public static async Task<string> ListOrchestratorLeases(
+        IWorkerPoolRepository repo,
+        [Description("Optional project filter.")] string? project_id = null,
+        [Description("Optional scope type filter.")] string? scope_type = null,
+        [Description("Optional orchestrator identity filter.")] string? orchestrator_identity = null,
+        [Description("Optional state filter.")] string? state = null,
+        [Description("Include terminal leases (released, quarantined, expired, degraded).")] bool include_terminal = false,
+        [Description("Maximum items to return (max 200).")] int limit = 50)
+    {
+        var leases = await repo.ListOrchestratorLeasesAsync(new OrchestratorLeaseListOptions
+        {
+            ProjectId = project_id,
+            ScopeType = scope_type,
+            OrchestratorIdentity = orchestrator_identity,
+            State = state,
+            IncludeTerminal = include_terminal,
+            Limit = Math.Clamp(limit, 1, 200),
+        });
+
+        var summaries = leases.Select(l => new
+        {
+            id = l.Id,
+            lease_id = l.LeaseId,
+            orchestrator = l.OrchestratorIdentity,
+            profile = l.ProfileIdentity,
+            project = l.ProjectId,
+            scope = l.ScopeType,
+            state = l.State,
+            objective = l.Objective,
+            expires_at = l.LeaseExpiresAt,
+        });
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"listed {leases.Count} orchestrator lease(s)",
+            count = leases.Count,
+            leases = summaries,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "get_orchestrator_lease"), Description(
+        "Get a single orchestrator lease by internal id or lease_id. " +
+        "Returns full lease details including scope, objective, binding evidence, and expiry.")]
+    public static async Task<string> GetOrchestratorLease(
+        IWorkerPoolRepository repo,
+        [Description("Internal lease id (mutually exclusive with lease_id).")] int? id = null,
+        [Description("Unique lease id (mutually exclusive with id).")] string? lease_id = null,
+        [Description("If true, return full record.")] bool verbose = false)
+    {
+        OrchestratorLease? lease = null;
+        if (id is not null)
+            lease = await repo.GetOrchestratorLeaseAsync(id.Value);
+        else if (!string.IsNullOrWhiteSpace(lease_id))
+            lease = await repo.GetOrchestratorLeaseByLeaseIdAsync(lease_id);
+
+        if (lease is null)
+            return JsonSerializer.Serialize(new { summary = "orchestrator lease not found", error = true }, JsonOpts.Default);
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"orchestrator lease #{lease.Id}: state={lease.State} scope={lease.ScopeType} project={lease.ProjectId}",
+            id = lease.Id,
+            lease_id = lease.LeaseId,
+            orchestrator_identity = lease.OrchestratorIdentity,
+            profile_identity = lease.ProfileIdentity,
+            scope_type = lease.ScopeType,
+            project_id = lease.ProjectId,
+            state = lease.State,
+            objective = lease.Objective,
+            lease_expires_at = lease.LeaseExpiresAt,
+            renewal_policy = lease.RenewalPolicy,
+            drain_policy = lease.DrainPolicy,
+            agent_instance_id = lease.AgentInstanceId,
+            session_id = lease.SessionId,
+            run_id = lease.RunId,
+            last_seen_at = lease.LastSeenAt,
+            cleanup_evidence = lease.CleanupEvidence,
+            detail = verbose ? lease : null,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "transition_orchestrator_lease"), Description(
+        "Transition an orchestrator lease to a new state. Valid states: " +
+        "proposed, leased, active, checkpoint_waiting, draining, released, quarantined, expired, degraded. " +
+        "Terminal transitions release the pool member back to available.")]
+    public static async Task<string> TransitionOrchestratorLease(
+        IWorkerPoolRepository repo,
+        [Description("Internal lease id.")] int lease_internal_id,
+        [Description("New state.")] string new_state,
+        [Description("Optional cleanup evidence JSON for terminal transitions.")] string? evidence = null)
+    {
+        var result = await repo.TransitionOrchestratorLeaseAsync(new TransitionOrchestratorLeaseInput
+        {
+            LeaseInternalId = lease_internal_id,
+            NewState = new_state,
+            Evidence = evidence,
+        });
+
+        if (result is null)
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"invalid transition to '{new_state}' for lease #{lease_internal_id}",
+                error = true,
+            }, JsonOpts.Default);
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"transitioned orchestrator lease #{lease_internal_id} to '{new_state}'",
+            id = result.Id,
+            lease_id = result.LeaseId,
+            state = result.State,
+            orchestrator_identity = result.OrchestratorIdentity,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "get_pool_residency_projection"), Description(
+        "Get the pool residency projection for a project — lists all active residencies " +
+        "(task-worker assignments, orchestrator leases, gateway bindings) to distinguish " +
+        "between: joined channel member, live binding, leased orchestrator, dedicated agent, " +
+        "and bounded role-worker assignment.")]
+    public static async Task<string> GetPoolResidencyProjection(
+        IWorkerPoolRepository repo,
+        [Description("Project ID to get residency projection for.")] string project_id)
+    {
+        var projections = await repo.GetPoolResidencyProjectionAsync(project_id);
+
+        var grouped = projections.GroupBy(p => p.ResidencyKind)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"pool residency for '{project_id}': {projections.Count} active residencies " +
+                      $"({string.Join(", ", grouped.Select(g => $"{g.Key}: {g.Value.Count}"))})",
+            project_id,
+            total = projections.Count,
+            residencies = projections.Select(p => new
+            {
+                worker_identity = p.WorkerIdentity,
+                profile_identity = p.ProfileIdentity,
+                worker_role = p.WorkerRole,
+                residency_kind = p.ResidencyKind,
+                project_id = p.ProjectId,
+                channel_id = p.ChannelId,
+                task_id = p.TaskId,
+                state = p.State,
+                started_at = p.StartedAt,
+                expires_at = p.ExpiresAt,
+                agent_instance_id = p.AgentInstanceId,
+            }),
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "reconcile_stale_orchestrator_leases"), Description(
+        "Reconcile stale orchestrator leases — expire leases past their expiry time, " +
+        "degrade leases whose pool member heartbeat is stale. Returns count of affected leases. " +
+        "Does not permanently busy the shared profile.")]
+    public static async Task<string> ReconcileStaleOrchestratorLeases(
+        IWorkerPoolRepository repo)
+    {
+        var affected = await repo.ReconcileStaleOrchestratorLeasesAsync();
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"reconciled {affected} stale orchestrator lease(s)",
+            expired_or_degraded = affected,
+        }, JsonOpts.Default);
+    }
 }

@@ -195,6 +195,13 @@ public sealed class WorkerAssignment
     public required string Role { get; set; }
 
     /// <summary>
+    /// Lease kind: task_worker (default, bounded role worker) or project_orchestrator
+    /// (project-duration orchestrator residency). Distinguishes ordinary task-scoped
+    /// assignments from project-duration orchestrator leases in projections.
+    /// </summary>
+    public string LeaseKind { get; set; } = WorkerPoolStates.LeaseKindTaskWorker;
+
+    /// <summary>
     /// Entity that assigned/leased this worker.
     /// </summary>
     public required string AssignedBy { get; set; }
@@ -370,8 +377,62 @@ public static class WorkerPoolStates
         NoCapacityPreferredNotFoundOrBusy,
     ];
 
+    // ── Orchestrator Lease Kinds ────────────────────────────────────────
+
+    /// <summary>Bounded task-scoped role worker assignment (default).</summary>
+    public const string LeaseKindTaskWorker = "task_worker";
+
+    /// <summary>Project-duration orchestrator residency — a specialized lease for a
+    /// pooled orchestrator assigned to a project temporarily without permanent staff.</summary>
+    public const string LeaseKindProjectOrchestrator = "project_orchestrator";
+
+    public static readonly string[] ValidLeaseKinds = [LeaseKindTaskWorker, LeaseKindProjectOrchestrator];
+
+    // ── Orchestrator Lease Scope Types ──────────────────────────────────
+
+    public const string ScopeProject = "project";
+    public const string ScopeChannel = "channel";
+    public const string ScopeTask = "task";
+    public const string ScopeWorkstream = "workstream";
+
+    public static readonly string[] ValidScopeTypes = [ScopeProject, ScopeChannel, ScopeTask, ScopeWorkstream];
+
+    // ── Orchestrator Lease States ───────────────────────────────────────
+
+    public const string OrchLeaseProposed = "proposed";
+    public const string OrchLeaseLeased = "leased";
+    public const string OrchLeaseActive = "active";
+    public const string OrchLeaseCheckpointWaiting = "checkpoint_waiting";
+    public const string OrchLeaseDraining = "draining";
+    public const string OrchLeaseReleased = "released";
+    public const string OrchLeaseQuarantined = "quarantined";
+    public const string OrchLeaseExpired = "expired";
+    public const string OrchLeaseDegraded = "degraded";
+
+    public static readonly string[] OrchLeaseNonTerminalStates =
+        [OrchLeaseProposed, OrchLeaseLeased, OrchLeaseActive, OrchLeaseCheckpointWaiting, OrchLeaseDraining];
+    public static readonly string[] OrchLeaseTerminalStates =
+        [OrchLeaseReleased, OrchLeaseQuarantined, OrchLeaseExpired, OrchLeaseDegraded];
+    public static readonly string[] ValidOrchLeaseStates =
+        [OrchLeaseProposed, OrchLeaseLeased, OrchLeaseActive, OrchLeaseCheckpointWaiting,
+         OrchLeaseDraining, OrchLeaseReleased, OrchLeaseQuarantined, OrchLeaseExpired, OrchLeaseDegraded];
+
+    // ── Renewal / Drain Policies ────────────────────────────────────────
+
+    public const string RenewalPolicyAllow = "allow";
+    public const string RenewalPolicyDeny = "deny";
+    public const string RenewalPolicyAuto = "auto";
+
+    public const string DrainPolicyGraceful = "graceful";
+    public const string DrainPolicyImmediate = "immediate";
+
+    public static readonly string[] ValidRenewalPolicies = [RenewalPolicyAllow, RenewalPolicyDeny, RenewalPolicyAuto];
+    public static readonly string[] ValidDrainPolicies = [DrainPolicyGraceful, DrainPolicyImmediate];
+
     public static bool IsNonTerminal(string state) => Array.IndexOf(NonTerminalStates, state) >= 0;
     public static bool IsTerminal(string state) => Array.IndexOf(TerminalStates, state) >= 0;
+    public static bool IsOrchLeaseNonTerminal(string state) => Array.IndexOf(OrchLeaseNonTerminalStates, state) >= 0;
+    public static bool IsOrchLeaseTerminal(string state) => Array.IndexOf(OrchLeaseTerminalStates, state) >= 0;
 }
 
 /// <summary>
@@ -647,4 +708,296 @@ public sealed class LaneCapacitySummary
 
     /// <summary>Count of members in quarantined status for this lane.</summary>
     public int QuarantinedCount { get; set; }
+}
+
+/// <summary>
+/// A project-duration orchestrator lease — a specialized assignment kind that
+/// represents a pooled orchestrator's temporary residency on a project (or
+/// channel/task/workstream scope). Distinct from bounded task-scoped worker
+/// assignments (<see cref="WorkerAssignment"/> with
+/// <see cref="WorkerPoolStates.LeaseKindTaskWorker"/>).
+///
+/// Core owns the lease lifecycle; Gateway/Channels consume via Core APIs.
+/// Bridge follow-up provisions the actual Hermes profile/runtime.
+///
+/// LIFECYCLE STATES:
+///   Non-terminal: proposed, leased, active, checkpoint_waiting, draining
+///   Terminal:     released, quarantined, expired, degraded
+///
+/// IDENTITY:
+///   - <see cref="Id"/>: Auto-increment primary key.
+///   - <see cref="LeaseId"/>: Unique lease identity (race-safe sequential).
+///   - <see cref="OrchestratorIdentity"/>: Concrete pool member identity performing
+///     the orchestration (maps to <see cref="WorkerPoolMember.WorkerIdentity"/>).
+///   - <see cref="ProfileIdentity"/>: Shared profile identity denormalized from the pool member.
+/// </summary>
+public sealed class OrchestratorLease
+{
+    public int Id { get; set; }
+
+    /// <summary>
+    /// Unique lease identity. Race-safe: format "{orchestrator_identity}:{project_id}:{guid}".
+    /// </summary>
+    public required string LeaseId { get; set; }
+
+    /// <summary>
+    /// Lease kind — always <see cref="WorkerPoolStates.LeaseKindProjectOrchestrator"/>.
+    /// Explicit field for projection clarity and future extensibility.
+    /// </summary>
+    public required string LeaseKind { get; set; }
+
+    /// <summary>
+    /// Scope type: project, channel, task, or workstream.
+    /// </summary>
+    public required string ScopeType { get; set; }
+
+    /// <summary>
+    /// Project id this orchestrator is leased to.
+    /// </summary>
+    public required string ProjectId { get; set; }
+
+    /// <summary>
+    /// Optional channel id for channel-scoped leases.
+    /// </summary>
+    public string? ChannelId { get; set; }
+
+    /// <summary>
+    /// Optional task id for task-scoped orchestrator engagement.
+    /// </summary>
+    public int? TaskId { get; set; }
+
+    /// <summary>
+    /// Optional workstream handle for workstream-scoped leases.
+    /// </summary>
+    public string? WorkstreamHandle { get; set; }
+
+    /// <summary>
+    /// Objective / mission statement for this orchestrator lease.
+    /// </summary>
+    public string? Objective { get; set; }
+
+    /// <summary>
+    /// Entity that owns this lease (e.g. "den-mcp-runner", a project admin).
+    /// </summary>
+    public required string LeaseOwner { get; set; }
+
+    /// <summary>
+    /// Concrete pool member identity performing the orchestration.
+    /// Maps to <see cref="WorkerPoolMember.WorkerIdentity"/>.
+    /// </summary>
+    public required string OrchestratorIdentity { get; set; }
+
+    /// <summary>
+    /// Shared profile identity (e.g. "pooled-orchestrator") denormalized from the pool member.
+    /// </summary>
+    public string ProfileIdentity { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional display name for the orchestrator.
+    /// </summary>
+    public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// Role/capability metadata JSON for this orchestrator's capabilities.
+    /// </summary>
+    public string? CapabilityMetadata { get; set; }
+
+    /// <summary>
+    /// Current lifecycle state.
+    /// </summary>
+    public required string State { get; set; }
+
+    /// <summary>
+    /// Requested duration in seconds. Null means indefinite / until explicitly released.
+    /// </summary>
+    public int? RequestedDurationSeconds { get; set; }
+
+    /// <summary>
+    /// Actual duration in seconds (computed at release/expiry).
+    /// </summary>
+    public int? ActualDurationSeconds { get; set; }
+
+    /// <summary>
+    /// When the lease expires (null = no expiry).
+    /// </summary>
+    public string? LeaseExpiresAt { get; set; }
+
+    /// <summary>
+    /// Renewal policy: allow, deny, auto.
+    /// </summary>
+    public string RenewalPolicy { get; set; } = WorkerPoolStates.RenewalPolicyDeny;
+
+    /// <summary>
+    /// Drain policy: graceful, immediate.
+    /// </summary>
+    public string DrainPolicy { get; set; } = WorkerPoolStates.DrainPolicyGraceful;
+
+    // ── Gateway/Channels linkage fields ────────────────────────────────
+
+    /// <summary>
+    /// Concrete Gateway/Core agent instance binding id.
+    /// </summary>
+    public string? AgentInstanceId { get; set; }
+
+    /// <summary>
+    /// Gateway adapter instance id for direct-message routing.
+    /// </summary>
+    public string? AdapterInstanceId { get; set; }
+
+    /// <summary>
+    /// Hermes/worker session id for correlation.
+    /// </summary>
+    public string? SessionId { get; set; }
+
+    /// <summary>
+    /// Optional run id tracking execution.
+    /// </summary>
+    public string? RunId { get; set; }
+
+    /// <summary>
+    /// Last heartbeat or activity timestamp.
+    /// </summary>
+    public string? LastSeenAt { get; set; }
+
+    /// <summary>
+    /// The latest checkpoint id for this lease, if any.
+    /// </summary>
+    public int? LatestCheckpointId { get; set; }
+
+    /// <summary>
+    /// Cleanup/release evidence JSON.
+    /// </summary>
+    public string? CleanupEvidence { get; set; }
+
+    /// <summary>
+    /// When cleanup evidence was recorded.
+    /// </summary>
+    public string? CleanupRecordedAt { get; set; }
+
+    /// <summary>
+    /// Arbitrary JSON metadata.
+    /// </summary>
+    public string? Metadata { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// Input for creating a new project-duration orchestrator lease.
+/// </summary>
+public sealed record CreateOrchestratorLeaseInput
+{
+    public required string ProjectId { get; set; }
+    public string ScopeType { get; set; } = WorkerPoolStates.ScopeProject;
+    public string? ChannelId { get; set; }
+    public int? TaskId { get; set; }
+    public string? WorkstreamHandle { get; set; }
+    public string? Objective { get; set; }
+    public required string LeaseOwner { get; set; }
+
+    /// <summary>
+    /// Preferred concrete orchestrator identity (pool member). If null, Core selects one.
+    /// </summary>
+    public string? PreferredOrchestratorIdentity { get; set; }
+
+    /// <summary>
+    /// Profile identity filter for pool member selection (e.g. "pooled-orchestrator").
+    /// </summary>
+    public string ProfileIdentity { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Requested duration in seconds. Null = indefinite.
+    /// </summary>
+    public int? RequestedDurationSeconds { get; set; }
+
+    /// <summary>
+    /// Renewal policy: allow, deny, auto. Default deny.
+    /// </summary>
+    public string RenewalPolicy { get; set; } = WorkerPoolStates.RenewalPolicyDeny;
+
+    /// <summary>
+    /// Drain policy: graceful, immediate. Default graceful.
+    /// </summary>
+    public string DrainPolicy { get; set; } = WorkerPoolStates.DrainPolicyGraceful;
+
+    /// <summary>
+    /// Optional capability filter for orchestrator selection.
+    /// </summary>
+    public string[]? RequiredCapabilities { get; set; }
+
+    /// <summary>
+    /// Optional run id for correlation.
+    /// </summary>
+    public string? RunId { get; set; }
+}
+
+/// <summary>
+/// Input for transitioning an orchestrator lease state.
+/// </summary>
+public sealed record TransitionOrchestratorLeaseInput
+{
+    public required int LeaseInternalId { get; set; }
+    public required string NewState { get; set; }
+    public string? Evidence { get; set; }
+    public string? Metadata { get; set; }
+}
+
+/// <summary>
+/// Options for listing orchestrator leases.
+/// </summary>
+public sealed class OrchestratorLeaseListOptions
+{
+    public string? ProjectId { get; set; }
+    public string? ScopeType { get; set; }
+    public string? OrchestratorIdentity { get; set; }
+    public string? State { get; set; }
+    public string? LeaseKind { get; set; }
+    public bool IncludeTerminal { get; set; }
+    public int Limit { get; set; } = 50;
+}
+
+/// <summary>
+/// Projection that distinguishes the different membership/binding kinds
+/// visible to downstream consumers. Used for "Agents Overview" readback
+/// to separate: joined channel member, live binding, leased orchestrator,
+/// dedicated project agent, and bounded role-worker assignment.
+/// </summary>
+public sealed class PoolResidencyProjection
+{
+    /// <summary>Pool member worker identity.</summary>
+    public required string WorkerIdentity { get; set; }
+
+    /// <summary>Shared profile identity.</summary>
+    public string ProfileIdentity { get; set; } = string.Empty;
+
+    /// <summary>Worker role.</summary>
+    public string? WorkerRole { get; set; }
+
+    /// <summary>
+    /// Residency kind: "channel_member", "gateway_binding", "orchestrator_lease",
+    /// "dedicated_agent", "task_worker_assignment".
+    /// </summary>
+    public required string ResidencyKind { get; set; }
+
+    /// <summary>Project id, if scoped.</summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>Channel id, if applicable.</summary>
+    public string? ChannelId { get; set; }
+
+    /// <summary>Task id, if task-scoped.</summary>
+    public int? TaskId { get; set; }
+
+    /// <summary>Current state of the residency.</summary>
+    public string? State { get; set; }
+
+    /// <summary>When this residency started.</summary>
+    public string? StartedAt { get; set; }
+
+    /// <summary>When this residency ends/expires.</summary>
+    public string? ExpiresAt { get; set; }
+
+    /// <summary>Agent instance id for binding linkage.</summary>
+    public string? AgentInstanceId { get; set; }
 }

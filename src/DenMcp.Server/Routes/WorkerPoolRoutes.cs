@@ -274,6 +274,107 @@ public static class WorkerPoolRoutes
             return Results.Ok(new { released });
         });
 
+        // ── Orchestrator Leases ─────────────────────────────────────────
+
+        pool.MapPost("/orchestrator-leases", async (IWorkerPoolRepository repo, JsonElement body) =>
+        {
+            CreateOrchestratorLeaseInput? input;
+            try
+            {
+                input = JsonSerializer.Deserialize<CreateOrchestratorLeaseInput>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "Invalid request body" });
+            }
+            if (input is null || string.IsNullOrWhiteSpace(input.ProjectId) || string.IsNullOrWhiteSpace(input.LeaseOwner))
+                return Results.BadRequest(new { error = "project_id and lease_owner are required" });
+            if (!WorkerPoolStates.ValidScopeTypes.Contains(input.ScopeType))
+                return Results.BadRequest(new { error = $"scope_type must be one of: {string.Join(", ", WorkerPoolStates.ValidScopeTypes)}" });
+            if (!WorkerPoolStates.ValidRenewalPolicies.Contains(input.RenewalPolicy))
+                return Results.BadRequest(new { error = $"renewal_policy must be one of: {string.Join(", ", WorkerPoolStates.ValidRenewalPolicies)}" });
+            if (!WorkerPoolStates.ValidDrainPolicies.Contains(input.DrainPolicy))
+                return Results.BadRequest(new { error = $"drain_policy must be one of: {string.Join(", ", WorkerPoolStates.ValidDrainPolicies)}" });
+            if (input.RequestedDurationSeconds is <= 0)
+                return Results.BadRequest(new { error = "requested_duration_seconds must be greater than zero when provided" });
+            try
+            {
+                var lease = await repo.CreateOrchestratorLeaseAsync(input);
+                return Results.Created($"/api/worker-pool/orchestrator-leases/{lease.Id}", lease);
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
+        });
+
+        pool.MapGet("/orchestrator-leases", async (IWorkerPoolRepository repo,
+            string? projectId, string? scopeType, string? orchestratorIdentity,
+            string? state, string? leaseKind, bool includeTerminal = false, int limit = 50) =>
+        {
+            var leases = await repo.ListOrchestratorLeasesAsync(new OrchestratorLeaseListOptions
+            {
+                ProjectId = projectId,
+                ScopeType = scopeType,
+                OrchestratorIdentity = orchestratorIdentity,
+                State = state,
+                LeaseKind = leaseKind,
+                IncludeTerminal = includeTerminal,
+                Limit = limit,
+            });
+            return Results.Ok(new { leases, count = leases.Count });
+        });
+
+        pool.MapGet("/orchestrator-leases/{id:int}", async (IWorkerPoolRepository repo, int id) =>
+        {
+            var lease = await repo.GetOrchestratorLeaseAsync(id);
+            return lease is not null ? Results.Ok(lease) : Results.NotFound(new { error = $"Orchestrator lease {id} not found" });
+        });
+
+        pool.MapGet("/orchestrator-leases/by-lease-id/{leaseId}", async (IWorkerPoolRepository repo, string leaseId) =>
+        {
+            var lease = await repo.GetOrchestratorLeaseByLeaseIdAsync(leaseId);
+            return lease is not null ? Results.Ok(lease) : Results.NotFound(new { error = $"Orchestrator lease with lease_id '{leaseId}' not found" });
+        });
+
+        pool.MapPost("/orchestrator-leases/{id:int}/transition", async (IWorkerPoolRepository repo, int id, TransitionRequest req) =>
+        {
+            if (!WorkerPoolStates.ValidOrchLeaseStates.Contains(req.State))
+                return Results.BadRequest(new { error = $"state must be one of: {string.Join(", ", WorkerPoolStates.ValidOrchLeaseStates)}" });
+            var result = await repo.TransitionOrchestratorLeaseAsync(new TransitionOrchestratorLeaseInput
+            {
+                LeaseInternalId = id,
+                NewState = req.State,
+            });
+            return result is not null ? Results.Ok(result) : Results.BadRequest(new { error = $"Invalid transition to {req.State}" });
+        });
+
+        pool.MapPost("/orchestrator-leases/{id:int}/cleanup", async (IWorkerPoolRepository repo, int id, CleanupRequest req) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Evidence))
+                return Results.BadRequest(new { error = "evidence is required" });
+            var result = await repo.RecordOrchestratorLeaseCleanupAsync(id, req.Evidence);
+            return result is not null ? Results.Ok(result) : Results.BadRequest(new { error = "Orchestrator lease must be terminal before recording cleanup" });
+        });
+
+        pool.MapPost("/orchestrator-leases/reconcile-stale", async (IWorkerPoolRepository repo) =>
+        {
+            var affected = await repo.ReconcileStaleOrchestratorLeasesAsync();
+            return Results.Ok(new { expired_or_degraded = affected });
+        });
+
+        // ── Pool Residency Projection ────────────────────────────────────
+
+        pool.MapGet("/residency/{projectId}", async (IWorkerPoolRepository repo, string projectId) =>
+        {
+            var projections = await repo.GetPoolResidencyProjectionAsync(projectId);
+            return Results.Ok(new { projections, count = projections.Count });
+        });
+
         // ── Summary ──────────────────────────────────────────────────
         pool.MapGet("/summary", async (IWorkerPoolRepository repo) =>
         {

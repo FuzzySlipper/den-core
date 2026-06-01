@@ -49,6 +49,28 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         return member.WorkerIdentity;
     }
 
+    private Task<string> SeedProjectOrchestratorMemberAsync(string identity, string profileIdentity = "pooled-orchestrator") =>
+        SeedMemberAsync(identity, "[\"planning\",\"den-coordination\"]", profileIdentity, workerRole: "project_orchestrator");
+
+    private async Task<string> SeedMemberAsync(
+        string identity,
+        string capabilities,
+        string profileIdentity,
+        string? workerRole)
+    {
+        var member = await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = identity,
+            ProfileIdentity = profileIdentity,
+            WorkerRole = workerRole,
+            DisplayName = "Test Worker",
+            Capabilities = capabilities,
+            Status = WorkerPoolStates.MemberAvailable,
+            LastHeartbeat = DateTime.UtcNow.ToString("o"),
+        });
+        return member.WorkerIdentity;
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Fresh DB creates tables
     // ─────────────────────────────────────────────────────────────────
@@ -1563,5 +1585,568 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             PreferredWorkerIdentity = "legacy-worker",
         });
         Assert.NotNull(lease);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Orchestrator Lease lifecycle
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OrchLease_CreateAndReadByInternalId()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-1");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "den-mcp-runner",
+            ScopeType = WorkerPoolStates.ScopeProject,
+            Objective = "Orchestrate den-core task dispatch",
+            PreferredOrchestratorIdentity = "orch-1",
+            ProfileIdentity = "pooled-orchestrator",
+        });
+
+        Assert.True(lease.Id > 0);
+        Assert.Equal(WorkerPoolStates.OrchLeaseLeased, lease.State);
+        Assert.Equal(WorkerPoolStates.LeaseKindProjectOrchestrator, lease.LeaseKind);
+        Assert.Equal(WorkerPoolStates.ScopeProject, lease.ScopeType);
+        Assert.Equal("test-proj", lease.ProjectId);
+        Assert.Equal("orch-1", lease.OrchestratorIdentity);
+        Assert.Equal("pooled-orchestrator", lease.ProfileIdentity);
+        Assert.Equal("den-mcp-runner", lease.LeaseOwner);
+        Assert.Equal("Orchestrate den-core task dispatch", lease.Objective);
+        Assert.Null(lease.LeaseExpiresAt); // indefinite
+
+        // Read back by internal id
+        var read = await _repo.GetOrchestratorLeaseAsync(lease.Id);
+        Assert.NotNull(read);
+        Assert.Equal(lease.LeaseId, read!.LeaseId);
+    }
+
+    [Fact]
+    public async Task OrchLease_ReadByLeaseId()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-2");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-2",
+        });
+
+        var read = await _repo.GetOrchestratorLeaseByLeaseIdAsync(lease.LeaseId);
+        Assert.NotNull(read);
+        Assert.Equal(lease.Id, read!.Id);
+    }
+
+    [Fact]
+    public async Task OrchLease_PreferredWorkerMustBeProjectOrchestrator()
+    {
+        await SeedMemberAsync("orch-wrong-role", profileIdentity: "pooled-orchestrator");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+            {
+                ProjectId = "test-proj",
+                LeaseOwner = "runner",
+                PreferredOrchestratorIdentity = "orch-wrong-role",
+                ProfileIdentity = "pooled-orchestrator",
+            }));
+
+        Assert.Contains("Preferred orchestrator", ex.Message);
+    }
+
+    [Fact]
+    public async Task OrchLease_InvalidRequestedDurationThrows()
+    {
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+            {
+                ProjectId = "test-proj",
+                LeaseOwner = "runner",
+                RequestedDurationSeconds = 0,
+            }));
+
+        Assert.Contains("requested_duration_seconds", ex.Message);
+    }
+
+    [Fact]
+    public async Task OrchLease_FullLifecycleTransition()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-3");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-3",
+        });
+
+        // leased -> active
+        var active = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseActive });
+        Assert.NotNull(active);
+        Assert.Equal(WorkerPoolStates.OrchLeaseActive, active!.State);
+
+        // active -> checkpoint_waiting
+        var cp = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseCheckpointWaiting });
+        Assert.NotNull(cp);
+        Assert.Equal(WorkerPoolStates.OrchLeaseCheckpointWaiting, cp!.State);
+
+        // checkpoint_waiting -> active
+        var activeAgain = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseActive });
+        Assert.NotNull(activeAgain);
+
+        // active -> draining
+        var draining = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseDraining });
+        Assert.NotNull(draining);
+        Assert.Equal(WorkerPoolStates.OrchLeaseDraining, draining!.State);
+
+        // draining -> released (terminal)
+        var released = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput
+            {
+                LeaseInternalId = lease.Id,
+                NewState = WorkerPoolStates.OrchLeaseReleased,
+                Evidence = """{"log_path":"/tmp/orch-3.log"}""",
+            });
+        Assert.NotNull(released);
+        Assert.Equal(WorkerPoolStates.OrchLeaseReleased, released!.State);
+        Assert.Contains("log_path", released.CleanupEvidence);
+        Assert.NotNull(released.CleanupRecordedAt);
+        Assert.NotNull(released.ActualDurationSeconds);
+
+        // Verify pool member released back to available
+        var member = await _repo.GetMemberAsync("orch-3");
+        Assert.NotNull(member);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+    }
+
+    [Fact]
+    public async Task OrchLease_InvalidTransition_ReturnsNull()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-4");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-4",
+        });
+
+        // leased -> proposed (backward transition not allowed)
+        var result = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseProposed });
+        Assert.Null(result);
+
+        // leased -> released, then released -> active (terminal -> non-terminal not allowed)
+        await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseReleased });
+        var postTerminal = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseActive });
+        Assert.Null(postTerminal);
+    }
+
+    [Fact]
+    public async Task OrchLease_WithExpiry()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-5");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-5",
+            RequestedDurationSeconds = 3600,
+            RenewalPolicy = WorkerPoolStates.RenewalPolicyAllow,
+            DrainPolicy = WorkerPoolStates.DrainPolicyImmediate,
+        });
+
+        Assert.NotNull(lease.LeaseExpiresAt);
+        Assert.Equal(WorkerPoolStates.RenewalPolicyAllow, lease.RenewalPolicy);
+        Assert.Equal(WorkerPoolStates.DrainPolicyImmediate, lease.DrainPolicy);
+        Assert.Equal(3600, lease.RequestedDurationSeconds);
+    }
+
+    [Fact]
+    public async Task OrchLease_ListWithFilters()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-a");
+        await SeedProjectOrchestratorMemberAsync("orch-b");
+
+        await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-a",
+        });
+
+        await _projects.CreateAsync(new Project { Id = "proj-2", Name = "Project 2" });
+
+        await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "proj-2",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-b",
+            ScopeType = WorkerPoolStates.ScopeChannel,
+            ChannelId = "ch-42",
+        });
+
+        // Filter by project
+        var forTestProj = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ProjectId = "test-proj" });
+        Assert.Single(forTestProj);
+
+        var forProj2 = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ProjectId = "proj-2" });
+        Assert.Single(forProj2);
+
+        // Filter by scope
+        var channelScoped = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ScopeType = WorkerPoolStates.ScopeChannel });
+        Assert.Single(channelScoped);
+        Assert.Equal("ch-42", channelScoped[0].ChannelId);
+    }
+
+    [Fact]
+    public async Task OrchLease_ExcludeTerminalByDefault()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-term");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-term",
+        });
+
+        // Should appear in non-terminal list
+        var active = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ProjectId = "test-proj", IncludeTerminal = false });
+        Assert.Single(active);
+
+        // Transition to terminal
+        await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseReleased });
+
+        // Should not appear in non-terminal list
+        var afterRelease = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ProjectId = "test-proj", IncludeTerminal = false });
+        Assert.Empty(afterRelease);
+
+        // Should appear when including terminal
+        var withTerminal = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { ProjectId = "test-proj", IncludeTerminal = true });
+        Assert.Single(withTerminal);
+    }
+
+    [Fact]
+    public async Task OrchLease_CleanupEvidenceOnTerminal()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-cleanup");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-cleanup",
+        });
+
+        // Transition to quarantined (terminal)
+        await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput { LeaseInternalId = lease.Id, NewState = WorkerPoolStates.OrchLeaseQuarantined });
+
+        // Record cleanup evidence
+        var withCleanup = await _repo.RecordOrchestratorLeaseCleanupAsync(lease.Id, """{"drained":true}""");
+        Assert.NotNull(withCleanup);
+        Assert.Contains("drained", withCleanup!.CleanupEvidence);
+        Assert.NotNull(withCleanup.CleanupRecordedAt);
+    }
+
+    [Fact]
+    public async Task OrchLease_ReconcileExpiresStaleLeases()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-stale");
+
+        // Create lease with normal duration, then directly update lease_expires_at to past
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-stale",
+            RequestedDurationSeconds = 3600,
+        });
+
+        Assert.NotNull(lease.LeaseExpiresAt);
+
+        // Manually set expires_at to past
+        await using (var conn = await _testDb.Db.CreateConnectionAsync())
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE orchestrator_leases SET lease_expires_at = datetime('now', '-1 hour') WHERE id = @id";
+            cmd.Parameters.AddWithValue("@id", lease.Id);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var affected = await _repo.ReconcileStaleOrchestratorLeasesAsync();
+        Assert.True(affected >= 1);
+
+        var expired = await _repo.GetOrchestratorLeaseAsync(lease.Id);
+        Assert.Equal(WorkerPoolStates.OrchLeaseExpired, expired!.State);
+
+        // Pool member should be back to available
+        var member = await _repo.GetMemberAsync("orch-stale");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+    }
+
+    [Fact]
+    public async Task OrchLease_ReconcileDegradesHeartbeatStale()
+    {
+        // Seed member with stale_after_seconds and old heartbeat
+        var member = await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "orch-hb-stale",
+            ProfileIdentity = "pooled-orchestrator",
+            WorkerRole = "project_orchestrator",
+            Status = WorkerPoolStates.MemberBusy,
+            LastHeartbeat = DateTime.UtcNow.AddHours(-2).ToString("o"),
+            StaleAfterSeconds = 60, // stale after 1 minute
+        });
+
+        // Create lease directly (bypassing the member selection which would check availability)
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO orchestrator_leases (lease_id, lease_kind, scope_type, project_id,
+                lease_owner, orchestrator_identity, profile_identity, state)
+            VALUES ('test-hb-stale:1', 'project_orchestrator', 'project', 'test-proj',
+                'runner', 'orch-hb-stale', 'pooled-orchestrator', 'active')
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        var affected = await _repo.ReconcileStaleOrchestratorLeasesAsync();
+        Assert.True(affected >= 1);
+
+        // Verify lease degraded
+        var leases = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { OrchestratorIdentity = "orch-hb-stale", IncludeTerminal = true });
+        Assert.Single(leases);
+        Assert.Equal(WorkerPoolStates.OrchLeaseDegraded, leases[0].State);
+
+        // Profile not permanently busy
+        var refreshedMember = await _repo.GetMemberAsync("orch-hb-stale");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, refreshedMember!.Status);
+    }
+
+    [Fact]
+    public async Task OrchLease_PoolResidencyProjection()
+    {
+        // Setup: one task-worker assignment and one orchestrator lease
+        await SeedMemberAsync("worker-a", profileIdentity: "spawned-coder");
+        await SeedProjectOrchestratorMemberAsync("orch-res");
+
+        var taskId = await SeedTaskAsync();
+
+        // Create task-worker assignment
+        await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-res-1",
+            PreferredWorkerIdentity = "worker-a",
+        });
+
+        // Create orchestrator lease
+        await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-res",
+            Objective = "Project orchestration",
+        });
+
+        var projections = await _repo.GetPoolResidencyProjectionAsync("test-proj");
+
+        // Should have both a task_worker_assignment and an orchestrator_lease
+        Assert.Equal(2, projections.Count);
+        Assert.Contains(projections, p => p.ResidencyKind == "task_worker_assignment" && p.WorkerIdentity == "worker-a");
+        Assert.Contains(projections, p => p.ResidencyKind == "orchestrator_lease" && p.WorkerIdentity == "orch-res");
+
+        var orchProj = projections.First(p => p.ResidencyKind == "orchestrator_lease");
+        Assert.Equal("test-proj", orchProj.ProjectId);
+        Assert.Equal(WorkerPoolStates.OrchLeaseLeased, orchProj.State);
+        Assert.NotNull(orchProj.StartedAt);
+    }
+
+    [Fact]
+    public async Task OrchLease_BackwardCompat_TaskWorkerUnaffected()
+    {
+        // Verify that existing task-scoped worker assignments still work after changes
+        await SeedMemberAsync("bw-worker", profileIdentity: "spawned-coder");
+
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-bw-1",
+            PreferredWorkerIdentity = "bw-worker",
+        });
+
+        Assert.NotNull(assignment);
+        Assert.Equal(WorkerPoolStates.LeaseKindTaskWorker, assignment!.LeaseKind);
+        Assert.Equal("ack", assignment.State);
+
+        // Transition through normal lifecycle
+        await _repo.TransitionAssignmentStateAsync(assignment.Id, WorkerPoolStates.Running);
+        await _repo.AppendCheckpointAsync(assignment.Id, "run-bw-1", WorkerPoolStates.CheckpointCompletion, """{"status":"done"}""");
+
+        var completed = await _repo.GetAssignmentAsync(assignment.Id);
+        Assert.Equal("completed", completed!.State);
+
+        // Member should be available again
+        var member = await _repo.GetMemberAsync("bw-worker");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+    }
+
+    [Fact]
+    public async Task OrchLease_NoConfusionBetweenBindingAndLease()
+    {
+        await SeedProjectOrchestratorMemberAsync("bind-orch");
+
+        // Create orchestrator lease
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "bind-orch",
+        });
+
+        // The member is busy due to the lease
+        var member = await _repo.GetMemberAsync("bind-orch");
+        Assert.Equal(WorkerPoolStates.MemberBusy, member!.Status);
+
+        // No active task-worker assignment for this member
+        var assignments = await _repo.ListAssignmentsAsync(
+            new WorkerAssignmentListOptions { WorkerIdentity = "bind-orch", State = "ack" });
+        Assert.Empty(assignments);
+
+        // But an active orchestrator lease exists
+        var leases = await _repo.ListOrchestratorLeasesAsync(
+            new OrchestratorLeaseListOptions { OrchestratorIdentity = "bind-orch" });
+        Assert.Single(leases);
+        Assert.Equal(lease.Id, leases[0].Id);
+    }
+
+    [Fact]
+    public async Task OrchLease_SchemaCreatesOrchestratorLeasesTable()
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='orchestrator_leases'";
+        Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+
+        // Check indexes
+        foreach (var idx in new[] {
+            "idx_orchestrator_leases_project",
+            "idx_orchestrator_leases_orchestrator",
+            "idx_orchestrator_leases_state",
+            "idx_orchestrator_leases_expires",
+            "idx_orchestrator_leases_lease_kind",
+        })
+        {
+            await using var idxCmd = conn.CreateCommand();
+            idxCmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='index' AND name='{idx}'";
+            Assert.Equal(1L, (await idxCmd.ExecuteScalarAsync())!);
+        }
+    }
+
+    [Fact]
+    public async Task OrchLease_WorkerAssignmentHasLeaseKindColumn()
+    {
+        // Verify lease_kind column was added to worker_assignments
+        await SeedMemberAsync("lk-worker", profileIdentity: "spawned-coder");
+
+        var assignment = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-lk-1",
+            PreferredWorkerIdentity = "lk-worker",
+        });
+
+        Assert.NotNull(assignment);
+        Assert.Equal(WorkerPoolStates.LeaseKindTaskWorker, assignment!.Assignment!.LeaseKind);
+    }
+
+    [Fact]
+    public async Task OrchLease_ChannelAndWorkstreamScope()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-scope");
+
+        var taskId = await SeedTaskAsync();
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-scope",
+            ScopeType = WorkerPoolStates.ScopeWorkstream,
+            WorkstreamHandle = "ws-infrastructure",
+            TaskId = taskId,
+            ChannelId = "ch-99",
+        });
+
+        Assert.Equal(WorkerPoolStates.ScopeWorkstream, lease.ScopeType);
+        Assert.Equal("ws-infrastructure", lease.WorkstreamHandle);
+        Assert.Equal(taskId, lease.TaskId);
+        Assert.Equal("ch-99", lease.ChannelId);
+    }
+
+    [Fact]
+    public async Task OrchLease_QuarantineDoesNotPermanentlyBusyProfile()
+    {
+        await SeedProjectOrchestratorMemberAsync("orch-quar");
+
+        var lease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "test-proj",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-quar",
+        });
+
+        // Quarantine the lease
+        var result = await _repo.TransitionOrchestratorLeaseAsync(
+            new TransitionOrchestratorLeaseInput
+            {
+                LeaseInternalId = lease.Id,
+                NewState = WorkerPoolStates.OrchLeaseQuarantined,
+                Evidence = """{"reason":"config_drift"}""",
+            });
+
+        Assert.NotNull(result);
+        Assert.Equal(WorkerPoolStates.OrchLeaseQuarantined, result!.State);
+
+        // Profile should be available again (not permanently busy)
+        var member = await _repo.GetMemberAsync("orch-quar");
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+
+        // The same pool member can be leased again for a different project
+        await _projects.CreateAsync(new Project { Id = "proj-other", Name = "Other" });
+        var newLease = await _repo.CreateOrchestratorLeaseAsync(new CreateOrchestratorLeaseInput
+        {
+            ProjectId = "proj-other",
+            LeaseOwner = "runner",
+            PreferredOrchestratorIdentity = "orch-quar",
+        });
+        Assert.Equal(WorkerPoolStates.OrchLeaseLeased, newLease.State);
     }
 }

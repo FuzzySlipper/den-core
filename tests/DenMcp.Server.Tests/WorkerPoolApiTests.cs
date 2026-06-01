@@ -61,6 +61,25 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         return member.WorkerIdentity;
     }
 
+    private async Task<string> SeedProjectOrchestratorMemberAsync(string identity, string profileIdentity = "")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+        var member = await repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = identity,
+            ProfileIdentity = profileIdentity,
+            WorkerRole = "project_orchestrator",
+            DisplayName = "API Test Orchestrator",
+            Capabilities = """["planning","den-coordination"]""",
+            Status = WorkerPoolStates.MemberAvailable,
+            AgentInstanceId = $"hermes:test:{identity}:live",
+            AdapterInstanceId = $"adapter:{identity}",
+            SessionId = $"session-{identity}",
+        });
+        return member.WorkerIdentity;
+    }
+
     /// <summary>Create a worker and lease it immediately, returning the assignment for follow-up ops.</summary>
     private async Task<(string workerIdentity, int assignmentId, string runId)> SeedAndLeaseAsync(string prefix)
     {
@@ -1020,6 +1039,110 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
             worker_role = "coder",
         });
         Assert.Equal(HttpStatusCode.Conflict, leaseResp.StatusCode);
+    }
+
+    // ── Orchestrator lease REST ──────────────────────────────────────────
+
+    [Fact]
+    public async Task OrchestratorLeaseRoutes_CreateReadTransitionAndProjectResidency()
+    {
+        var workerId = $"orch-api-{Guid.NewGuid():N}";
+        await SeedProjectOrchestratorMemberAsync(workerId, profileIdentity: "pooled-orchestrator");
+
+        var createResp = await _client.PostAsJsonAsync("/api/worker-pool/orchestrator-leases", new
+        {
+            project_id = _projectId,
+            lease_owner = "runner",
+            scope_type = "project",
+            objective = "Temporary project orchestration",
+            preferred_orchestrator_identity = workerId,
+            profile_identity = "pooled-orchestrator",
+            requested_duration_seconds = 3600,
+        });
+        createResp.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Created, createResp.StatusCode);
+
+        using var createDoc = JsonDocument.Parse(await createResp.Content.ReadAsStringAsync());
+        var leaseId = createDoc.RootElement.GetProperty("id").GetInt32();
+        var publicLeaseId = createDoc.RootElement.GetProperty("lease_id").GetString();
+        Assert.Equal("project_orchestrator", createDoc.RootElement.GetProperty("lease_kind").GetString());
+        Assert.Equal("project", createDoc.RootElement.GetProperty("scope_type").GetString());
+        Assert.Equal("leased", createDoc.RootElement.GetProperty("state").GetString());
+        Assert.Equal(workerId, createDoc.RootElement.GetProperty("orchestrator_identity").GetString());
+        Assert.Equal(3600, createDoc.RootElement.GetProperty("requested_duration_seconds").GetInt32());
+        Assert.True(createDoc.RootElement.TryGetProperty("lease_expires_at", out var leaseExpiresAt));
+        Assert.NotEqual(JsonValueKind.Null, leaseExpiresAt.ValueKind);
+
+        var getResp = await _client.GetAsync($"/api/worker-pool/orchestrator-leases/{leaseId}");
+        getResp.EnsureSuccessStatusCode();
+        using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        Assert.Equal(publicLeaseId, getDoc.RootElement.GetProperty("lease_id").GetString());
+
+        var projectionResp = await _client.GetAsync($"/api/worker-pool/residency/{_projectId}");
+        projectionResp.EnsureSuccessStatusCode();
+        using var projectionDoc = JsonDocument.Parse(await projectionResp.Content.ReadAsStringAsync());
+        var projection = Assert.Single(projectionDoc.RootElement.GetProperty("projections").EnumerateArray());
+        Assert.Equal("orchestrator_lease", projection.GetProperty("residency_kind").GetString());
+        Assert.Equal("leased", projection.GetProperty("state").GetString());
+
+        var releaseResp = await _client.PostAsJsonAsync($"/api/worker-pool/orchestrator-leases/{leaseId}/transition", new
+        {
+            state = "released",
+        });
+        releaseResp.EnsureSuccessStatusCode();
+
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+        var member = await repo.GetMemberAsync(workerId);
+        Assert.Equal(WorkerPoolStates.MemberAvailable, member!.Status);
+
+        var released = await repo.GetOrchestratorLeaseAsync(leaseId);
+        Assert.NotNull(released);
+        Assert.Equal("released", released.State);
+        Assert.NotNull(released.ActualDurationSeconds);
+    }
+
+    [Fact]
+    public async Task OrchestratorLeaseRoutes_RejectPreferredNonOrchestratorWorker()
+    {
+        var workerId = $"orch-wrong-role-{Guid.NewGuid():N}";
+        await SeedMemberAsync(workerId, profileIdentity: "pooled-orchestrator");
+
+        var resp = await _client.PostAsJsonAsync("/api/worker-pool/orchestrator-leases", new
+        {
+            project_id = _projectId,
+            lease_owner = "runner",
+            preferred_orchestrator_identity = workerId,
+            profile_identity = "pooled-orchestrator",
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestratorLeaseRoutes_RejectInvalidDuration()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/worker-pool/orchestrator-leases", new
+        {
+            project_id = _projectId,
+            lease_owner = "runner",
+            requested_duration_seconds = 0,
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task OrchestratorLeaseRoutes_RejectInvalidScope()
+    {
+        var resp = await _client.PostAsJsonAsync("/api/worker-pool/orchestrator-leases", new
+        {
+            project_id = _projectId,
+            lease_owner = "runner",
+            scope_type = "permanent_staff",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
     // ── Bad request handling ───────────────────────────────────────────

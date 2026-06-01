@@ -100,6 +100,55 @@ public interface IWorkerPoolRepository
     /// Computed stale — no persistent 'stale' status on members.
     /// </summary>
     Task<int> ReleaseStaleLeasesAsync();
+
+    // ── Orchestrator Leases ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Create a new project-duration orchestrator lease. Selects an available
+    /// pool member matching the profile/capability filter and transitions it
+    /// to 'busy'. Returns the created lease record on success.
+    /// </summary>
+    Task<OrchestratorLease> CreateOrchestratorLeaseAsync(CreateOrchestratorLeaseInput input);
+
+    /// <summary>
+    /// Get an orchestrator lease by its internal id.
+    /// </summary>
+    Task<OrchestratorLease?> GetOrchestratorLeaseAsync(int id);
+
+    /// <summary>
+    /// Get an orchestrator lease by its unique lease_id.
+    /// </summary>
+    Task<OrchestratorLease?> GetOrchestratorLeaseByLeaseIdAsync(string leaseId);
+
+    /// <summary>
+    /// List orchestrator leases with optional filters.
+    /// </summary>
+    Task<List<OrchestratorLease>> ListOrchestratorLeasesAsync(OrchestratorLeaseListOptions options);
+
+    /// <summary>
+    /// Transition an orchestrator lease to a new state. Validates state machine transitions.
+    /// For terminal transitions, records cleanup evidence if provided and computes actual duration.
+    /// </summary>
+    Task<OrchestratorLease?> TransitionOrchestratorLeaseAsync(TransitionOrchestratorLeaseInput input);
+
+    /// <summary>
+    /// Record cleanup/release evidence for a terminal orchestrator lease.
+    /// </summary>
+    Task<OrchestratorLease?> RecordOrchestratorLeaseCleanupAsync(int leaseId, string evidenceJson);
+
+    /// <summary>
+    /// Expire or degrade stale orchestrator leases whose lease_expires_at has passed
+    /// or whose pool member heartbeat is stale. Returns the count of expired/degraded leases.
+    /// Does not mark the profile permanently busy — expired leases release the pool member.
+    /// </summary>
+    Task<int> ReconcileStaleOrchestratorLeasesAsync();
+
+    /// <summary>
+    /// Get the pool residency projection for a project — lists all active residencies
+    /// (task-worker assignments, orchestrator leases, bindings) to distinguish
+    /// between different membership/binding/lease kinds.
+    /// </summary>
+    Task<List<PoolResidencyProjection>> GetPoolResidencyProjectionAsync(string projectId);
 }
 
 public sealed class WorkerPoolRepository : IWorkerPoolRepository
@@ -1816,5 +1865,614 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
             return active < capacity;
         }
+    }
+
+    // ── Orchestrator Leases ────────────────────────────────────────────────
+
+    private const string OrchLeaseColumns =
+        "id, lease_id, lease_kind, scope_type, project_id, channel_id, task_id, workstream_handle, " +
+        "objective, lease_owner, orchestrator_identity, profile_identity, display_name, " +
+        "capability_metadata, state, requested_duration_seconds, actual_duration_seconds, " +
+        "lease_expires_at, renewal_policy, drain_policy, " +
+        "agent_instance_id, adapter_instance_id, session_id, run_id, last_seen_at, " +
+        "latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, metadata, " +
+        "created_at, updated_at";
+
+    private static OrchestratorLease ReadOrchLease(SqliteDataReader reader) => new()
+    {
+        Id = reader.GetInt32(0),
+        LeaseId = reader.GetString(1),
+        LeaseKind = reader.GetString(2),
+        ScopeType = reader.GetString(3),
+        ProjectId = reader.GetString(4),
+        ChannelId = reader.IsDBNull(5) ? null : reader.GetString(5),
+        TaskId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+        WorkstreamHandle = reader.IsDBNull(7) ? null : reader.GetString(7),
+        Objective = reader.IsDBNull(8) ? null : reader.GetString(8),
+        LeaseOwner = reader.GetString(9),
+        OrchestratorIdentity = reader.GetString(10),
+        ProfileIdentity = reader.IsDBNull(11) ? string.Empty : reader.GetString(11),
+        DisplayName = reader.IsDBNull(12) ? null : reader.GetString(12),
+        CapabilityMetadata = reader.IsDBNull(13) ? null : reader.GetString(13),
+        State = reader.GetString(14),
+        RequestedDurationSeconds = reader.IsDBNull(15) ? null : reader.GetInt32(15),
+        ActualDurationSeconds = reader.IsDBNull(16) ? null : reader.GetInt32(16),
+        LeaseExpiresAt = reader.IsDBNull(17) ? null : reader.GetString(17),
+        RenewalPolicy = reader.IsDBNull(18) ? WorkerPoolStates.RenewalPolicyDeny : reader.GetString(18),
+        DrainPolicy = reader.IsDBNull(19) ? WorkerPoolStates.DrainPolicyGraceful : reader.GetString(19),
+        AgentInstanceId = reader.IsDBNull(20) ? null : reader.GetString(20),
+        AdapterInstanceId = reader.IsDBNull(21) ? null : reader.GetString(21),
+        SessionId = reader.IsDBNull(22) ? null : reader.GetString(22),
+        RunId = reader.IsDBNull(23) ? null : reader.GetString(23),
+        LastSeenAt = reader.IsDBNull(24) ? null : reader.GetString(24),
+        LatestCheckpointId = reader.IsDBNull(25) ? null : reader.GetInt32(25),
+        CleanupEvidence = reader.IsDBNull(26) ? null : reader.GetString(26),
+        CleanupRecordedAt = reader.IsDBNull(27) ? null : reader.GetString(27),
+        Metadata = reader.IsDBNull(28) ? null : reader.GetString(28),
+        CreatedAt = DateTime.Parse(reader.GetString(29)),
+        UpdatedAt = DateTime.Parse(reader.GetString(30)),
+    };
+
+    public async Task<OrchestratorLease> CreateOrchestratorLeaseAsync(CreateOrchestratorLeaseInput input)
+    {
+        if (input.RequestedDurationSeconds is <= 0)
+            throw new ArgumentException("requested_duration_seconds must be greater than zero when provided", nameof(input));
+
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            // Find an available pool member matching profile/capability filters
+            var candidates = await FindAvailableWorkersAsync(
+                conn, input.RequiredCapabilities, input.ProfileIdentity, workerRole: "project_orchestrator");
+
+            string orchestratorIdentity;
+            WorkerPoolMember? selectedWorker = null;
+
+            if (!string.IsNullOrWhiteSpace(input.PreferredOrchestratorIdentity))
+            {
+                // A preferred concrete identity is an explicit selection, not a hint:
+                // fail closed unless that member satisfies the same project-orchestrator
+                // role/profile/capability filter as automatic selection. A preferred
+                // coder/reviewer worker must not be silently promoted or bypassed.
+                if (!candidates.Contains(input.PreferredOrchestratorIdentity, StringComparer.Ordinal))
+                    throw new InvalidOperationException(
+                        "Preferred orchestrator is not an available project_orchestrator matching profile/capability criteria.");
+
+                selectedWorker = await GetMemberByConnAsync(conn, input.PreferredOrchestratorIdentity);
+            }
+
+            if (selectedWorker is null)
+            {
+                foreach (var candidateId in candidates)
+                {
+                    var candidate = await GetMemberByConnAsync(conn, candidateId);
+                    if (candidate is not null)
+                    {
+                        selectedWorker = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedWorker is null)
+                throw new InvalidOperationException(
+                    "No available pool member matching orchestrator profile/capability criteria.");
+
+            orchestratorIdentity = selectedWorker.WorkerIdentity;
+
+            // Mark the pool member busy
+            await SetMemberStatusByConnAsync(conn, orchestratorIdentity, WorkerPoolStates.MemberBusy);
+
+            // Compute lease_expires_at
+            string? expiresAtExpr = input.RequestedDurationSeconds is not null
+                ? $"datetime('now', '+{input.RequestedDurationSeconds.Value} seconds')"
+                : null;
+
+            // Build the INSERT with computed lease_id and optional expires
+            var insertCols = new List<string>
+            {
+                "lease_id", "lease_kind", "scope_type", "project_id", "channel_id",
+                "task_id", "workstream_handle", "objective", "lease_owner",
+                "orchestrator_identity", "profile_identity", "display_name",
+                "capability_metadata", "state", "requested_duration_seconds",
+                "lease_expires_at", "renewal_policy", "drain_policy",
+                "agent_instance_id", "adapter_instance_id", "session_id", "run_id"
+            };
+            var insertVals = new List<string>
+            {
+                "@leaseId", "@leaseKind", "@scopeType", "@projectId", "@channelId",
+                "@taskId", "@workstreamHandle", "@objective", "@leaseOwner",
+                "@orchestratorIdentity", "@profileIdentity", "@displayName",
+                "@capabilityMetadata", "@state", "@requestedDurationSeconds",
+                expiresAtExpr ?? "NULL", "@renewalPolicy", "@drainPolicy",
+                "@agentInstanceId", "@adapterInstanceId", "@sessionId", "@runId"
+            };
+
+            var leaseId = $"{orchestratorIdentity}:{input.ProjectId}:{Guid.NewGuid():N}";
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                INSERT INTO orchestrator_leases ({string.Join(", ", insertCols)})
+                VALUES ({string.Join(", ", insertVals)})
+                RETURNING {OrchLeaseColumns}
+                """;
+
+            cmd.Parameters.AddWithValue("@leaseId", leaseId);
+            cmd.Parameters.AddWithValue("@leaseKind", WorkerPoolStates.LeaseKindProjectOrchestrator);
+            cmd.Parameters.AddWithValue("@scopeType", input.ScopeType);
+            cmd.Parameters.AddWithValue("@projectId", input.ProjectId);
+            cmd.Parameters.AddWithValue("@channelId", (object?)input.ChannelId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@workstreamHandle", (object?)input.WorkstreamHandle ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@objective", (object?)input.Objective ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@leaseOwner", input.LeaseOwner);
+            cmd.Parameters.AddWithValue("@orchestratorIdentity", orchestratorIdentity);
+            cmd.Parameters.AddWithValue("@profileIdentity", selectedWorker.ProfileIdentity);
+            cmd.Parameters.AddWithValue("@displayName", (object?)selectedWorker.DisplayName ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@capabilityMetadata", (object?)selectedWorker.Capabilities ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@state", WorkerPoolStates.OrchLeaseLeased);
+            cmd.Parameters.AddWithValue("@requestedDurationSeconds",
+                (object?)input.RequestedDurationSeconds ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@renewalPolicy", input.RenewalPolicy);
+            cmd.Parameters.AddWithValue("@drainPolicy", input.DrainPolicy);
+            cmd.Parameters.AddWithValue("@agentInstanceId",
+                (object?)selectedWorker.AgentInstanceId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@adapterInstanceId",
+                (object?)selectedWorker.AdapterInstanceId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@sessionId",
+                (object?)selectedWorker.SessionId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@runId", (object?)input.RunId ?? DBNull.Value);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            var lease = ReadOrchLease(reader);
+            await reader.CloseAsync();
+
+            await tx.CommitAsync();
+            return lease;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<OrchestratorLease?> GetOrchestratorLeaseAsync(int id)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {OrchLeaseColumns}
+            FROM orchestrator_leases
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
+    }
+
+    public async Task<OrchestratorLease?> GetOrchestratorLeaseByLeaseIdAsync(string leaseId)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {OrchLeaseColumns}
+            FROM orchestrator_leases
+            WHERE lease_id = @leaseId
+            """;
+        cmd.Parameters.AddWithValue("@leaseId", leaseId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
+    }
+
+    public async Task<List<OrchestratorLease>> ListOrchestratorLeasesAsync(OrchestratorLeaseListOptions options)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(options.ProjectId))
+        {
+            where.Add("project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (!string.IsNullOrWhiteSpace(options.ScopeType))
+        {
+            where.Add("scope_type = @scopeType");
+            cmd.Parameters.AddWithValue("@scopeType", options.ScopeType);
+        }
+        if (!string.IsNullOrWhiteSpace(options.OrchestratorIdentity))
+        {
+            where.Add("orchestrator_identity = @orchestratorIdentity");
+            cmd.Parameters.AddWithValue("@orchestratorIdentity", options.OrchestratorIdentity);
+        }
+        if (!string.IsNullOrWhiteSpace(options.State))
+        {
+            where.Add("state = @state");
+            cmd.Parameters.AddWithValue("@state", options.State);
+        }
+        if (!string.IsNullOrWhiteSpace(options.LeaseKind))
+        {
+            where.Add("lease_kind = @leaseKind");
+            cmd.Parameters.AddWithValue("@leaseKind", options.LeaseKind);
+        }
+        if (!options.IncludeTerminal)
+        {
+            where.Add($"state NOT IN ({string.Join(", ", WorkerPoolStates.OrchLeaseTerminalStates.Select(s => $"'{s}'"))})");
+        }
+
+        var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
+        cmd.CommandText = $"""
+            SELECT {OrchLeaseColumns}
+            FROM orchestrator_leases
+            {whereClause}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT @limit
+            """;
+        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+
+        var results = new List<OrchestratorLease>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            results.Add(ReadOrchLease(reader));
+        return results;
+    }
+
+    public async Task<OrchestratorLease?> TransitionOrchestratorLeaseAsync(TransitionOrchestratorLeaseInput input)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            await using var getCmd = conn.CreateCommand();
+            getCmd.CommandText = $"""
+                SELECT {OrchLeaseColumns}
+                FROM orchestrator_leases
+                WHERE id = @id
+                """;
+            getCmd.Parameters.AddWithValue("@id", input.LeaseInternalId);
+
+            await using var getReader = await getCmd.ExecuteReaderAsync();
+            if (!await getReader.ReadAsync())
+            {
+                await tx.CommitAsync();
+                return null;
+            }
+            var lease = ReadOrchLease(getReader);
+            await getReader.CloseAsync();
+
+            if (!IsValidOrchLeaseTransition(lease.State, input.NewState))
+            {
+                await tx.CommitAsync();
+                return null;
+            }
+
+            var setClauses = new List<string> { "state = @newState", "updated_at = datetime('now')" };
+
+            // Compute actual duration on terminal transition
+            if (WorkerPoolStates.IsOrchLeaseTerminal(input.NewState))
+            {
+                setClauses.Add("actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER)");
+            }
+
+            // Record cleanup evidence if provided on terminal transition
+            if (!string.IsNullOrWhiteSpace(input.Evidence) && WorkerPoolStates.IsOrchLeaseTerminal(input.NewState))
+            {
+                setClauses.Add("cleanup_evidence = @evidence");
+                setClauses.Add("cleanup_recorded_at = datetime('now')");
+            }
+
+            // Record metadata if provided
+            if (!string.IsNullOrWhiteSpace(input.Metadata))
+            {
+                setClauses.Add("metadata = @metadata");
+            }
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                UPDATE orchestrator_leases
+                SET {string.Join(", ", setClauses)}
+                WHERE id = @id
+                RETURNING {OrchLeaseColumns}
+                """;
+            cmd.Parameters.AddWithValue("@id", input.LeaseInternalId);
+            cmd.Parameters.AddWithValue("@newState", input.NewState);
+
+            if (!string.IsNullOrWhiteSpace(input.Evidence) && WorkerPoolStates.IsOrchLeaseTerminal(input.NewState))
+                cmd.Parameters.AddWithValue("@evidence", input.Evidence);
+            if (!string.IsNullOrWhiteSpace(input.Metadata))
+                cmd.Parameters.AddWithValue("@metadata", input.Metadata);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            var updated = await reader.ReadAsync() ? ReadOrchLease(reader) : null;
+            await reader.CloseAsync();
+
+            // If terminal, release the pool member back to available
+            if (WorkerPoolStates.IsOrchLeaseTerminal(input.NewState) && updated is not null)
+            {
+                await SetMemberStatusByConnAsync(conn, updated.OrchestratorIdentity, WorkerPoolStates.MemberAvailable);
+            }
+
+            await tx.CommitAsync();
+            return updated;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<OrchestratorLease?> RecordOrchestratorLeaseCleanupAsync(int leaseId, string evidenceJson)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE orchestrator_leases
+            SET cleanup_evidence = @evidence,
+                cleanup_recorded_at = datetime('now'),
+                updated_at = datetime('now')
+            WHERE id = @id
+              AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseTerminalStates.Select(s => $"'{s}'"))})
+            RETURNING {OrchLeaseColumns}
+            """;
+        cmd.Parameters.AddWithValue("@id", leaseId);
+        cmd.Parameters.AddWithValue("@evidence", evidenceJson);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
+    }
+
+    public async Task<int> ReconcileStaleOrchestratorLeasesAsync()
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var tx = await conn.BeginTransactionAsync();
+        try
+        {
+            // Find non-terminal leases where lease_expires_at has passed
+            var staleLeaseIds = new List<int>();
+            await using (var findCmd = conn.CreateCommand())
+            {
+                findCmd.CommandText = $"""
+                    SELECT id, orchestrator_identity
+                    FROM orchestrator_leases
+                    WHERE state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
+                      AND lease_expires_at IS NOT NULL
+                      AND datetime(lease_expires_at) < datetime('now')
+                    """;
+                await using var reader = await findCmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    staleLeaseIds.Add(reader.GetInt32(0));
+            }
+
+            // Also find non-terminal leases whose pool member is stale (heartbeat-based)
+            var heartbeatStaleIds = new List<(int LeaseId, string OrchestratorIdentity)>();
+            await using (var hbCmd = conn.CreateCommand())
+            {
+                hbCmd.CommandText = $"""
+                    SELECT ol.id, ol.orchestrator_identity
+                    FROM orchestrator_leases ol
+                    JOIN worker_pool_members wm ON ol.orchestrator_identity = wm.worker_identity
+                    WHERE ol.state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
+                      AND wm.stale_after_seconds IS NOT NULL
+                      AND wm.last_heartbeat IS NOT NULL
+                      AND datetime(wm.last_heartbeat, '+' || wm.stale_after_seconds || ' seconds') < datetime('now')
+                    """;
+                await using var reader = await hbCmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    heartbeatStaleIds.Add((reader.GetInt32(0), reader.GetString(1)));
+            }
+
+            var affected = 0;
+
+            // Expire time-based stale leases
+            foreach (var leaseId in staleLeaseIds)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    UPDATE orchestrator_leases
+                    SET state = '{WorkerPoolStates.OrchLeaseExpired}',
+                        actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER),
+                        updated_at = datetime('now')
+                    WHERE id = @id
+                      AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
+                    RETURNING orchestrator_identity
+                    """;
+                cmd.Parameters.AddWithValue("@id", leaseId);
+                var orchId = await cmd.ExecuteScalarAsync() as string;
+                if (orchId is not null)
+                {
+                    await SetMemberStatusByConnAsync(conn, orchId, WorkerPoolStates.MemberAvailable);
+                    affected++;
+                }
+            }
+
+            // Degrade heartbeat-stale leases (distinct from time-expired)
+            foreach (var (leaseId, orchId) in heartbeatStaleIds)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"""
+                    UPDATE orchestrator_leases
+                    SET state = '{WorkerPoolStates.OrchLeaseDegraded}',
+                        actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER),
+                        updated_at = datetime('now')
+                    WHERE id = @id
+                      AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
+                    RETURNING orchestrator_identity
+                    """;
+                cmd.Parameters.AddWithValue("@id", leaseId);
+                var result = await cmd.ExecuteScalarAsync() as string;
+                if (result is not null)
+                {
+                    // Don't permanently busy the profile — just release member
+                    await SetMemberStatusByConnAsync(conn, result, WorkerPoolStates.MemberAvailable);
+                    affected++;
+                }
+            }
+
+            await tx.CommitAsync();
+            return affected;
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<List<PoolResidencyProjection>> GetPoolResidencyProjectionAsync(string projectId)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        var projections = new List<PoolResidencyProjection>();
+
+        // Active task-worker assignments for this project
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT wa.worker_identity, COALESCE(wa.profile_identity, wm.profile_identity),
+                       wm.worker_role, wa.project_id, wm.channel_id, wa.task_id,
+                       wa.state, wa.acquired_at, NULL AS expires_at, wm.agent_instance_id
+                FROM worker_assignments wa
+                LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
+                WHERE wa.project_id = @projectId
+                  AND wa.state NOT IN ('completed', 'failed', 'expired')
+                """;
+            cmd.Parameters.AddWithValue("@projectId", projectId);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var workerId = reader.GetString(0);
+                var profileId = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                var workerRole = reader.IsDBNull(2) ? null : reader.GetString(2);
+                var state = reader.IsDBNull(6) ? null : reader.GetString(6);
+                var startedAt = reader.IsDBNull(7) ? null : reader.GetString(7);
+                var agentInstId = reader.IsDBNull(9) ? null : reader.GetString(9);
+
+                // Determine residency kind based on lease_kind
+                projections.Add(new PoolResidencyProjection
+                {
+                    WorkerIdentity = workerId,
+                    ProfileIdentity = profileId,
+                    WorkerRole = workerRole,
+                    ResidencyKind = "task_worker_assignment",
+                    ProjectId = projectId,
+                    ChannelId = null,
+                    TaskId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    State = state,
+                    StartedAt = startedAt,
+                    ExpiresAt = null,
+                    AgentInstanceId = agentInstId,
+                });
+            }
+        }
+
+        // Active orchestrator leases for this project
+        await using (var cmd = conn.CreateCommand())
+        {
+            var terminalFilter = string.Join(", ",
+                WorkerPoolStates.OrchLeaseTerminalStates.Select(s => $"'{s}'"));
+            cmd.CommandText = $"""
+                SELECT orchestrator_identity, profile_identity,
+                       NULL AS worker_role, project_id, channel_id, task_id,
+                       state, created_at, lease_expires_at, agent_instance_id
+                FROM orchestrator_leases
+                WHERE project_id = @projectId
+                  AND state NOT IN ({terminalFilter})
+                """;
+            cmd.Parameters.AddWithValue("@projectId", projectId);
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                projections.Add(new PoolResidencyProjection
+                {
+                    WorkerIdentity = reader.GetString(0),
+                    ProfileIdentity = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    WorkerRole = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    ResidencyKind = "orchestrator_lease",
+                    ProjectId = reader.GetString(3),
+                    ChannelId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    TaskId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    State = reader.IsDBNull(6) ? null : reader.GetString(6),
+                    StartedAt = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    ExpiresAt = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    AgentInstanceId = reader.IsDBNull(9) ? null : reader.GetString(9),
+                });
+            }
+        }
+
+        // Pool members with bindings to this project (via agent_instance_id, channel_id, session_id)
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT worker_identity, profile_identity, worker_role,
+                       NULL AS project_id, channel_id, NULL AS task_id,
+                       status, NULL AS started_at, NULL AS expires_at, agent_instance_id
+                FROM worker_pool_members
+                WHERE agent_instance_id IS NOT NULL
+                """;
+            // Note: We can't easily filter by project_id here since pool members
+            // are project-agnostic; the binding/project correlation comes from
+            // assignments and leases. This captures members with live bindings.
+
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var workerId = reader.GetString(0);
+                // Only add if not already covered by an assignment or lease for this project
+                if (projections.Any(p => p.WorkerIdentity == workerId))
+                    continue;
+
+                projections.Add(new PoolResidencyProjection
+                {
+                    WorkerIdentity = workerId,
+                    ProfileIdentity = reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                    WorkerRole = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    ResidencyKind = "gateway_binding",
+                    ProjectId = null,
+                    ChannelId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    TaskId = null,
+                    State = reader.IsDBNull(6) ? null : reader.GetString(6),
+                    StartedAt = null,
+                    ExpiresAt = null,
+                    AgentInstanceId = reader.IsDBNull(9) ? null : reader.GetString(9),
+                });
+            }
+        }
+
+        return projections;
+    }
+
+    private static bool IsValidOrchLeaseTransition(string current, string next)
+    {
+        if (current == next)
+            return true;
+
+        if (!WorkerPoolStates.ValidOrchLeaseStates.Contains(next))
+            return false;
+
+        // Terminal -> anything is invalid
+        if (WorkerPoolStates.IsOrchLeaseTerminal(current))
+            return false;
+
+        return next switch
+        {
+            // Non-terminal transitions
+            WorkerPoolStates.OrchLeaseLeased => current == WorkerPoolStates.OrchLeaseProposed,
+            WorkerPoolStates.OrchLeaseActive => current == WorkerPoolStates.OrchLeaseLeased || current == WorkerPoolStates.OrchLeaseCheckpointWaiting,
+            WorkerPoolStates.OrchLeaseCheckpointWaiting => current == WorkerPoolStates.OrchLeaseActive || current == WorkerPoolStates.OrchLeaseLeased,
+            WorkerPoolStates.OrchLeaseDraining => current == WorkerPoolStates.OrchLeaseActive || current == WorkerPoolStates.OrchLeaseCheckpointWaiting || current == WorkerPoolStates.OrchLeaseLeased,
+            // Terminal transitions — from any non-terminal
+            WorkerPoolStates.OrchLeaseReleased => WorkerPoolStates.IsOrchLeaseNonTerminal(current),
+            WorkerPoolStates.OrchLeaseQuarantined => WorkerPoolStates.IsOrchLeaseNonTerminal(current),
+            WorkerPoolStates.OrchLeaseExpired => WorkerPoolStates.IsOrchLeaseNonTerminal(current),
+            WorkerPoolStates.OrchLeaseDegraded => WorkerPoolStates.IsOrchLeaseNonTerminal(current),
+            _ => false,
+        };
     }
 }

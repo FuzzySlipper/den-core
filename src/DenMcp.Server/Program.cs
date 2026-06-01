@@ -29,6 +29,7 @@ if (builder.Configuration["db-path"] is { } dbPathOverride)
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(options.PiSessionHost);
+builder.Services.AddSingleton(options.BlockedTaskEscalation);
 var trustedPublisherOptions = new TrustedPublisherOptions();
 builder.Configuration.GetSection("DenMcp:TrustedPublisher").Bind(trustedPublisherOptions);
 builder.Services.AddSingleton(trustedPublisherOptions);

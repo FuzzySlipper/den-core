@@ -39,22 +39,23 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     private readonly IMessageRepository _messages;
     private readonly IAgentStreamRepository _stream;
     private readonly ILogger<BlockedTaskEscalationService> _logger;
+    private readonly BlockedTaskEscalationPolicyOptions _policyOptions;
 
     // Planner/conductor roles that can handle blocker escalations
     private static readonly string[] PlannerRoles = ["planner", "conductor"];
-
-    private static readonly TimeSpan DedupWindow = TimeSpan.FromHours(1);
 
     public BlockedTaskEscalationService(
         IAgentInstanceBindingRepository bindings,
         IMessageRepository messages,
         IAgentStreamRepository stream,
-        ILogger<BlockedTaskEscalationService> logger)
+        ILogger<BlockedTaskEscalationService> logger,
+        BlockedTaskEscalationPolicyOptions? policyOptions = null)
     {
         _bindings = bindings;
         _messages = messages;
         _stream = stream;
         _logger = logger;
+        _policyOptions = policyOptions ?? new BlockedTaskEscalationPolicyOptions();
     }
 
     public BlockerContextValidation ValidateBlockerContext(string? blockerSummary, string? reason)
@@ -132,11 +133,15 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     /// <summary>
     /// Check whether this exact blocker signature was escalated recently. Both routing paths
     /// matter: no-planner fallback notifications and planner/conductor wake stream entries.
-    /// Dedup window is 1 hour.
+    /// Dedup window is configurable; a zero or negative window disables dedupe.
     /// </summary>
     private async Task<bool> HasUnresolvedEscalationAsync(int taskId, string projectId, string blockerSignature)
     {
-        var cutoff = DateTime.UtcNow.Subtract(DedupWindow);
+        var dedupWindow = _policyOptions.DedupWindow;
+        if (dedupWindow <= TimeSpan.Zero)
+            return false;
+
+        var cutoff = DateTime.UtcNow.Subtract(dedupWindow);
 
         var recentNotifications = await _messages.GetMessagesAsync(
             projectId: projectId,

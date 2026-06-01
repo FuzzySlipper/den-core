@@ -300,6 +300,47 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EscalateBlockedTask_DedupWindowDisabled_AllowsRepeatedSameSignatureEscalations()
+    {
+        var service = new BlockedTaskEscalationService(
+            _bindings,
+            _messages,
+            _stream,
+            NullLogger<BlockedTaskEscalationService>.Instance,
+            new BlockedTaskEscalationPolicyOptions { DedupWindow = TimeSpan.Zero });
+
+        var task = await _tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = "test-proj",
+            Title = "Test task"
+        });
+
+        var escalation = new BlockedTaskEscalation
+        {
+            TaskId = task.Id,
+            ProjectId = "test-proj",
+            BlockerSummary = "Reblocked after resolution",
+            Reason = "The same external dependency is blocked again",
+            ChangedBy = "den-mcp-runner"
+        };
+
+        var firstResult = await service.EscalateBlockedTaskAsync(task, escalation);
+        var secondResult = await service.EscalateBlockedTaskAsync(task, escalation);
+
+        Assert.True(firstResult.WasNew);
+        Assert.True(secondResult.WasNew);
+        Assert.True(firstResult.UserNotificationCreated);
+        Assert.True(secondResult.UserNotificationCreated);
+
+        var notifications = await _messages.GetMessagesAsync(
+            projectId: "test-proj",
+            taskId: task.Id,
+            intent: MessageIntent.Notification,
+            limit: 10);
+        Assert.Equal(2, notifications.Count);
+    }
+
+    [Fact]
     public async Task EscalateBlockedTask_DifferentBlockerSignature_CreatesNewEscalation()
     {
         var task = await _tasks.CreateAsync(new ProjectTask

@@ -2,6 +2,18 @@ using System.Text.Json;
 
 namespace DenMcp.Core.Models;
 
+public sealed class BlockedTaskEscalationPolicyOptions
+{
+    /// <summary>
+    /// Time window used to suppress duplicate blocked-task escalations with the same
+    /// task and blocker signature. Defaults to one hour for backward compatibility.
+    /// Set to zero or a negative value to disable deduplication entirely, which is
+    /// useful when an environment prefers every re-block transition to produce a fresh
+    /// escalation until richer resolution state is modeled.
+    /// </summary>
+    public TimeSpan DedupWindow { get; set; } = TimeSpan.FromHours(1);
+}
+
 /// <summary>
 /// Structured blocker context required when a task transitions to blocked status.
 /// Core owns this model because task status transitions are Core state.

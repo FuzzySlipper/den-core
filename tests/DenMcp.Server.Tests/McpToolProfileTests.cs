@@ -93,6 +93,54 @@ public sealed class McpToolProfileTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SendUserNotification_IsListedAndCallableOnlyForOperatorProfiles()
+    {
+        var operatorProfiles = new[] { "planner", "runner", "admin-current" };
+        foreach (var profile in operatorProfiles)
+        {
+            var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+            var tools = await ListToolsAsync(sessionId);
+            var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+            Assert.Contains("send_user_notification", names);
+
+            var result = await SendToolCallAsync(sessionId, 200, "send_user_notification", new
+            {
+                project_id = "den-core",
+                sender = profile,
+                content = $"test notification from {profile}",
+                urgency = "low"
+            });
+            Assert.DoesNotContain("error", result, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("sent message", result);
+        }
+
+        var workerProfiles = new[]
+        {
+            "worker-coder",
+            "worker-reviewer",
+            "worker-validator",
+            "worker-drift-checker",
+            "worker-packet-auditor"
+        };
+        foreach (var profile in workerProfiles)
+        {
+            var sessionId = await InitializeMcpSessionAsync(query: $"tool_profile={profile}");
+            var tools = await ListToolsAsync(sessionId);
+            var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
+            Assert.DoesNotContain("send_user_notification", names);
+
+            var result = await SendToolCallAsync(sessionId, 201, "send_user_notification", new
+            {
+                project_id = "den-core",
+                sender = profile,
+                content = $"blocked worker notification attempt from {profile}"
+            });
+            Assert.Contains("error", result);
+            Assert.Contains("\"code\":-32", result);
+        }
+    }
+
+    [Fact]
     public async Task UnknownProfile_FailClosed()
     {
         var sessionId = await InitializeMcpSessionAsync(query: "tool_profile=nonexistent-profile");

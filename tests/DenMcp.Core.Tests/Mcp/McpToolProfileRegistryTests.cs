@@ -76,6 +76,33 @@ public class McpToolProfileRegistryTests
             Assert.DoesNotContain(t, planner);
     }
 
+    [Theory]
+    [InlineData("planner", true)]
+    [InlineData("runner", true)]
+    [InlineData("admin-current", true)]
+    [InlineData("worker-coder", false)]
+    [InlineData("worker-reviewer", false)]
+    [InlineData("worker-validator", false)]
+    [InlineData("worker-drift-checker", false)]
+    [InlineData("worker-packet-auditor", false)]
+    public void SendUserNotification_IsRestrictedToOperatorProfiles(string profile, bool expected)
+    {
+        Assert.Equal(expected, _registry.ToolInProfile("send_user_notification", profile));
+    }
+
+    [Theory]
+    [InlineData("worker-coder")]
+    [InlineData("worker-reviewer")]
+    public void MessagingWorkers_KeepTaskThreadMessagingWithoutUserNotification(string profile)
+    {
+        var tools = _registry.GetProfileTools(profile);
+
+        Assert.Contains("send_message", tools);
+        Assert.Contains("get_messages", tools);
+        Assert.Contains("get_thread", tools);
+        Assert.DoesNotContain("send_user_notification", tools);
+    }
+
     [Fact]
     public void UnknownProfile_ReturnsEmptySet()
     {

@@ -390,6 +390,10 @@ public sealed class McpToolProfileRegistry
             "get_latest_task_packet",
             "prepare_coder_context_packet", "render_worker_prompt",
             "append_checkpoint", "respond_to_checkpoint", "get_worker_pool_summary");
+        // Keep ordinary task-thread messaging for workers, but do not give narrow workers
+        // the user-facing notification bell by default. Runners/orchestrators decide when
+        // a worker packet/checkpoint warrants operator attention.
+        m.ProfileRemove(McpToolProfiles.WorkerCoder, "send_user_notification");
 
         // ---- profile: worker-reviewer ----
         m.Profile(McpToolProfiles.WorkerReviewer,
@@ -406,6 +410,10 @@ public sealed class McpToolProfileRegistry
             "prepare_reviewer_context_packet", "render_worker_prompt",
             "get_document_discussion", "list_discussion_threads", "get_discussion_thread",
             "append_checkpoint", "respond_to_checkpoint", "get_worker_pool_summary");
+        // Keep ordinary task-thread messaging for workers, but do not give narrow workers
+        // the user-facing notification bell by default. Runners/orchestrators decide when
+        // a worker packet/checkpoint warrants operator attention.
+        m.ProfileRemove(McpToolProfiles.WorkerReviewer, "send_user_notification");
 
         // ---- profile: worker-validator ----
         // Narrow profile: packet retrieval, status, completion, and role-specific context packet helpers only.
@@ -616,6 +624,15 @@ public sealed class McpToolProfileRegistry
             }
             foreach (var t in toolNames)
                 set.Add(t);
+        }
+
+        public void ProfileRemove(string profile, params string[] toolNames)
+        {
+            if (!_r._profileTools.TryGetValue(profile, out var set))
+                return;
+
+            foreach (var t in toolNames)
+                set.Remove(t);
         }
     }
 }

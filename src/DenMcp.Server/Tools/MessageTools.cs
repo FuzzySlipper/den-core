@@ -61,7 +61,7 @@ public sealed class MessageTools
             : ConciseResponse.SentMessage(created);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "send_user_notification"), Description(
         "Send a user-facing notification message in a project. " +

@@ -72,7 +72,7 @@ public sealed class TaskTools
         [Description("Required when status=blocked. Why the agent cannot proceed.")] string? blocker_reason = null,
         [Description("Optional when status=blocked. Remedies or evidence of what was attempted.")] string? blocker_attempted_remedies = null,
         [Description("Optional when status=blocked. Suggested next decision or unblock path.")] string? blocker_suggested_next_step = null,
-        [Description("Optional when status=blocked. Whether human input is required vs planner can replan. Default: false.")] bool blocker_requires_human_input = false,
+        [Description("Optional when status=blocked. Whether human input is required vs planner can replan. Default: false.")] bool? blocker_requires_human_input = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var current = await repo.GetByIdAsync(task_id)
@@ -128,7 +128,7 @@ public sealed class TaskTools
                     Reason = blocker_reason!,
                     AttemptedRemedies = blocker_attempted_remedies,
                     SuggestedNextStep = blocker_suggested_next_step,
-                    RequiresHumanInput = blocker_requires_human_input,
+                    RequiresHumanInput = blocker_requires_human_input ?? false,
                     ChangedBy = agent
                 };
 

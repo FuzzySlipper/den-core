@@ -43,6 +43,8 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     // Planner/conductor roles that can handle blocker escalations
     private static readonly string[] PlannerRoles = ["planner", "conductor"];
 
+    private static readonly TimeSpan DedupWindow = TimeSpan.FromHours(1);
+
     public BlockedTaskEscalationService(
         IAgentInstanceBindingRepository bindings,
         IMessageRepository messages,
@@ -101,6 +103,15 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
             var plannerMessage = await SendPlannerWakeMessageAsync(task, escalation, plannerBinding, blockerSignature);
             result.PlannerWakeAttempted = true;
             result.PlannerWakeMessageId = plannerMessage?.Id;
+
+            // If a planner binding exists but the wake path fails, fall back to a user
+            // notification so the blocked transition still has an attention route.
+            if (plannerMessage is null)
+            {
+                var notification = await CreateUserNotificationAsync(task, escalation, blockerSignature);
+                result.UserNotificationCreated = true;
+                result.UserNotificationMessageId = notification?.Id;
+            }
         }
 
         // 3b. If no planner reachable, create user notification for Patch
@@ -125,7 +136,7 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     /// </summary>
     private async Task<bool> HasUnresolvedEscalationAsync(int taskId, string projectId, string blockerSignature)
     {
-        var cutoff = DateTime.UtcNow.AddHours(-1);
+        var cutoff = DateTime.UtcNow.Subtract(DedupWindow);
 
         var recentNotifications = await _messages.GetMessagesAsync(
             projectId: projectId,

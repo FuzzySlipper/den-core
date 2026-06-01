@@ -527,6 +527,52 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
         Assert.Single(streamEntries);
     }
 
+    [Fact]
+    public async Task EscalateBlockedTask_PlannerWakeFailure_CreatesUserNotificationFallback()
+    {
+        var task = await _tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = "test-proj",
+            Title = "Test task"
+        });
+
+        await _bindings.UpsertAsync(new AgentInstanceBinding
+        {
+            InstanceId = "planner-1",
+            ProjectId = "test-proj",
+            AgentIdentity = "den-mcp-planner",
+            AgentFamily = "hermes",
+            Role = "planner",
+            TransportKind = "channels",
+            Status = AgentInstanceBindingStatus.Active
+        });
+
+        var service = new BlockedTaskEscalationService(
+            _bindings,
+            _messages,
+            new ThrowingAgentStreamRepository(),
+            NullLogger<BlockedTaskEscalationService>.Instance);
+
+        var result = await service.EscalateBlockedTaskAsync(task, new BlockedTaskEscalation
+        {
+            TaskId = task.Id,
+            ProjectId = "test-proj",
+            BlockerSummary = "Planner wake failure",
+            Reason = "Agent stream append is unavailable",
+            ChangedBy = "den-mcp-runner"
+        });
+
+        Assert.True(result.WasNew);
+        Assert.True(result.PlannerWakeAttempted);
+        Assert.True(result.UserNotificationCreated);
+        Assert.NotNull(result.UserNotificationMessageId);
+
+        var notification = await _messages.GetByIdAsync(result.UserNotificationMessageId!.Value);
+        Assert.NotNull(notification);
+        Assert.Equal(MessageIntent.Notification, notification!.Intent);
+        Assert.Equal("blocker_attention_required", notification.Metadata!.Value.GetProperty("type").GetString());
+    }
+
     #endregion
 
     #region Non-blocked status transitions are not affected
@@ -542,4 +588,18 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
     }
 
     #endregion
+
+    private sealed class ThrowingAgentStreamRepository : IAgentStreamRepository
+    {
+        public Task<AgentStreamEntry> AppendAsync(AgentStreamEntry entry) =>
+            throw new InvalidOperationException("Simulated stream failure");
+
+        public Task<AgentStreamEntry?> GetByIdAsync(int id) => Task.FromResult<AgentStreamEntry?>(null);
+
+        public Task<Dictionary<int, AgentStreamEntry>> GetByIdsAsync(IReadOnlyList<int> ids) =>
+            Task.FromResult(new Dictionary<int, AgentStreamEntry>());
+
+        public Task<List<AgentStreamEntry>> ListAsync(AgentStreamListOptions? options = null) =>
+            Task.FromResult(new List<AgentStreamEntry>());
+    }
 }

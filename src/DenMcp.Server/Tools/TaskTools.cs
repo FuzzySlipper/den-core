@@ -78,9 +78,11 @@ public sealed class TaskTools
         var current = await repo.GetByIdAsync(task_id)
             ?? throw new KeyNotFoundException($"Task {task_id} not found");
         var oldStatus = current.Status.ToDbValue();
+        var isBlockedTransition = string.Equals(status, "blocked", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(status, oldStatus, StringComparison.OrdinalIgnoreCase);
 
         // Validate blocker context when transitioning to blocked
-        if (status == "blocked" && status != oldStatus)
+        if (isBlockedTransition)
         {
             var validation = escalationService.ValidateBlockerContext(blocker_summary, blocker_reason);
             if (!validation.IsValid)
@@ -101,7 +103,7 @@ public sealed class TaskTools
 
         var updated = await repo.UpdateAsync(task_id, changes, agent);
 
-        if (status is not null && status != oldStatus)
+        if (status is not null && !string.Equals(status, oldStatus, StringComparison.OrdinalIgnoreCase))
         {
             try
             {
@@ -114,7 +116,7 @@ public sealed class TaskTools
         }
 
         // Handle blocked task escalation
-        if (status == "blocked" && status != oldStatus)
+        if (isBlockedTransition)
         {
             try
             {

@@ -55,13 +55,29 @@ public static class TaskRoutes
         });
 
         group.MapPut("/{taskId:int}", async (ITaskRepository repo, IDispatchDetectionService detection,
-            INotificationChannel notifications, ILoggerFactory loggers, string projectId, int taskId, UpdateTaskRequest req) =>
+            INotificationChannel notifications, IBlockedTaskEscalationService escalationService,
+            ILoggerFactory loggers, string projectId, int taskId, UpdateTaskRequest req) =>
         {
             var task = await repo.GetByIdAsync(taskId);
             if (task is null || task.ProjectId != projectId)
                 return Results.NotFound(new { error = $"Task {taskId} not found" });
 
             var oldStatus = task.Status.ToDbValue();
+            var isBlockedTransition = string.Equals(req.Status, "blocked", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(req.Status, oldStatus, StringComparison.OrdinalIgnoreCase);
+
+            if (isBlockedTransition)
+            {
+                var validation = escalationService.ValidateBlockerContext(req.BlockerSummary, req.BlockerReason);
+                if (!validation.IsValid)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Blocked transition requires structured blocker context",
+                        details = validation.Errors
+                    });
+                }
+            }
 
             var changes = new Dictionary<string, object?>();
             if (req.Title is not null) changes["title"] = req.Title;
@@ -76,7 +92,7 @@ public static class TaskRoutes
             {
                 var updated = await repo.UpdateAsync(taskId, changes, req.Agent);
 
-                if (req.Status is not null && req.Status != oldStatus)
+                if (req.Status is not null && !string.Equals(req.Status, oldStatus, StringComparison.OrdinalIgnoreCase))
                 {
                     try
                     {
@@ -96,6 +112,29 @@ public static class TaskRoutes
                     {
                         loggers.CreateLogger("Notifications")
                             .LogError(ex, "Task status notification failed for task {TaskId}", taskId);
+                    }
+                }
+
+                if (isBlockedTransition)
+                {
+                    try
+                    {
+                        await escalationService.EscalateBlockedTaskAsync(updated, new BlockedTaskEscalation
+                        {
+                            TaskId = taskId,
+                            ProjectId = updated.ProjectId,
+                            BlockerSummary = req.BlockerSummary!,
+                            Reason = req.BlockerReason!,
+                            AttemptedRemedies = req.BlockerAttemptedRemedies,
+                            SuggestedNextStep = req.BlockerSuggestedNextStep,
+                            RequiresHumanInput = req.BlockerRequiresHumanInput ?? false,
+                            ChangedBy = req.Agent
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        loggers.CreateLogger("BlockedTaskEscalation")
+                            .LogError(ex, "Blocked task escalation failed for task {TaskId}", taskId);
                     }
                 }
 
@@ -473,7 +512,12 @@ public record UpdateTaskRequest(
     int? Priority = null,
     string? AssignedTo = null,
     List<string>? Tags = null,
-    int? ParentId = null);
+    int? ParentId = null,
+    string? BlockerSummary = null,
+    string? BlockerReason = null,
+    string? BlockerAttemptedRemedies = null,
+    string? BlockerSuggestedNextStep = null,
+    bool? BlockerRequiresHumanInput = null);
 
 public record CreateReviewRoundRequest(
     string RequestedBy,

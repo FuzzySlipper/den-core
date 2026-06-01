@@ -284,8 +284,8 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
         {
             TaskId = task.Id,
             ProjectId = "test-proj",
-            BlockerSummary = "Second blocker",
-            Reason = "Still cannot proceed",
+            BlockerSummary = "First blocker",
+            Reason = "Cannot proceed",
             ChangedBy = "den-mcp-runner"
         };
 
@@ -297,6 +297,38 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
         Assert.Contains("already exists", secondResult.SkipReason);
         Assert.False(secondResult.PlannerWakeAttempted);
         Assert.False(secondResult.UserNotificationCreated);
+    }
+
+    [Fact]
+    public async Task EscalateBlockedTask_DifferentBlockerSignature_CreatesNewEscalation()
+    {
+        var task = await _tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = "test-proj",
+            Title = "Test task"
+        });
+
+        var firstResult = await _service.EscalateBlockedTaskAsync(task, new BlockedTaskEscalation
+        {
+            TaskId = task.Id,
+            ProjectId = "test-proj",
+            BlockerSummary = "First blocker",
+            Reason = "Cannot proceed",
+            ChangedBy = "den-mcp-runner"
+        });
+
+        var secondResult = await _service.EscalateBlockedTaskAsync(task, new BlockedTaskEscalation
+        {
+            TaskId = task.Id,
+            ProjectId = "test-proj",
+            BlockerSummary = "Different blocker",
+            Reason = "A different upstream dependency is missing",
+            ChangedBy = "den-mcp-runner"
+        });
+
+        Assert.True(firstResult.WasNew);
+        Assert.True(secondResult.WasNew);
+        Assert.True(secondResult.UserNotificationCreated);
     }
 
     #endregion
@@ -437,7 +469,7 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
         Assert.Equal("den-mcp-planner", entry.RecipientAgent);
         Assert.Equal("planner", entry.RecipientRole);
         Assert.Equal("planner-1", entry.RecipientInstanceId);
-        Assert.Equal($"blocked-escalation:{task.Id}", entry.DedupKey);
+        Assert.StartsWith($"blocked-escalation:{task.Id}:", entry.DedupKey);
 
         // Verify metadata
         Assert.NotNull(entry.Metadata);
@@ -446,6 +478,53 @@ public class BlockedTaskEscalationServiceTests : IAsyncLifetime
         Assert.True(entry.Metadata.Value.TryGetProperty("escalation_context", out var ctxEl));
         Assert.Equal("Stream wake test", ctxEl.GetProperty("blocker_summary").GetString());
         Assert.Equal("Testing stream wake entry creation", ctxEl.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public async Task EscalateBlockedTask_PlannerPresent_DuplicateSignatureSkipsSecondWake()
+    {
+        var task = await _tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = "test-proj",
+            Title = "Test task"
+        });
+
+        await _bindings.UpsertAsync(new AgentInstanceBinding
+        {
+            InstanceId = "planner-1",
+            ProjectId = "test-proj",
+            AgentIdentity = "den-mcp-planner",
+            AgentFamily = "hermes",
+            Role = "planner",
+            TransportKind = "channels",
+            Status = AgentInstanceBindingStatus.Active
+        });
+
+        var escalation = new BlockedTaskEscalation
+        {
+            TaskId = task.Id,
+            ProjectId = "test-proj",
+            BlockerSummary = "Repeated planner blocker",
+            Reason = "Same blocker should not wake twice",
+            ChangedBy = "den-mcp-runner"
+        };
+
+        var firstResult = await _service.EscalateBlockedTaskAsync(task, escalation);
+        var secondResult = await _service.EscalateBlockedTaskAsync(task, escalation);
+
+        Assert.True(firstResult.WasNew);
+        Assert.True(firstResult.PlannerWakeAttempted);
+        Assert.False(secondResult.WasNew);
+        Assert.False(secondResult.PlannerWakeAttempted);
+
+        var streamEntries = await _stream.ListAsync(new AgentStreamListOptions
+        {
+            ProjectId = "test-proj",
+            TaskId = task.Id,
+            EventType = "task_blocked_escalation",
+            IncludeDebug = true
+        });
+        Assert.Single(streamEntries);
     }
 
     #endregion

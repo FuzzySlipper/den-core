@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Llm;
 using DenMcp.Core.Models;
@@ -194,6 +195,53 @@ public class NotificationWiringTests : IAsyncLifetime
             session_id = "session-2"
         });
         Assert.Equal(HttpStatusCode.OK, checkInResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RestTaskUpdate_BlockedWithoutContext_ReturnsBadRequestAndDoesNotUpdate()
+    {
+        var taskId = await SeedTaskAsync();
+
+        var response = await _client.PutAsJsonAsync($"/api/projects/{ProjectId}/tasks/{taskId}", new
+        {
+            agent = "claude-code",
+            status = "blocked"
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var tasks = scope.ServiceProvider.GetRequiredService<ITaskRepository>();
+        var task = await tasks.GetByIdAsync(taskId);
+        Assert.NotNull(task);
+        Assert.Equal(DenMcp.Core.Models.TaskStatus.Planned, task!.Status);
+    }
+
+    [Fact]
+    public async Task RestTaskUpdate_BlockedWithNoPlanner_CreatesUserNotification()
+    {
+        var taskId = await SeedTaskAsync();
+
+        var response = await _client.PutAsJsonAsync($"/api/projects/{ProjectId}/tasks/{taskId}", new
+        {
+            agent = "claude-code",
+            status = "blocked",
+            blocker_summary = "REST route blocker",
+            blocker_reason = "The REST task update path must also enforce escalation",
+            blocker_attempted_remedies = "Verified MCP tool coverage first",
+            blocker_suggested_next_step = "Notify Patch",
+            blocker_requires_human_input = true
+        });
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+
+        var feedResponse = await _client.GetAsync($"/api/user-notifications?projectId={ProjectId}&taskId={taskId}&metadataType=blocker_attention_required&urgency=high");
+        feedResponse.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await feedResponse.Content.ReadAsStringAsync());
+
+        var notification = Assert.Single(doc.RootElement.EnumerateArray());
+        Assert.Equal(taskId, notification.GetProperty("task_id").GetInt32());
+        Assert.Equal("high", notification.GetProperty("urgency").GetString());
+        Assert.Equal("blocker_attention_required", notification.GetProperty("metadata").GetProperty("type").GetString());
     }
 
     private sealed class WiringAppFactory : WebApplicationFactory<Program>

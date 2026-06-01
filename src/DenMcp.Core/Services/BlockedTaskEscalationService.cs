@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DenMcp.Core.Data;
 using DenMcp.Core.Models;
@@ -72,17 +74,19 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
         ProjectTask task,
         BlockedTaskEscalation escalation)
     {
-        // 1. Check for duplicate unresolved escalation
-        if (await HasUnresolvedEscalationAsync(task.Id, task.ProjectId))
+        var blockerSignature = ComputeBlockerSignature(escalation);
+
+        // 1. Check for duplicate unresolved escalation for this blocker signature.
+        if (await HasUnresolvedEscalationAsync(task.Id, task.ProjectId, blockerSignature))
         {
             _logger.LogInformation(
-                "Skipping duplicate blocked escalation for task {TaskId} in {ProjectId}",
-                task.Id, task.ProjectId);
+                "Skipping duplicate blocked escalation for task {TaskId} in {ProjectId} with signature {Signature}",
+                task.Id, task.ProjectId, blockerSignature);
 
             return new BlockedTaskEscalationResult
             {
                 WasNew = false,
-                SkipReason = "Unresolved blocked escalation already exists for this task."
+                SkipReason = "Unresolved blocked escalation already exists for this task and blocker signature."
             };
         }
 
@@ -94,7 +98,7 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
         if (plannerBinding is not null)
         {
             // 3a. Send planner wake message via agent stream
-            var plannerMessage = await SendPlannerWakeMessageAsync(task, escalation, plannerBinding);
+            var plannerMessage = await SendPlannerWakeMessageAsync(task, escalation, plannerBinding, blockerSignature);
             result.PlannerWakeAttempted = true;
             result.PlannerWakeMessageId = plannerMessage?.Id;
         }
@@ -102,7 +106,7 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
         // 3b. If no planner reachable, create user notification for Patch
         if (plannerBinding is null)
         {
-            var notification = await CreateUserNotificationAsync(task, escalation);
+            var notification = await CreateUserNotificationAsync(task, escalation, blockerSignature);
             result.UserNotificationCreated = true;
             result.UserNotificationMessageId = notification?.Id;
         }
@@ -115,29 +119,45 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     }
 
     /// <summary>
-    /// Check if there's an unresolved blocked escalation for this task by looking
-    /// at recent notification messages created by this service. Dedup window is 1 hour.
+    /// Check whether this exact blocker signature was escalated recently. Both routing paths
+    /// matter: no-planner fallback notifications and planner/conductor wake stream entries.
+    /// Dedup window is 1 hour.
     /// </summary>
-    private async Task<bool> HasUnresolvedEscalationAsync(int taskId, string projectId)
+    private async Task<bool> HasUnresolvedEscalationAsync(int taskId, string projectId, string blockerSignature)
     {
-        // Check for recent notification messages on this task (created by this service
-        // when no planner is reachable — the metadata.type identifies escalation notifications).
+        var cutoff = DateTime.UtcNow.AddHours(-1);
+
         var recentNotifications = await _messages.GetMessagesAsync(
             projectId: projectId,
             taskId: taskId,
             intent: MessageIntent.Notification,
-            limit: 5);
+            limit: 25);
 
-        // If there are escalations within the last hour, we have a duplicate.
         foreach (var msg in recentNotifications)
         {
-            if (msg.Metadata is JsonElement meta &&
-                meta.TryGetProperty("type", out var typeEl) &&
-                typeEl.GetString() == "blocker_attention_required")
-            {
-                if (msg.CreatedAt > DateTime.UtcNow.AddHours(-1))
-                    return true;
-            }
+            if (msg.CreatedAt <= cutoff)
+                continue;
+
+            if (IsMatchingEscalationMetadata(msg.Metadata, "blocker_attention_required", blockerSignature))
+                return true;
+        }
+
+        var recentStreamEntries = await _stream.ListAsync(new AgentStreamListOptions
+        {
+            ProjectId = projectId,
+            TaskId = taskId,
+            EventType = "task_blocked_escalation",
+            IncludeDebug = true,
+            Limit = 25
+        });
+
+        foreach (var entry in recentStreamEntries)
+        {
+            if (entry.CreatedAt <= cutoff)
+                continue;
+
+            if (IsMatchingEscalationMetadata(entry.Metadata, "task_blocked_escalation", blockerSignature))
+                return true;
         }
 
         return false;
@@ -164,12 +184,14 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
     private async Task<AgentStreamEntry?> SendPlannerWakeMessageAsync(
         ProjectTask task,
         BlockedTaskEscalation escalation,
-        AgentInstanceBinding plannerBinding)
+        AgentInstanceBinding plannerBinding,
+        string blockerSignature)
     {
         var body = FormatPlannerWakeBody(task, escalation);
         var metadata = JsonSerializer.SerializeToElement(new
         {
             type = "task_blocked_escalation",
+            blocker_signature = blockerSignature,
             task_id = task.Id,
             project_id = task.ProjectId,
             target_role = plannerBinding.Role,
@@ -199,7 +221,7 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
                 DeliveryMode = AgentStreamDeliveryMode.Wake,
                 Body = body,
                 Metadata = metadata,
-                DedupKey = $"blocked-escalation:{task.Id}"
+                DedupKey = $"blocked-escalation:{task.Id}:{blockerSignature}"
             });
 
             return entry;
@@ -215,13 +237,15 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
 
     private async Task<Message?> CreateUserNotificationAsync(
         ProjectTask task,
-        BlockedTaskEscalation escalation)
+        BlockedTaskEscalation escalation,
+        string blockerSignature)
     {
         var content = FormatUserNotificationContent(task, escalation);
         var metadata = JsonSerializer.SerializeToElement(new
         {
             type = "blocker_attention_required",
             subtype = "blocker_attention_required",
+            blocker_signature = blockerSignature,
             urgency = "high",
             task_id = task.Id,
             project_id = task.ProjectId,
@@ -292,5 +316,32 @@ public sealed class BlockedTaskEscalationService : IBlockedTaskEscalationService
 
             **Changed by:** {escalation.ChangedBy}
             """;
+    }
+
+    private static string ComputeBlockerSignature(BlockedTaskEscalation escalation)
+    {
+        var normalized = string.Join("\n", new[]
+        {
+            escalation.BlockerSummary.Trim(),
+            escalation.Reason.Trim(),
+            escalation.AttemptedRemedies?.Trim() ?? string.Empty,
+            escalation.SuggestedNextStep?.Trim() ?? string.Empty,
+            escalation.RequiresHumanInput ? "human" : "planner"
+        });
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..16].ToLowerInvariant();
+    }
+
+    private static bool IsMatchingEscalationMetadata(JsonElement? metadata, string type, string blockerSignature)
+    {
+        if (metadata is not JsonElement meta ||
+            !meta.TryGetProperty("type", out var typeEl) ||
+            typeEl.GetString() != type ||
+            !meta.TryGetProperty("blocker_signature", out var signatureEl))
+        {
+            return false;
+        }
+
+        return signatureEl.GetString() == blockerSignature;
     }
 }

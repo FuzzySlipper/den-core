@@ -32,7 +32,7 @@ public sealed class CompletionTools
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
-    [McpServerTool(Name = "post_worker_completion_packet"), Description("Post an idempotent structured Den Pi worker completion packet and update the durable worker/session status.")]
+    [McpServerTool(Name = "post_worker_completion_packet"), Description("Post an idempotent structured Den worker completion packet and update the durable worker/session status.")]
     public static async Task<string> PostWorkerCompletionPacket(
         IPiSessionService service,
         IPiSessionRepository sessions,

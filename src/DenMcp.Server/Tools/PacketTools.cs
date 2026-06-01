@@ -19,7 +19,7 @@ public sealed class PacketTools
 
     [McpToolProfile("admin-current", "runner", "worker-coder")]
     [McpToolBundle("packet")]
-    [McpServerTool(Name = "prepare_coder_context_packet"), Description("Create and store a bounded Den task-thread coder context packet for a Pi worker. Launch workers by referencing the returned message id, not by passing the packet body in process args.")]
+    [McpServerTool(Name = "prepare_coder_context_packet"), Description("Create and store a bounded Den task-thread coder context packet for a tracked Den worker. Launch workers by referencing the returned message id, not by passing the packet body in process args.")]
     public static async Task<string> PrepareCoderContextPacket(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -61,7 +61,7 @@ public sealed class PacketTools
 
     [McpToolProfile("admin-current", "worker-reviewer")]
     [McpToolBundle("packet")]
-    [McpServerTool(Name = "prepare_reviewer_context_packet"), Description("Create and store a bounded Den task-thread reviewer context packet for a Pi worker. Launch workers by referencing the returned message id, not by passing the packet body in process args.")]
+    [McpServerTool(Name = "prepare_reviewer_context_packet"), Description("Create and store a bounded Den task-thread reviewer context packet for a tracked Den worker. Launch workers by referencing the returned message id, not by passing the packet body in process args.")]
     public static async Task<string> PrepareReviewerContextPacket(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -107,7 +107,7 @@ public sealed class PacketTools
 
     [McpToolProfile("admin-current", "runner", "worker-validator")]
     [McpToolBundle("packet")]
-    [McpServerTool(Name = "prepare_validator_context_packet"), Description("Create and store a bounded Den task-thread validator context packet for a deterministic Pi worker.")]
+    [McpServerTool(Name = "prepare_validator_context_packet"), Description("Create and store a bounded Den task-thread validator context packet for a deterministic tracked Den worker.")]
     public static async Task<string> PrepareValidatorContextPacket(
         ITaskRepository tasks,
         IMessageRepository messages,
@@ -199,7 +199,7 @@ public sealed class PacketTools
         var packetType = MetadataString(message, "type") ?? MetadataString(message, "packet_kind") ?? "worker_context_packet";
         var normalizedRole = NormalizeRole(role);
         var prompt = $"""
-            You are a Den Pi {normalizedRole} worker.
+            You are a tracked Den {normalizedRole} worker.
 
             Startup contract:
             1. Read Den packet message #{packet_message_id} in project `{project_id}` using `get_thread` or `get_messages`/message lookup before doing work.

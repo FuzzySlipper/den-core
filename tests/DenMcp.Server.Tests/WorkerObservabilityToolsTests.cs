@@ -358,6 +358,82 @@ public class WorkerObservabilityToolsTests
         Assert.Equal(1, service.RegisterCalls);
     }
 
+    [Fact]
+    public async Task RenderWorkerPrompt_DoesNotUseDenPiWording()
+    {
+        var messages = new CapturingMessageRepository();
+        var packetMessage = await messages.CreateAsync(new Message
+        {
+            ProjectId = "proj",
+            TaskId = 1245,
+            Sender = "runner",
+            Content = "test content",
+            Intent = MessageIntent.Handoff,
+            Metadata = JsonSerializer.SerializeToElement(new
+            {
+                type = "coder_context_packet",
+                role = "coder",
+                task_id = 1245,
+            }),
+        });
+
+        var json = await PacketTools.RenderWorkerPrompt(messages, "proj", packetMessage.Id, role: "coder", verbose: true);
+        using var doc = JsonDocument.Parse(json);
+        var prompt = doc.RootElement.GetProperty("prompt").GetString();
+
+        Assert.NotNull(prompt);
+        Assert.DoesNotContain("Den Pi", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RenderWorkerPrompt_UsesTrackedDenWorkerWording()
+    {
+        var messages = new CapturingMessageRepository();
+        var packetMessage = await messages.CreateAsync(new Message
+        {
+            ProjectId = "proj",
+            TaskId = 1245,
+            Sender = "runner",
+            Content = "test content",
+            Intent = MessageIntent.Handoff,
+            Metadata = JsonSerializer.SerializeToElement(new
+            {
+                type = "reviewer_context_packet",
+                role = "reviewer",
+                task_id = 1245,
+            }),
+        });
+
+        var json = await PacketTools.RenderWorkerPrompt(messages, "proj", packetMessage.Id, role: "reviewer", verbose: true);
+        using var doc = JsonDocument.Parse(json);
+        var prompt = doc.RootElement.GetProperty("prompt").GetString();
+
+        Assert.NotNull(prompt);
+        Assert.StartsWith("You are a tracked Den ", prompt.TrimStart(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LaunchPiWorker_BuildsLegacyStartupPromptAndTitle()
+    {
+        var service = new CapturingPiSessionService();
+        var json = await WorkerTools.LaunchPiWorker(
+            service,
+            project_id: "proj",
+            requested_by: "runner",
+            role: "coder",
+            task_id: 1245,
+            prompt_packet_message_id: 5549,
+            run_id: "run-1",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(json);
+        var worker = doc.RootElement.GetProperty("worker_run");
+        Assert.NotNull(service.CapturedRequest);
+        Assert.Contains("LEGACY Den Pi", service.CapturedRequest!.Title, StringComparison.Ordinal);
+        Assert.NotNull(service.CapturedRequest!.StartupPrompt);
+        Assert.StartsWith("You are a legacy Den Pi ", service.CapturedRequest!.StartupPrompt!.TrimStart(), StringComparison.Ordinal);
+    }
+
     private sealed class CapturingPiSessionRepository(CapturingPiSessionService service) : IPiSessionRepository
     {
         public Task<PiSessionRecord> CreateAsync(PiSessionRecord record) => throw new NotSupportedException();

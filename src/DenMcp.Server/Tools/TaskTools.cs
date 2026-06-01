@@ -52,10 +52,11 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "update_task"), Description("Update a task's fields. Records changes in audit history.")]
+    [McpServerTool(Name = "update_task"), Description("Update a task's fields. Records changes in audit history. When setting status to 'blocked', blocker_summary and blocker_reason are required.")]
     public static async Task<string> UpdateTask(
         ITaskRepository repo,
         IDispatchDetectionService detection,
+        IBlockedTaskEscalationService escalationService,
         ILogger<TaskTools> logger,
         [Description("Task ID to update.")] int task_id,
         [Description("Your agent identity (required for audit trail).")]
@@ -67,10 +68,27 @@ public sealed class TaskTools
         [Description("New assigned agent.")] string? assigned_to = null,
         [Description("JSON array of string tags. Accepts a native JSON array or a JSON-encoded string for backward compatibility.")] object? tags = null,
         [Description("New parent task ID.")] int? parent_id = null,
+        [Description("Required when status=blocked. Short blocker summary.")] string? blocker_summary = null,
+        [Description("Required when status=blocked. Why the agent cannot proceed.")] string? blocker_reason = null,
+        [Description("Optional when status=blocked. Remedies or evidence of what was attempted.")] string? blocker_attempted_remedies = null,
+        [Description("Optional when status=blocked. Suggested next decision or unblock path.")] string? blocker_suggested_next_step = null,
+        [Description("Optional when status=blocked. Whether human input is required vs planner can replan. Default: false.")] bool blocker_requires_human_input = false,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
-        var current = await repo.GetByIdAsync(task_id);
-        var oldStatus = current?.Status.ToDbValue();
+        var current = await repo.GetByIdAsync(task_id)
+            ?? throw new KeyNotFoundException($"Task {task_id} not found");
+        var oldStatus = current.Status.ToDbValue();
+
+        // Validate blocker context when transitioning to blocked
+        if (status == "blocked" && status != oldStatus)
+        {
+            var validation = escalationService.ValidateBlockerContext(blocker_summary, blocker_reason);
+            if (!validation.IsValid)
+            {
+                throw new ArgumentException(
+                    $"Blocked transition requires structured blocker context: {string.Join("; ", validation.Errors)}");
+            }
+        }
 
         var changes = new Dictionary<string, object?>();
         if (title is not null) changes["title"] = title;
@@ -92,6 +110,35 @@ public sealed class TaskTools
             catch (Exception ex)
             {
                 logger.LogError(ex, "Dispatch detection failed for task {TaskId}", task_id);
+            }
+        }
+
+        // Handle blocked task escalation
+        if (status == "blocked" && status != oldStatus)
+        {
+            try
+            {
+                var escalation = new BlockedTaskEscalation
+                {
+                    TaskId = task_id,
+                    ProjectId = updated.ProjectId,
+                    BlockerSummary = blocker_summary!,
+                    Reason = blocker_reason!,
+                    AttemptedRemedies = blocker_attempted_remedies,
+                    SuggestedNextStep = blocker_suggested_next_step,
+                    RequiresHumanInput = blocker_requires_human_input,
+                    ChangedBy = agent
+                };
+
+                var escalationResult = await escalationService.EscalateBlockedTaskAsync(updated, escalation);
+
+                logger.LogInformation(
+                    "Blocked task escalation for task {TaskId}: WasNew={WasNew}, PlannerWake={PlannerWake}, Notification={Notification}",
+                    task_id, escalationResult.WasNew, escalationResult.PlannerWakeAttempted, escalationResult.UserNotificationCreated);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Blocked task escalation failed for task {TaskId}", task_id);
             }
         }
 

@@ -125,6 +125,9 @@ builder.Services.AddSingleton<IPiSessionService, PiSessionService>();
 builder.Services.AddSingleton<IRoutingService, RoutingService>();
 builder.Services.AddSingleton<IDispatchDetectionService, DispatchDetectionService>();
 
+// Blocked task escalation
+builder.Services.AddSingleton<IBlockedTaskEscalationService, BlockedTaskEscalationService>();
+
 // Librarian
 builder.Services.AddSingleton<LibrarianGatherer>();
 builder.Services.AddSingleton<LibrarianService>();

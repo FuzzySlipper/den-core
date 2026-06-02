@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_FILE="${PROJECT_FILE:-$REPO_ROOT/src/DenMcp.Server/DenMcp.Server.csproj}"
+PROJECT_FILE="${PROJECT_FILE:-$REPO_ROOT/src/DenCore.Service/DenCore.Service.csproj}"
 PUBLISH_DIR="${PUBLISH_DIR:-}"
 BUILD_ARTIFACTS_DIR="${BUILD_ARTIFACTS_DIR:-}"
 DEPLOY_MODE="${DEPLOY_MODE:-auto}"
@@ -26,7 +26,7 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: scripts/deploy-live-server.sh [options]
 
-Build and publish Den Core's DenMcp.Server, stage it into the live
+Build and publish Den Core's DenCore.Service, stage it into the live
 /data/services/den-core/app tree, restart den-core.service, and run small live
 smoke checks for /health plus MCP tools/list through both the Core proxy and the
 LAN MCP facade.
@@ -237,7 +237,7 @@ publish_server() {
       -p:IncludeNativeLibrariesForSelfExtract=true \
       -o "$PUBLISH_DIR/"
 
-  [[ -x "$PUBLISH_DIR/DenMcp.Server" ]] || { echo "Publish output missing DenMcp.Server executable" >&2; exit 1; }
+  [[ -x "$PUBLISH_DIR/DenCore.Service" ]] || { echo "Publish output missing DenCore.Service executable" >&2; exit 1; }
 }
 
 sudo_local() {
@@ -261,8 +261,8 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 backup_app="$REMOTE_SERVICE_ROOT/app.previous.$timestamp"
 failed_app="$REMOTE_SERVICE_ROOT/app.failed.$timestamp"
 
-if [[ ! -f "$publish_stage/DenMcp.Server" ]]; then
-  echo "Remote stage is missing DenMcp.Server: $publish_stage" >&2
+if [[ ! -f "$publish_stage/DenCore.Service" ]]; then
+  echo "Remote stage is missing DenCore.Service: $publish_stage" >&2
   exit 1
 fi
 

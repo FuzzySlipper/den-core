@@ -2,8 +2,6 @@
 
 Den Core is the canonical Den API and state service extracted from `den-mcp`.
 
-This first skeleton intentionally keeps low-churn `DenMcp.*` namespaces and project names while establishing the service boundary. Renaming can happen after the split is green.
-
 ## Den system map
 
 This repo is the best starting point for understanding the Den system because Core owns the canonical state and contracts that the other Den services orbit around. The service split is useful, but it can make tasks and docs feel scattered; use this map as the first-pass filing/navigation guide.
@@ -54,17 +52,21 @@ TMPDIR=/tmp/den-core-runner-tmp dotnet test den-core.slnx --no-build
 The dashboard asset smoke test requires built frontend assets. Build them with:
 
 ```bash
-npm --prefix src/DenMcp.Server/ClientApp ci
-npm --prefix src/DenMcp.Server/ClientApp run build
+npm --prefix src/DenCore.Service/ClientApp ci
+npm --prefix src/DenCore.Service/ClientApp run build
 ```
 
 ## Run
 
 ```bash
-dotnet run --project src/DenMcp.Server -- --port 5199 --db-path /tmp/den-core/dev.db
+dotnet run --project src/DenCore.Service -- --port 5199 --db-path /tmp/den-core/dev.db
 ```
 
 Default server URL remains `http://localhost:5199` for compatibility during extraction. Production cutover should assign a dedicated Den Core URL/port and point the slim `den-mcp` adapter at it through `DenCore:BaseUrl`.
+
+## Configuration
+
+Den Core reads configuration from the `DenCore` section in `appsettings.json` (or environment variables / CLI args). For backward compatibility, the `DenMcp` section is still read as a fallback when `DenCore` is not present.
 
 ## Live deployment helper
 
@@ -75,7 +77,7 @@ scripts/deploy-live-server.sh --dry-run
 scripts/deploy-live-server.sh
 ```
 
-The helper publishes `src/DenMcp.Server/DenMcp.Server.csproj`, stages the output into `/data/services/den-core/app`, restarts `den-core.service`, and smokes `/health` plus MCP `tools/list` through both the Core proxy (`http://192.168.1.10:18080/den-core-api/mcp`) and LAN MCP facade (`http://192.168.1.10:5199/mcp`). During the app-tree swap it preserves live-local `appsettings*.json`, `env/`, `data/`, and `.net/` paths from the previous app tree.
+The helper publishes `src/DenCore.Service/DenCore.Service.csproj`, stages the output into `/data/services/den-core/app`, restarts `den-core.service`, and smokes `/health` plus MCP `tools/list` through both the Core proxy (`http://192.168.1.10:18080/den-core-api/mcp`) and LAN MCP facade (`http://192.168.1.10:5199/mcp`). During the app-tree swap it preserves live-local `appsettings*.json`, `env/`, `data/`, and `.net/` paths from the previous app tree.
 
 Deployment trust boundaries:
 

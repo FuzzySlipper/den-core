@@ -88,7 +88,7 @@ Response fields:
 Gateway contract endpoints honor an optional shared token configured as:
 
 ```text
-DenMcp:GatewayContract:ServiceToken
+DenCore:GatewayContract:ServiceToken
 ```
 
 When set, callers must provide either:

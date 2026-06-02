@@ -84,7 +84,7 @@ Preflight rejections are returned to the caller without posting a task-thread me
 Core reads:
 
 ```text
-DenMcp:DenPublishFacade:Endpoint
+DenCore:DenPublishFacade:Endpoint
 ```
 
 Default:
@@ -105,6 +105,6 @@ Initial test coverage:
 Run:
 
 ```bash
-dotnet test tests/DenMcp.Server.Tests/DenMcp.Server.Tests.csproj --filter DenPublishFacadeServiceTests
+dotnet test tests/DenCore.Service.Tests/DenCore.Service.Tests.csproj --filter DenPublishFacadeServiceTests
 dotnet test
 ```

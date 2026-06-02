@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <GeneratedBuildInfoFile>$(MSBuildProjectDirectory)/obj/GeneratedBuildInfo.g.cs</GeneratedBuildInfoFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DenCore.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="$(GeneratedBuildInfoFile)" Visible="false" AutoGen="true" />
+  </ItemGroup>
+
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
+    <Exec
+      Command="git rev-parse --short=12 HEAD"
+      WorkingDirectory="$(MSBuildProjectDirectory)/../.."
+      ConsoleToMsBuild="true"
+      StandardOutputImportance="Low"
+      IgnoreExitCode="true"
+      Condition="Exists('$(MSBuildProjectDirectory)/../../.git')">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_GitCommitRaw" />
+    </Exec>
+
+    <PropertyGroup>
+      <_GitCommit>$([System.String]::Copy('$(_GitCommitRaw)').Trim())</_GitCommit>
+      <_GitCommit Condition="'$(_GitCommit)' == ''">unknown</_GitCommit>
+      <_InformationalVersion>$(Version)</_InformationalVersion>
+      <_InformationalVersion Condition="'$(_GitCommit)' != 'unknown'">$(Version)+$(_GitCommit)</_InformationalVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_BuildInfoLines Include="namespace DenCore" />
+      <_BuildInfoLines Include="{" />
+      <_BuildInfoLines Include="    internal static class GeneratedBuildInfo" />
+      <_BuildInfoLines Include="    {" />
+      <_BuildInfoLines Include="        internal const string Version = &quot;$(Version)&quot;%3B" />
+      <_BuildInfoLines Include="        internal const string InformationalVersion = &quot;$(_InformationalVersion)&quot;%3B" />
+      <_BuildInfoLines Include="        internal const string Commit = &quot;$(_GitCommit)&quot;%3B" />
+      <_BuildInfoLines Include="    }" />
+      <_BuildInfoLines Include="}" />
+    </ItemGroup>
+
+    <WriteLinesToFile
+      File="$(GeneratedBuildInfoFile)"
+      Lines="@(_BuildInfoLines)"
+      Overwrite="true" />
+  </Target>
+
+</Project>

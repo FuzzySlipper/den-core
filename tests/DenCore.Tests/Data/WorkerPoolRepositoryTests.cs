@@ -996,11 +996,12 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task LeaseWithDiagnostics_CapabilityMismatch_ReturnsNoMatchingWorker()
+    public async Task LeaseWithDiagnostics_CapabilityMismatch_ReturnsHardSelectorMismatch()
     {
         // Workers exist but none have the required capabilities
-        await SeedMemberAsync("cap-worker-1", "[\\\"reviewer\\\"]");
-        await SeedMemberAsync("cap-worker-2", "[\\\"reviewer\\\"]");
+        // "coder" is a role alias but workers have no worker_role, falls back to capability check
+        await SeedMemberAsync("cap-worker-1", "[\"reviewer\"]");
+        await SeedMemberAsync("cap-worker-2", "[\"reviewer\"]");
 
         var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
         {
@@ -1013,7 +1014,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.NoCapacity);
-        Assert.Equal(WorkerPoolStates.NoCapacityNoMatchingWorker, result.NoCapacity.ReasonCode);
+        // Hard selector mismatch because non-role hard caps exist and available workers lack them
+        Assert.Equal(WorkerPoolStates.NoCapacityHardSelectorMismatch, result.NoCapacity.ReasonCode);
+        Assert.Contains("dotnet", result.NoCapacity.DiagnosticMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1129,6 +1132,192 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     {
         var fetched = await _repo.GetNoCapacityRequestAsync(99999);
         Assert.Null(fetched);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Role-first leasing: role-alias normalisation in required_capabilities
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_RoleAliasCoder_LeasesCoderWithCodeGenCaps()
+    {
+        // spawned-coder member: worker_role="coder", capabilities = ["implementation","code_generation"]
+        // required_capabilities=["coder"] should match via worker_role, NOT via capabilities JSON
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "role-alias-coder-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"implementation\",\"code_generation\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-role-alias-coder",
+            RequiredCapabilities = new[] { "coder" },
+        });
+
+        Assert.True(result.IsSuccess, "role alias 'coder' in required_capabilities should match worker_role='coder'");
+        Assert.NotNull(result.Assignment);
+        Assert.Equal("role-alias-coder-1", result.Assignment.WorkerIdentity);
+        Assert.Null(result.NoCapacity);
+    }
+
+    [Theory]
+    [InlineData("reviewer")]
+    [InlineData("validator")]
+    [InlineData("drift_checker")]
+    [InlineData("packet_auditor")]
+    public async Task LeaseWithDiagnostics_RoleAlias_LeasesMatchingRoleWorker(string roleName)
+    {
+        var workerId = $"role-alias-{roleName}-1";
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = workerId,
+            ProfileIdentity = "spawned-reviewer",
+            WorkerRole = roleName,
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"analysis\",\"audit\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = roleName,
+            AssignedBy = "runner",
+            RunId = $"run-role-alias-{roleName}",
+            RequiredCapabilities = new[] { roleName },
+        });
+
+        Assert.True(result.IsSuccess,
+            $"role alias '{roleName}' in required_capabilities should match worker_role='{roleName}'");
+        Assert.NotNull(result.Assignment);
+        Assert.Equal(workerId, result.Assignment.WorkerIdentity);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_HardNonRoleCapabilityMissing_FailsWithHardSelectorMismatch()
+    {
+        // Worker with worker_role="coder", capabilities=["implementation","code_generation"]
+        // required_capabilities=["dotnet"] — "dotnet" is NOT a role alias, so it's a hard constraint.
+        // The worker doesn't have "dotnet" in capabilities, so it should fail.
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "hard-miss-coder-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"implementation\",\"code_generation\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-hard-cap-miss",
+            RequiredCapabilities = new[] { "dotnet" },
+        });
+
+        Assert.False(result.IsSuccess, "hard non-role capability 'dotnet' should not match");
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityHardSelectorMismatch, result.NoCapacity.ReasonCode);
+        Assert.Contains("dotnet", result.NoCapacity.DiagnosticMessage, StringComparison.Ordinal);
+        Assert.Contains("Hard capability mismatch", result.NoCapacity.DiagnosticMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_RoleAliasAndHardCap_LeasesOnAliasButFailsHard()
+    {
+        // Worker: worker_role="coder", capabilities=["implementation"]
+        // required_capabilities=["coder","dotnet"] — "coder" is role alias (ok), "dotnet" is hard (missing)
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "mixed-alias-hard-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"implementation\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-mixed-alias-hard",
+            RequiredCapabilities = new[] { "coder", "dotnet" },
+        });
+
+        Assert.False(result.IsSuccess,
+            "role alias 'coder' satisfied but hard capability 'dotnet' missing — should fail");
+        Assert.NotNull(result.NoCapacity);
+        Assert.Equal(WorkerPoolStates.NoCapacityHardSelectorMismatch, result.NoCapacity.ReasonCode);
+        Assert.Contains("dotnet", result.NoCapacity.DiagnosticMessage, StringComparison.Ordinal);
+        // Diagnostic should mention normalised role aliases
+        Assert.Contains("coder", result.NoCapacity.DiagnosticMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LeaseWithDiagnostics_RoleAliasWithoutWorkerRole_StillFails()
+    {
+        // Worker has no worker_role set, capabilities=["implementation"]
+        // required_capabilities=["coder"] — "coder" is role alias, but worker_role is null => no match
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "no-role-coder-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = null,
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"implementation\",\"code_generation\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-no-role-alias",
+            RequiredCapabilities = new[] { "coder" },
+        });
+
+        Assert.False(result.IsSuccess,
+            "role alias 'coder' should NOT match when worker_role is null");
+        Assert.NotNull(result.NoCapacity);
+        // Falls back to no_matching_worker since no worker with matching capabilities/role
+        Assert.Equal(WorkerPoolStates.NoCapacityNoMatchingWorker, result.NoCapacity.ReasonCode);
+    }
+
+    [Fact]
+    public async Task Lease_RoleFirst_OrdinaryCallerNeedsNoCapabilityTags()
+    {
+        // End-to-end: ordinary caller uses only role/worker_role, no required_capabilities
+        await _repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = "role-first-coder-1",
+            ProfileIdentity = "spawned-coder",
+            WorkerRole = "coder",
+            Status = WorkerPoolStates.MemberAvailable,
+            Capabilities = "[\"implementation\",\"code_generation\"]",
+        });
+
+        var result = await _repo.LeaseWorkerWithDiagnosticsAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-role-first",
+            WorkerRole = "coder",
+        });
+
+        Assert.True(result.IsSuccess,
+            "ordinary caller with role/worker_role should not need capability tags");
+        Assert.NotNull(result.Assignment);
+        Assert.Equal("role-first-coder-1", result.Assignment.WorkerIdentity);
     }
 
     // ─────────────────────────────────────────────────────────────────

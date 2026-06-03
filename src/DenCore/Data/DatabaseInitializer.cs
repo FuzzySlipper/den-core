@@ -1254,6 +1254,9 @@ public sealed class DatabaseInitializer
 
         // Ensure orchestrator_leases schema (migration for existing DBs)
         await EnsureOrchestratorLeasesSchemaAsync(connection);
+
+        // Migration: expand no-capacity reason_code CHECK for hard_selector_mismatch
+        await EnsureNoCapacityReasonCodesAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -2803,7 +2806,8 @@ public sealed class DatabaseInitializer
                                              'all_busy',
                                              'all_quarantined_or_offline',
                                              'ambiguous',
-                                             'preferred_not_found_or_busy'
+                                             'preferred_not_found_or_busy',
+                                             'hard_selector_mismatch'
                                          )),
                 candidate_details       TEXT NOT NULL DEFAULT '{}',
                 diagnostic_message      TEXT,
@@ -3197,5 +3201,93 @@ public sealed class DatabaseInitializer
             "CREATE INDEX IF NOT EXISTS idx_cap_invocations_status ON capability_invocations(status)");
         await EnsureIndexAsync(connection, "idx_cap_invocations_caller_task",
             "CREATE INDEX IF NOT EXISTS idx_cap_invocations_caller_task ON capability_invocations(caller_task_id) WHERE caller_task_id IS NOT NULL");
+    }
+
+    /// <summary>
+    /// Migration: expand the no-capacity reason_code CHECK constraint to include
+    /// 'hard_selector_mismatch'. SQLite does not support ALTER-ing CHECK constraints,
+    /// so we drop and recreate the table if the old constraint is present.
+    /// </summary>
+    private static async Task EnsureNoCapacityReasonCodesAsync(SqliteConnection connection)
+    {
+        // Check if the table exists and has the old constraint (missing hard_selector_mismatch)
+        await using var schemaCmd = connection.CreateCommand();
+        schemaCmd.CommandText = "SELECT sql FROM sqlite_master WHERE type='table' AND name='worker_no_capacity_requests'";
+        var schema = (string?)await schemaCmd.ExecuteScalarAsync();
+        if (schema is null)
+            return; // Table doesn't exist yet — will be created with new constraint
+
+        if (schema.Contains("hard_selector_mismatch", StringComparison.Ordinal))
+            return; // Already migrated
+
+        // Old constraint present — recreate the table with the expanded CHECK
+        await using var fkOff = connection.CreateCommand();
+        fkOff.CommandText = "PRAGMA foreign_keys = OFF;";
+        await fkOff.ExecuteNonQueryAsync();
+
+        try
+        {
+            await using var migrateCmd = connection.CreateCommand();
+            migrateCmd.CommandText = """
+                BEGIN;
+
+                CREATE TABLE worker_no_capacity_requests_new (
+                    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id               TEXT NOT NULL,
+                    task_id                  INTEGER,
+                    role                     TEXT NOT NULL,
+                    assigned_by              TEXT NOT NULL,
+                    run_id                   TEXT NOT NULL,
+                    profile_identity         TEXT,
+                    worker_role              TEXT,
+                    required_capabilities    TEXT,
+                    preferred_worker_identity TEXT,
+                    reason_code              TEXT NOT NULL
+                                             CHECK (reason_code IN (
+                                                 'no_matching_worker',
+                                                 'all_busy',
+                                                 'all_quarantined_or_offline',
+                                                 'ambiguous',
+                                                 'preferred_not_found_or_busy',
+                                                 'hard_selector_mismatch'
+                                             )),
+                    candidate_details       TEXT NOT NULL DEFAULT '{}',
+                    diagnostic_message      TEXT,
+                    created_at              TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                INSERT INTO worker_no_capacity_requests_new
+                    (id, project_id, task_id, role, assigned_by, run_id,
+                     profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                     reason_code, candidate_details, diagnostic_message, created_at)
+                SELECT id, project_id, task_id, role, assigned_by, run_id,
+                       profile_identity, worker_role, required_capabilities, preferred_worker_identity,
+                       reason_code, candidate_details, diagnostic_message, created_at
+                FROM worker_no_capacity_requests;
+
+                DROP TABLE worker_no_capacity_requests;
+                ALTER TABLE worker_no_capacity_requests_new RENAME TO worker_no_capacity_requests;
+
+                COMMIT;
+                """;
+            await migrateCmd.ExecuteNonQueryAsync();
+
+            // Recreate indexes
+            await EnsureIndexAsync(connection, "idx_no_capacity_project",
+                "CREATE INDEX IF NOT EXISTS idx_no_capacity_project ON worker_no_capacity_requests(project_id, created_at DESC)");
+            await EnsureIndexAsync(connection, "idx_no_capacity_run",
+                "CREATE INDEX IF NOT EXISTS idx_no_capacity_run ON worker_no_capacity_requests(run_id, created_at DESC)");
+        }
+        catch
+        {
+            // If migration fails (e.g. concurrent access), leave table as-is.
+            // New reason code inserts will fail with CHECK constraint violation.
+        }
+        finally
+        {
+            await using var fkOn = connection.CreateCommand();
+            fkOn.CommandText = "PRAGMA foreign_keys = ON;";
+            await fkOn.ExecuteNonQueryAsync();
+        }
     }
 }

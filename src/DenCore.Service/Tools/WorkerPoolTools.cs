@@ -34,7 +34,9 @@ public sealed class WorkerPoolTools
         [Description("Shared role/profile identity (e.g. 'spawned-coder'). Multiple members can share this.")] string? profile_identity = null,
         [Description("Worker role: coder, reviewer, validator, drift_checker, packet_auditor.")] string? worker_role = null,
         [Description("Optional display name.")] string? display_name = null,
-        [Description("JSON array of capability strings, e.g. [\"coder\",\"dotnet\"].)")] string? capabilities = null,
+        [Description("JSON array of capability strings, e.g. [\"dotnet\",\"sqlite\"]. " +
+                     "Do NOT use role names (coder/reviewer/validator) as capability strings; " +
+                     "those are resolved through worker_role.")] string? capabilities = null,
         [Description("Pool status: available, busy, quarantined, offboarded. Default: available.")] string status = "available",
         [Description("Optional agent instance binding id.")] string? agent_instance_id = null,
         [Description("Optional Den channel id for correlation.")] string? channel_id = null,
@@ -116,6 +118,7 @@ public sealed class WorkerPoolTools
         "On failure, returns a typed no-capacity diagnostic with reason code, candidate statistics, " +
         "and next-allowed guidance. Core-owned — Gateway/Channels use this to dispatch work. " +
         "Lifecycle operations key on worker_identity (concrete member id). " +
+        "Use role/worker_role as the primary worker selector — do not pass role names as capabilities. " +
         "Use profile_identity to filter by shared role profile when multiple members share it.")]
     public static async Task<string> LeaseWorker(
         IWorkerPoolRepository repo,
@@ -127,7 +130,9 @@ public sealed class WorkerPoolTools
         [Description("Optional preferred specific worker identity.")] string? preferred_worker_identity = null,
         [Description("Optional profile identity filter (e.g. 'spawned-coder'). Only workers with this profile are considered.")] string? profile_identity = null,
         [Description("Optional worker role filter (e.g. 'coder'). Only workers with this role are considered.")] string? worker_role = null,
-        [Description("JSON array of required capabilities, e.g. [\"coder\",\"dotnet\"].)")] string? required_capabilities = null,
+        [Description("JSON array of hard capability constraints, e.g. [\"dotnet\",\"sqlite\"]. " +
+                     "Do NOT pass role names (coder/reviewer/validator) here — use role/worker_role instead. " +
+                     "Role-name aliases are normalised and matched against worker_role automatically.")] string? required_capabilities = null,
         [Description("If true, return full assignment record.")] bool verbose = false)
     {
         var capabilities = required_capabilities is not null
@@ -472,12 +477,12 @@ public sealed class WorkerPoolTools
         "attempts that could not be fulfilled. Each record includes the typed reason code, " +
         "candidate statistics by status, the original request parameters, and a diagnostic message. " +
         "Reason codes: no_matching_worker, all_busy, all_quarantined_or_offline, ambiguous, " +
-        "preferred_not_found_or_busy. Use this for readback, automation, and Den Web diagnostics.")]
+        "preferred_not_found_or_busy, hard_selector_mismatch. Use this for readback, automation, and Den Web diagnostics.")]
     public static async Task<string> ListNoCapacityRequests(
         IWorkerPoolRepository repo,
         [Description("Optional project filter.")] string? project_id = null,
         [Description("Optional run id filter.")] string? run_id = null,
-        [Description("Optional reason code filter (no_matching_worker, all_busy, all_quarantined_or_offline, ambiguous, preferred_not_found_or_busy).")] string? reason_code = null,
+        [Description("Optional reason code filter (no_matching_worker, all_busy, all_quarantined_or_offline, ambiguous, preferred_not_found_or_busy, hard_selector_mismatch).")] string? reason_code = null,
         [Description("Maximum items to return (max 200).")] int limit = 50,
         [Description("If true, return full records.")] bool verbose = false)
     {

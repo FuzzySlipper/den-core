@@ -1093,14 +1093,42 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 // No matching workers — determine why
                 var reasonCode = await DiagnoseNoMatchingWorkersAsync(conn, input);
                 var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
-                var record = await InsertNoCapacityRequestAsync(conn, input, reasonCode, stats,
-                    stats.Available == 0 && stats.Busy > 0
-                        ? $"No available workers matching criteria. {stats.Busy} worker(s) are busy."
-                        : stats.Available == 0 && stats.Quarantined > 0
-                            ? $"No available workers matching criteria. {stats.Quarantined} worker(s) quarantined."
-                            : stats.Total == 0
-                                ? "No workers registered in the pool matching the requested role/profile/capabilities."
-                                : $"No matching candidate workers available. Total candidates: {stats.Total}.");
+
+                // Build diagnostic message with role-alias normalisation info when relevant
+                string? diagMessage;
+                if (reasonCode == WorkerPoolStates.NoCapacityHardSelectorMismatch)
+                {
+                    var roleAliasCaps = input.RequiredCapabilities?
+                        .Where(c => WorkerPoolStates.IsRoleAlias(c))
+                        .ToArray() ?? [];
+                    var hardCaps = input.RequiredCapabilities?
+                        .Where(c => !WorkerPoolStates.IsRoleAlias(c))
+                        .ToArray() ?? [];
+
+                    var roleAliasNote = roleAliasCaps.Length > 0
+                        ? $"role aliases normalized (matched via worker_role): [{string.Join(", ", roleAliasCaps)}]. "
+                        : "";
+                    diagMessage = roleAliasNote +
+                        $"Hard capability mismatch: [{string.Join(", ", hardCaps)}] not satisfied by any of {stats.Available} available worker(s) matching role/profile.";
+                }
+                else if (stats.Available == 0 && stats.Busy > 0)
+                {
+                    diagMessage = $"No available workers matching criteria. {stats.Busy} worker(s) are busy.";
+                }
+                else if (stats.Available == 0 && stats.Quarantined > 0)
+                {
+                    diagMessage = $"No available workers matching criteria. {stats.Quarantined} worker(s) quarantined.";
+                }
+                else if (stats.Total == 0)
+                {
+                    diagMessage = "No workers registered in the pool matching the requested role/profile/capabilities.";
+                }
+                else
+                {
+                    diagMessage = $"No matching candidate workers available. Total candidates: {stats.Total}.";
+                }
+
+                var record = await InsertNoCapacityRequestAsync(conn, input, reasonCode, stats, diagMessage);
                 await tx.CommitAsync();
                 return new LeaseWorkerResult
                 {
@@ -1270,7 +1298,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
     /// <summary>
     /// Diagnose why no matching workers were found — distinguishes
-    /// no_matching_worker, all_busy, all_quarantined_or_offline, and ambiguous.
+    /// no_matching_worker, all_busy, all_quarantined_or_offline, hard_selector_mismatch,
+    /// and ambiguous.
     /// </summary>
     private static async Task<string> DiagnoseNoMatchingWorkersAsync(SqliteConnection conn, LeaseWorkerInput input)
     {
@@ -1288,6 +1317,20 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             var hasBusy = stats.Busy > 0;
             if (stats.Available == 0 && !hasBusy && hasUnavailable)
                 return WorkerPoolStates.NoCapacityAllQuarantinedOrOffline;
+        }
+
+        // Workers matching role/profile exist in some status combination but none available:
+        // if there are available workers, the mismatch is from hard capability constraints.
+        if (stats.Available > 0 && input.RequiredCapabilities is { Length: > 0 })
+        {
+            // Workers exist and are available, but capability filter eliminated them.
+            // Check if the only constraints are role aliases (shouldn't happen here
+            // since role-aliases are checked against worker_role in FindAvailableWorkersAsync).
+            var hardCaps = input.RequiredCapabilities
+                .Where(c => !WorkerPoolStates.IsRoleAlias(c))
+                .ToArray();
+            if (hardCaps.Length > 0)
+                return WorkerPoolStates.NoCapacityHardSelectorMismatch;
         }
 
         // Multiple statuses present but none available: ambiguous
@@ -1514,7 +1557,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         var workers = new List<string>();
         await using var cmd = conn.CreateCommand();
 
-        var sql = "SELECT worker_identity, capabilities FROM worker_pool_members WHERE status = 'available'";
+        var sql = "SELECT worker_identity, capabilities, worker_role FROM worker_pool_members WHERE status = 'available'";
         if (!string.IsNullOrWhiteSpace(profileIdentity))
         {
             sql += " AND profile_identity = @profileIdentity";
@@ -1532,6 +1575,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         {
             var workerId = reader.GetString(0);
             var capabilitiesJson = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var memberWorkerRole = reader.IsDBNull(2) ? null : reader.GetString(2);
 
             if (requiredCapabilities is null || requiredCapabilities.Length == 0)
             {
@@ -1539,20 +1583,53 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 continue;
             }
 
-            // Check capability match
-            if (string.IsNullOrWhiteSpace(capabilitiesJson))
+            // Classify capabilities: role-aliases vs hard capabilities
+            var roleAliasCaps = new List<string>();
+            var hardCaps = new List<string>();
+            foreach (var c in requiredCapabilities)
+            {
+                if (WorkerPoolStates.IsRoleAlias(c))
+                    roleAliasCaps.Add(c);
+                else
+                    hardCaps.Add(c);
+            }
+
+            // Check role-alias capabilities against worker_role.
+            // If the worker's role matches a role alias, it's satisfied.
+            // Otherwise fall back to capabilities JSON for backward compatibility.
+            var unsatisfiedRoleAliases = roleAliasCaps
+                .Where(rac => memberWorkerRole is null
+                    || !string.Equals(memberWorkerRole, rac, StringComparison.Ordinal))
+                .ToList();
+
+            // For role aliases not satisfied by worker_role, fall back to capabilities check
+            var allCapsToCheck = hardCaps.Concat(unsatisfiedRoleAliases).ToList();
+            string[]? workerCaps = null;
+
+            if (allCapsToCheck.Count > 0)
+            {
+                if (string.IsNullOrWhiteSpace(capabilitiesJson))
+                    continue; // Hard caps or unsatisfied role aliases, but no capabilities to match
+
+                try
+                {
+                    workerCaps = JsonSerializer.Deserialize<string[]>(capabilitiesJson);
+                }
+                catch
+                {
+                    continue; // Malformed capabilities JSON — skip
+                }
+
+                if (workerCaps is null)
+                    continue;
+            }
+
+            // All required caps (hard + unsatisfied role aliases) must be in workerCaps
+            if (allCapsToCheck.Count > 0
+                && !allCapsToCheck.All(c => workerCaps!.Contains(c, StringComparer.Ordinal)))
                 continue;
 
-            try
-            {
-                var caps = JsonSerializer.Deserialize<string[]>(capabilitiesJson);
-                if (caps is not null && requiredCapabilities.All(c => caps.Contains(c, StringComparer.Ordinal)))
-                    workers.Add(workerId);
-            }
-            catch
-            {
-                // Malformed capabilities JSON — skip
-            }
+            workers.Add(workerId);
         }
 
         return workers;

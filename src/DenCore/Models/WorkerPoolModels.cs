@@ -376,6 +376,11 @@ public static class WorkerPoolStates
     public const string NoCapacityAllQuarantinedOrOffline = "all_quarantined_or_offline";
     public const string NoCapacityAmbiguous = "ambiguous";
     public const string NoCapacityPreferredNotFoundOrBusy = "preferred_not_found_or_busy";
+    /// <summary>
+    /// One or more required capabilities are true hard constraints (not role aliases)
+    /// and no candidate worker satisfies them despite matching role/profile.
+    /// </summary>
+    public const string NoCapacityHardSelectorMismatch = "hard_selector_mismatch";
 
     public static readonly string[] ValidNoCapacityReasonCodes = [
         NoCapacityNoMatchingWorker,
@@ -383,7 +388,27 @@ public static class WorkerPoolStates
         NoCapacityAllQuarantinedOrOffline,
         NoCapacityAmbiguous,
         NoCapacityPreferredNotFoundOrBusy,
+        NoCapacityHardSelectorMismatch,
     ];
+
+    // ── Role-name aliases recognised in required_capabilities ──────────
+
+    /// <summary>
+    /// Known worker role names that may appear as required_capabilities aliases.
+    /// These are checked against the worker's worker_role, not their capabilities JSON.
+    /// Required_capabilities=["coder"] matches a worker with worker_role="coder"
+    /// regardless of what strings appear in the capabilities column.
+    /// </summary>
+    public static readonly string[] RoleAliases =
+    [
+        "coder", "reviewer", "validator", "drift_checker", "packet_auditor",
+    ];
+
+    /// <summary>
+    /// Check if a required capability string is a known role-name alias.
+    /// </summary>
+    public static bool IsRoleAlias(string cap) =>
+        Array.IndexOf(RoleAliases, cap) >= 0;
 
     // ── Orchestrator Lease Kinds ────────────────────────────────────────
 

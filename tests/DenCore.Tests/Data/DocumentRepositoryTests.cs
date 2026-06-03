@@ -202,4 +202,255 @@ public class DocumentRepositoryTests : IAsyncLifetime
         Assert.NotNull(fetched);
         Assert.Equal("Second summary", fetched!.Summary);
     }
+
+    // --- Visibility / Archive tests ---
+
+    [Fact]
+    public async Task Upsert_DefaultsToNormalVisibility()
+    {
+        var doc = await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "vis-default", Title = "Default Vis",
+            Content = "content"
+        });
+        Assert.Equal(DocumentVisibility.Normal, doc.Visibility);
+
+        var fetched = await _repo.GetAsync("proj", "vis-default");
+        Assert.NotNull(fetched);
+        Assert.Equal(DocumentVisibility.Normal, fetched!.Visibility);
+    }
+
+    [Fact]
+    public async Task List_ExcludesArchivedByDefault()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "normal-doc", Title = "Normal Doc", Content = "visible"
+        });
+        var archivedDoc = await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "archived-doc", Title = "Archived Doc", Content = "hidden",
+            Visibility = DocumentVisibility.Archived
+        });
+        // Verify it was stored as archived
+        Assert.Equal(DocumentVisibility.Archived, archivedDoc.Visibility);
+
+        var docs = await _repo.ListAsync("proj");
+        Assert.Single(docs);
+        Assert.Equal("normal-doc", docs[0].Slug);
+    }
+
+    [Fact]
+    public async Task List_CanFilterByVisibility()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "normal-vis", Title = "Normal", Content = "x",
+            Visibility = DocumentVisibility.Normal
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "hidden-vis", Title = "Hidden", Content = "x",
+            Visibility = DocumentVisibility.Hidden
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "archived-vis", Title = "Archived", Content = "x",
+            Visibility = DocumentVisibility.Archived
+        });
+
+        var normalDocs = await _repo.ListAsync("proj", visibility: DocumentVisibility.Normal);
+        Assert.Single(normalDocs);
+        Assert.Equal("normal-vis", normalDocs[0].Slug);
+
+        var archivedDocs = await _repo.ListAsync("proj", visibility: DocumentVisibility.Archived);
+        Assert.Single(archivedDocs);
+        Assert.Equal("archived-vis", archivedDocs[0].Slug);
+
+        var hiddenDocs = await _repo.ListAsync("proj", visibility: DocumentVisibility.Hidden);
+        Assert.Single(hiddenDocs);
+        Assert.Equal("hidden-vis", hiddenDocs[0].Slug);
+    }
+
+    [Fact]
+    public async Task Search_ExcludesArchived()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "search-normal", Title = "Searchable Normal",
+            Content = "unique_term visible"
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "search-archived", Title = "Searchable Archived",
+            Content = "unique_term hidden", Visibility = DocumentVisibility.Archived
+        });
+
+        var results = await _repo.SearchAsync("unique_term");
+        Assert.Single(results);
+        Assert.Equal("search-normal", results[0].Slug);
+    }
+
+    [Fact]
+    public async Task UpdateVisibility_ArchivesDocument()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "to-archive", Title = "To Archive", Content = "content"
+        });
+
+        var updated = await _repo.UpdateVisibilityAsync("proj", "to-archive", DocumentVisibility.Archived);
+        Assert.NotNull(updated);
+        Assert.Equal(DocumentVisibility.Archived, updated!.Visibility);
+
+        // Verify it's excluded from default list
+        var docs = await _repo.ListAsync("proj");
+        Assert.DoesNotContain(docs, d => d.Slug == "to-archive");
+
+        // But still accessible via GetAsync
+        var fetched = await _repo.GetAsync("proj", "to-archive");
+        Assert.NotNull(fetched);
+        Assert.Equal(DocumentVisibility.Archived, fetched!.Visibility);
+    }
+
+    [Fact]
+    public async Task UpdateVisibility_UnarchivesDocument()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "to-unarchive", Title = "To Unarchive",
+            Content = "content", Visibility = DocumentVisibility.Archived
+        });
+
+        var updated = await _repo.UpdateVisibilityAsync("proj", "to-unarchive", DocumentVisibility.Normal);
+        Assert.NotNull(updated);
+        Assert.Equal(DocumentVisibility.Normal, updated!.Visibility);
+
+        // Now visible in default list
+        var docs = await _repo.ListAsync("proj");
+        Assert.Contains(docs, d => d.Slug == "to-unarchive");
+    }
+
+    [Fact]
+    public async Task UpdateVisibility_ReturnsNull_WhenNotFound()
+    {
+        var result = await _repo.UpdateVisibilityAsync("proj", "nonexistent", DocumentVisibility.Archived);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ListArchived_ReturnsOnlyArchived()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "arch-list-1", Title = "Archived 1", Content = "x",
+            Visibility = DocumentVisibility.Archived
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "arch-list-2", Title = "Archived 2", Content = "x",
+            Visibility = DocumentVisibility.Archived
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "arch-list-normal", Title = "Normal", Content = "x"
+        });
+
+        var archived = await _repo.ListArchivedAsync("proj");
+        Assert.Equal(2, archived.Count);
+        Assert.All(archived, d => Assert.Equal(DocumentVisibility.Archived, d.Visibility));
+    }
+
+    [Fact]
+    public async Task SearchArchived_ReturnsOnlyArchivedMatches()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "arch-search-1", Title = "Archived Searchable",
+            Content = "rare_keyword here", Visibility = DocumentVisibility.Archived
+        });
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "arch-search-normal", Title = "Normal Searchable",
+            Content = "rare_keyword also here"
+        });
+
+        var results = await _repo.SearchArchivedAsync("rare_keyword");
+        Assert.Single(results);
+        Assert.Equal("arch-search-1", results[0].Slug);
+        Assert.Equal(DocumentVisibility.Archived, results[0].Visibility);
+    }
+
+    [Fact]
+    public async Task ArchivePreflight_NoReferences_ReturnsCanArchive()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "preflight-clean", Title = "Clean", Content = "x"
+        });
+
+        var result = await _repo.ArchivePreflightAsync("proj", "preflight-clean");
+        Assert.True(result.CanArchive);
+        Assert.Empty(result.ReferencedBy);
+    }
+
+    [Fact]
+    public async Task ArchivePreflight_WithGuidanceReference_ReturnsCannotArchive()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "preflight-guided", Title = "Guided", Content = "x"
+        });
+
+        var guidanceRepo = new AgentGuidanceRepository(_testDb.Db);
+        await guidanceRepo.UpsertAsync(new AgentGuidanceEntry
+        {
+            ProjectId = "proj",
+            DocumentProjectId = "proj",
+            DocumentSlug = "preflight-guided",
+            Importance = AgentGuidanceImportance.Important,
+            SortOrder = 0
+        });
+
+        var result = await _repo.ArchivePreflightAsync("proj", "preflight-guided");
+        Assert.False(result.CanArchive);
+        Assert.Single(result.ReferencedBy);
+        Assert.Equal("agent_guidance", result.ReferencedBy[0].RefKind);
+    }
+
+    [Fact]
+    public async Task ArchivePreflight_NonExistentDoc_ReturnsCannotArchive()
+    {
+        var result = await _repo.ArchivePreflightAsync("proj", "does-not-exist");
+        Assert.False(result.CanArchive);
+        Assert.Empty(result.ReferencedBy);
+    }
+
+    [Fact]
+    public async Task DocumentSummary_IncludesVisibility()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "summary-vis", Title = "Summary Vis",
+            Content = "x", Visibility = DocumentVisibility.Hidden
+        });
+
+        var docs = await _repo.ListAsync("proj", visibility: DocumentVisibility.Hidden);
+        Assert.Single(docs);
+        Assert.Equal(DocumentVisibility.Hidden, docs[0].Visibility);
+    }
+
+    [Fact]
+    public async Task SearchResult_IncludesVisibility()
+    {
+        await _repo.UpsertAsync(new Document
+        {
+            ProjectId = "proj", Slug = "search-vis", Title = "Search Vis",
+            Content = "vis_test_term searchable"
+        });
+
+        var results = await _repo.SearchAsync("vis_test_term");
+        Assert.Single(results);
+        Assert.Equal(DocumentVisibility.Normal, results[0].Visibility);
+    }
 }

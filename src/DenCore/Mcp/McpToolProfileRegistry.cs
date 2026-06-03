@@ -210,6 +210,7 @@ public sealed class McpToolProfileRegistry
         // ---- document bundle ----
         m.Add(McpToolBundles.Document,
             "store_document", "get_document", "list_documents", "search_documents", "delete_document",
+            "update_document_visibility", "archive_document_preflight", "query_archived_documents",
             "query_librarian");
 
         // ---- blackboard bundle ----

@@ -241,4 +241,56 @@ public sealed class AgentGuidanceRepositoryTests : IAsyncLifetime
         Assert.Equal("assistant", entry.ProjectId);
         Assert.Equal("persona", entry.DocumentSlug);
     }
+
+    // --- Archived document exclusion from guidance resolution (#1865) ---
+
+    [Fact]
+    public async Task Resolve_ExcludesArchivedDocuments()
+    {
+        // Create a document and archive it
+        await _documents.UpsertAsync(new Document
+        {
+            ProjectId = "proj",
+            Slug = "archived-guidance-doc",
+            Title = "Archived Guidance",
+            Content = "Should not appear in guidance",
+            DocType = DocType.Convention
+        });
+        await _guidance.UpsertAsync(new AgentGuidanceEntry
+        {
+            ProjectId = "proj",
+            DocumentProjectId = "proj",
+            DocumentSlug = "archived-guidance-doc",
+            Importance = AgentGuidanceImportance.Important,
+            SortOrder = 0
+        });
+
+        // Archive the document
+        await _documents.UpdateVisibilityAsync("proj", "archived-guidance-doc", DocumentVisibility.Archived);
+
+        var resolved = await _guidance.ResolveAsync("proj");
+        Assert.DoesNotContain("Should not appear in guidance", resolved.Content);
+        Assert.DoesNotContain(resolved.Sources, s => s.Slug == "archived-guidance-doc");
+    }
+
+    [Fact]
+    public async Task Resolve_ExcludesGlobalArchivedDocuments()
+    {
+        // Archive the global document
+        await _documents.UpdateVisibilityAsync("_global", "global-required", DocumentVisibility.Archived);
+
+        // Add guidance entry pointing at it
+        await _guidance.UpsertAsync(new AgentGuidanceEntry
+        {
+            ProjectId = "_global",
+            DocumentProjectId = "_global",
+            DocumentSlug = "global-required",
+            Importance = AgentGuidanceImportance.Required,
+            SortOrder = 0
+        });
+
+        var resolved = await _guidance.ResolveAsync("proj");
+        Assert.DoesNotContain("Global guidance", resolved.Content);
+        Assert.Empty(resolved.Sources);
+    }
 }

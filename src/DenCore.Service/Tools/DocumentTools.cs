@@ -42,7 +42,7 @@ public sealed class DocumentTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug.")]
+    [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug. Returns documents regardless of visibility (normal, hidden, archived).")]
     public static async Task<string> GetDocument(
         IDocumentRepository repo,
         [Description("Project or space ID.")] string project_id,
@@ -56,22 +56,24 @@ public sealed class DocumentTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Omit project_id to list across all projects and spaces.")]
+    [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Excludes archived documents by default. Omit project_id to list across all projects and spaces.")]
     public static async Task<string> ListDocuments(
         IDocumentRepository repo,
         [Description("Project or space ID. Omit to list across all projects and spaces.")] string? project_id = null,
-        [Description("Filter by type: prd, spec, adr, convention, reference, note.")] string? doc_type = null,
-        [Description("Filter by tags (comma-separated). Document must have ALL specified tags.")] string? tags = null)
+        [Description("Filter by type: prd, spec, adr, convention, reference, note, memory.")] string? doc_type = null,
+        [Description("Filter by tags (comma-separated). Document must have ALL specified tags.")] string? tags = null,
+        [Description("Filter by visibility: normal, hidden, archived. Omit to exclude archived documents.")] string? visibility = null)
     {
         var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
+        var parsedVisibility = visibility is not null ? EnumExtensions.ParseDocumentVisibility(visibility) : (DocumentVisibility?)null;
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var docs = await repo.ListAsync(project_id, parsedType, tagList);
+        var docs = await repo.ListAsync(project_id, parsedType, tagList, parsedVisibility);
         return JsonSerializer.Serialize(docs, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Supports AND, OR, NOT, and \"phrase\" queries.")]
+    [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Excludes archived documents. Supports AND, OR, NOT, and \"phrase\" queries.")]
     public static async Task<string> SearchDocuments(
         IDocumentRepository repo,
         [Description("FTS5 search query.")] string query,
@@ -93,5 +95,59 @@ public sealed class DocumentTools
         return deleted
             ? JsonSerializer.Serialize(new { message = $"Document '{slug}' deleted from project '{project_id}'." }, JsonOpts.Default)
             : JsonSerializer.Serialize(new { error = $"Document '{slug}' not found in project '{project_id}'." }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
+    [McpServerTool(Name = "update_document_visibility"), Description("Update a document's visibility to normal, hidden, or archived. Archiving is a status flip — not data movement. Use archive_document_preflight first to check for active references.")]
+    public static async Task<string> UpdateDocumentVisibility(
+        IDocumentRepository repo,
+        [Description("Project or space ID.")] string project_id,
+        [Description("Document slug.")] string slug,
+        [Description("New visibility: normal, hidden, archived.")] string visibility,
+        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+    {
+        var parsedVisibility = EnumExtensions.ParseDocumentVisibility(visibility);
+        var doc = await repo.UpdateVisibilityAsync(project_id, slug, parsedVisibility);
+        if (doc is null)
+            return JsonSerializer.Serialize(new { error = $"Document '{slug}' not found in project '{project_id}'." }, JsonOpts.Default);
+        return verbose
+            ? JsonSerializer.Serialize(doc, JsonOpts.Default)
+            : ConciseResponse.UpdatedDocumentVisibility(doc);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
+    [McpServerTool(Name = "archive_document_preflight"), Description("Check whether a document can be safely archived. Returns active references (agent guidance entries) that would be affected. Prefer running this before update_document_visibility to archived.")]
+    public static async Task<string> ArchiveDocumentPreflight(
+        IDocumentRepository repo,
+        [Description("Project or space ID.")] string project_id,
+        [Description("Document slug.")] string slug)
+    {
+        var result = await repo.ArchivePreflightAsync(project_id, slug);
+        return JsonSerializer.Serialize(result, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("document")]
+    [McpServerTool(Name = "query_archived_documents"), Description("Deliberate archived document recall path. List or search documents that have been archived. Separate from default list_documents to prevent accidental inclusion of archived content.")]
+    public static async Task<string> QueryArchivedDocuments(
+        IDocumentRepository repo,
+        [Description("Optional FTS5 search query. Omit to list all archived documents.")] string? query = null,
+        [Description("Scope to one project or space.")] string? project_id = null,
+        [Description("Filter by type: prd, spec, adr, convention, reference, note, memory.")] string? doc_type = null,
+        [Description("Filter by tags (comma-separated).")] string? tags = null)
+    {
+        var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
+        var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var results = await repo.SearchArchivedAsync(query, project_id);
+            return JsonSerializer.Serialize(results, JsonOpts.Default);
+        }
+
+        var docs = await repo.ListArchivedAsync(project_id, parsedType, tagList);
+        return JsonSerializer.Serialize(docs, JsonOpts.Default);
     }
 }

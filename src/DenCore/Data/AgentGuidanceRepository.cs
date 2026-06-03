@@ -112,14 +112,15 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
             SELECT
                 g.id, g.project_id, g.document_project_id, g.document_slug,
                 g.importance, g.audience, g.sort_order, g.notes, g.created_at, g.updated_at,
-                d.id, d.project_id, d.slug, d.title, d.content, d.doc_type, d.tags, d.created_at, d.updated_at
+                d.id, d.project_id, d.slug, d.title, d.content, d.doc_type, d.visibility, d.tags, d.created_at, d.updated_at
             FROM agent_guidance_entries g
             JOIN documents d
               ON d.project_id = g.document_project_id
              AND d.slug = g.document_slug
-            WHERE g.project_id = '_global'
-               OR (@projectId != '_global' AND g.project_id = @projectId)
-               OR (@projectId = '_global' AND g.project_id = '_global')
+            WHERE (g.project_id = '_global'
+                   OR (@projectId != '_global' AND g.project_id = @projectId)
+                   OR (@projectId = '_global' AND g.project_id = '_global'))
+              AND d.visibility != 'archived'
             ORDER BY
                 CASE WHEN g.project_id = '_global' THEN 0 ELSE 1 END,
                 g.sort_order ASC,
@@ -197,7 +198,7 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
 
     private static Document ReadDocument(SqliteDataReader reader, int offset)
     {
-        var tagsJson = reader.IsDBNull(offset + 6) ? null : reader.GetString(offset + 6);
+        var tagsJson = reader.IsDBNull(offset + 7) ? null : reader.GetString(offset + 7);
         return new Document
         {
             Id = reader.GetInt32(offset),
@@ -206,9 +207,10 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
             Title = reader.GetString(offset + 3),
             Content = reader.GetString(offset + 4),
             DocType = EnumExtensions.ParseDocType(reader.GetString(offset + 5)),
+            Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(offset + 6)),
             Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
-            CreatedAt = DateTime.Parse(reader.GetString(offset + 7)),
-            UpdatedAt = DateTime.Parse(reader.GetString(offset + 8))
+            CreatedAt = DateTime.Parse(reader.GetString(offset + 8)),
+            UpdatedAt = DateTime.Parse(reader.GetString(offset + 9))
         };
     }
 

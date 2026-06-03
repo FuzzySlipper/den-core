@@ -181,6 +181,12 @@ public sealed class DatabaseInitializer
                             'note',
                             'memory'
                         )),
+            visibility  TEXT NOT NULL DEFAULT 'normal'
+                        CHECK (visibility IN (
+                            'normal',
+                            'hidden',
+                            'archived'
+                        )),
             tags        TEXT,
             summary     TEXT,
             created_at  TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1257,6 +1263,12 @@ public sealed class DatabaseInitializer
 
         // Migration: expand no-capacity reason_code CHECK for hard_selector_mismatch
         await EnsureNoCapacityReasonCodesAsync(connection);
+
+        // Migration: add visibility column to documents for archived document lifecycle (#1865)
+        await TryAddColumnAsync(connection, "documents", "visibility",
+            """
+            TEXT NOT NULL DEFAULT 'normal' CHECK (visibility IN ('normal', 'hidden', 'archived'))
+            """);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)

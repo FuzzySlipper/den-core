@@ -54,20 +54,70 @@ public static class DocumentRoutes
                 : Results.NotFound(new { error = $"Document '{slug}' not found" });
         });
 
-        // Cross-project document search
+        // Update document visibility (archive/unarchive/hide)
+        group.MapPost("/{slug}/visibility", async (IDocumentRepository repo, IAgentGuidanceRepository guidanceRepo,
+            string projectId, string slug, UpdateDocumentVisibilityRequest req) =>
+        {
+            var visibility = EnumExtensions.ParseDocumentVisibility(req.Visibility);
+            var doc = await repo.UpdateVisibilityAsync(projectId, slug, visibility);
+            return doc is not null
+                ? Results.Ok(doc)
+                : Results.NotFound(new { error = $"Document '{slug}' not found in project '{projectId}'." });
+        });
+
+        // Preflight check before archiving a document
+        group.MapPost("/{slug}/archive-preflight", async (IDocumentRepository repo, string projectId, string slug) =>
+        {
+            var result = await repo.ArchivePreflightAsync(projectId, slug);
+            return Results.Ok(result);
+        });
+
+        // Deliberate archived recall: list archived documents
+        group.MapGet("/archived", async (IDocumentRepository repo, string projectId, string? doc_type, string? tags) =>
+        {
+            var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
+            var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var docs = await repo.ListArchivedAsync(projectId, parsedType, tagList);
+            return Results.Ok(docs);
+        });
+
+        // Deliberate archived recall: search archived documents
+        group.MapGet("/archived/search", async (IDocumentRepository repo, string projectId, string query) =>
+        {
+            var results = await repo.SearchArchivedAsync(query, projectId);
+            return Results.Ok(results);
+        });
+
+        // Cross-project document search (excludes archived by default)
         app.MapGet("/api/documents/search", async (IDocumentRepository repo, string query, string? projectId) =>
         {
             var results = await repo.SearchAsync(query, projectId);
             return Results.Ok(results);
         });
 
-        // Cross-project document listing
+        // Cross-project document listing (excludes archived by default)
         app.MapGet("/api/documents", async (IDocumentRepository repo, string? projectId, string? doc_type, string? tags) =>
         {
             var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
             var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var docs = await repo.ListAsync(projectId, parsedType, tagList);
             return Results.Ok(docs);
+        });
+
+        // Cross-project archived document listing
+        app.MapGet("/api/documents/archived", async (IDocumentRepository repo, string? projectId, string? doc_type, string? tags) =>
+        {
+            var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
+            var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var docs = await repo.ListArchivedAsync(projectId, parsedType, tagList);
+            return Results.Ok(docs);
+        });
+
+        // Cross-project archived document search
+        app.MapGet("/api/documents/archived/search", async (IDocumentRepository repo, string query, string? projectId) =>
+        {
+            var results = await repo.SearchArchivedAsync(query, projectId);
+            return Results.Ok(results);
         });
 
         // ── Document discussion convenience routes ──
@@ -159,3 +209,6 @@ public record StoreDocumentRequest(
     string? DocType = null,
     List<string>? Tags = null,
     string? Summary = null);
+
+public record UpdateDocumentVisibilityRequest(
+    string Visibility);

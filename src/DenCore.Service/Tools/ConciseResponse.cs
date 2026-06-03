@@ -183,7 +183,19 @@ public static class ConciseResponse
             slug = doc.Slug,
             title = doc.Title,
             doc_type = doc.DocType.ToDbValue(),
+            visibility = doc.Visibility.ToDbValue(),
             doc_summary = doc.Summary
+        });
+    }
+
+    public static string UpdatedDocumentVisibility(Document doc)
+    {
+        return Serialize(new
+        {
+            summary = $"updated document '{doc.ProjectId}/{doc.Slug}' visibility to {doc.Visibility.ToDbValue()}",
+            project_id = doc.ProjectId,
+            slug = doc.Slug,
+            visibility = doc.Visibility.ToDbValue()
         });
     }
 

@@ -411,6 +411,22 @@ public static class EnumExtensions
         _ => false
     };
 
+    public static string ToDbValue(this DocumentVisibility visibility) => visibility switch
+    {
+        DocumentVisibility.Normal => "normal",
+        DocumentVisibility.Hidden => "hidden",
+        DocumentVisibility.Archived => "archived",
+        _ => throw new ArgumentOutOfRangeException(nameof(visibility), visibility, null)
+    };
+
+    public static DocumentVisibility ParseDocumentVisibility(string value) => value switch
+    {
+        "normal" => DocumentVisibility.Normal,
+        "hidden" => DocumentVisibility.Hidden,
+        "archived" => DocumentVisibility.Archived,
+        _ => throw new ArgumentException($"Unknown document visibility: {value}", nameof(value))
+    };
+
     // --- TaskAvailability helpers ---
 
     public static string ToDbValue(this TaskAvailability availability) => availability switch

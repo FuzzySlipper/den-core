@@ -131,6 +131,13 @@ public enum ReviewFindingStatus
 /// Projected availability for a task based on its status and dependency state.
 /// This is a computed projection, not a persisted column.
 /// </summary>
+public enum DocumentVisibility
+{
+    Normal,
+    Hidden,
+    Archived
+}
+
 public enum TaskAvailability
 {
     /// <summary>Planned or InProgress, no unfinished dependencies – ready to be claimed.</summary>

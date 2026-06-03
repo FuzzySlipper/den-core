@@ -638,7 +638,7 @@ public sealed class TaskRepository : ITaskRepository
                   AND NOT EXISTS (
                     SELECT 1 FROM task_dependencies td
                     JOIN tasks dep ON dep.id = td.depends_on
-                    WHERE td.task_id = t.id AND dep.status != 'done'
+                    WHERE td.task_id = t.id AND dep.status NOT IN ('done', 'cancelled')
                   )
             ),
             candidates AS (

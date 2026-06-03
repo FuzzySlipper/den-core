@@ -332,6 +332,26 @@ public class TaskRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DependencyCancelled_AutoAvailable_IsClaimableByNextTask()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned, Priority = 2 });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Waiting", Status = TaskStatus.Planned, Priority = 1 });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        // Cancelled dependencies are terminal/non-blocking for availability and next-task eligibility.
+        await _repo.UpdateAsync(dep.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Cancelled }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var ready = list.Single(t => t.Id == task.Id);
+        Assert.Equal("available", ready.Availability);
+        Assert.Equal(0, ready.UnfinishedDependencyCount);
+
+        var next = await _repo.GetNextTaskAsync("proj");
+        Assert.NotNull(next);
+        Assert.Equal(task.Id, next!.Id);
+    }
+
+    [Fact]
     public async Task WorkflowSummary_ExposesAvailability()
     {
         var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });

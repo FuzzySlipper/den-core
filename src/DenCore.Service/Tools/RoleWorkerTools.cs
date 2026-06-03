@@ -39,11 +39,12 @@ public sealed class RoleWorkerTools
         [Description("Optional timeout seconds.")] int? timeout_seconds = null,
         [Description("Optional idempotency key for launch.")] string? dedupe_key = null,
         [Description("Optional callback ports JSON array.")] string? callback_ports = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var packetRef = prompt_packet_message_id is int existingId
             ? new PacketRef(existingId, "coder_context_packet", null)
-            : await PrepareCoderPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, allowed_scope, notes).ConfigureAwait(false);
+            : await PrepareCoderPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, allowed_scope, notes, completion_reporting_mode).ConfigureAwait(false);
 
         var launchJson = await WorkerTools.LaunchPiWorker(
             service,
@@ -64,6 +65,7 @@ public sealed class RoleWorkerTools
             session_id: session_id,
             run_id: run_id,
             callback_ports: callback_ports,
+            completion_reporting_mode: completion_reporting_mode,
             verbose: true).ConfigureAwait(false);
         return MergeLaunchWithPacketRef(launchJson, packetRef, "coder");
     }
@@ -94,11 +96,12 @@ public sealed class RoleWorkerTools
         [Description("Optional timeout seconds.")] int? timeout_seconds = null,
         [Description("Optional idempotency key for launch.")] string? dedupe_key = null,
         [Description("Optional callback ports JSON array.")] string? callback_ports = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var packetRef = prompt_packet_message_id is int existingId
             ? new PacketRef(existingId, "reviewer_context_packet", review_round_id)
-            : await PrepareReviewerPacketRef(tasks, messages, project_id, task_id, requested_by, review_round_id, branch, base_branch, base_commit, head_commit, allowed_scope, notes).ConfigureAwait(false);
+            : await PrepareReviewerPacketRef(tasks, messages, project_id, task_id, requested_by, review_round_id, branch, base_branch, base_commit, head_commit, allowed_scope, notes, completion_reporting_mode).ConfigureAwait(false);
 
         var launchJson = await WorkerTools.LaunchPiWorker(
             service,
@@ -120,6 +123,7 @@ public sealed class RoleWorkerTools
             session_id: session_id,
             run_id: run_id,
             callback_ports: callback_ports,
+            completion_reporting_mode: completion_reporting_mode,
             verbose: true).ConfigureAwait(false);
         return MergeLaunchWithPacketRef(launchJson, packetRef, "reviewer");
     }
@@ -151,12 +155,13 @@ public sealed class RoleWorkerTools
         [Description("Optional timeout seconds.")] int? timeout_seconds = null,
         [Description("Optional idempotency key for launch.")] string? dedupe_key = null,
         [Description("Optional callback ports JSON array.")] string? callback_ports = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var packetRef = prompt_packet_message_id is int existingId
             ? new PacketRef(existingId, "validator_context_packet", null)
-            : await PrepareValidatorPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes).ConfigureAwait(false);
-        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "validator", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
+            : await PrepareValidatorPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes, completion_reporting_mode).ConfigureAwait(false);
+        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "validator", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports, completion_reporting_mode).ConfigureAwait(false);
     }
 
     [McpToolProfile("legacy-full")]
@@ -184,12 +189,13 @@ public sealed class RoleWorkerTools
         [Description("Optional timeout seconds.")] int? timeout_seconds = null,
         [Description("Optional idempotency key for launch.")] string? dedupe_key = null,
         [Description("Optional callback ports JSON array.")] string? callback_ports = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var packetRef = prompt_packet_message_id is int existingId
             ? new PacketRef(existingId, "drift_checker_context_packet", null)
-            : await PrepareDriftCheckerPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes).ConfigureAwait(false);
-        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "drift_checker", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
+            : await PrepareDriftCheckerPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes, completion_reporting_mode).ConfigureAwait(false);
+        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "drift_checker", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports, completion_reporting_mode).ConfigureAwait(false);
     }
 
     [McpToolProfile("legacy-full")]
@@ -217,12 +223,13 @@ public sealed class RoleWorkerTools
         [Description("Optional timeout seconds.")] int? timeout_seconds = null,
         [Description("Optional idempotency key for launch.")] string? dedupe_key = null,
         [Description("Optional callback ports JSON array.")] string? callback_ports = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var packetRef = prompt_packet_message_id is int existingId
             ? new PacketRef(existingId, "packet_auditor_context_packet", null)
-            : await PreparePacketAuditorPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes).ConfigureAwait(false);
-        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "packet_auditor", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports).ConfigureAwait(false);
+            : await PreparePacketAuditorPacketRef(tasks, messages, project_id, task_id, requested_by, branch, base_branch, base_commit, head_commit, allowed_scope, notes, completion_reporting_mode).ConfigureAwait(false);
+        return await LaunchSpecializedWorker(service, project_id, requested_by, task_id, "packet_auditor", packetRef, branch, base_branch, base_commit, head_commit, run_id, session_id, workspace_id, model_hint, provider_hint, timeout_seconds, dedupe_key, callback_ports, completion_reporting_mode).ConfigureAwait(false);
     }
 
 
@@ -245,7 +252,8 @@ public sealed class RoleWorkerTools
         string? providerHint,
         int? timeoutSeconds,
         string? dedupeKey,
-        string? callbackPorts)
+        string? callbackPorts,
+        string completionReportingMode = "worker_mcp_tool")
     {
         var launchJson = await WorkerTools.LaunchPiWorker(
             service,
@@ -267,29 +275,30 @@ public sealed class RoleWorkerTools
             session_id: sessionId,
             run_id: runId,
             callback_ports: callbackPorts,
+            completion_reporting_mode: completionReportingMode,
             verbose: true).ConfigureAwait(false);
         return MergeLaunchWithPacketRef(launchJson, packetRef, role);
     }
 
-    private static async Task<PacketRef> PrepareValidatorPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes)
+    private static async Task<PacketRef> PrepareValidatorPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes, string completionReportingMode)
     {
-        var packetJson = await PacketTools.PrepareValidatorContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, verbose: true).ConfigureAwait(false);
+        var packetJson = await PacketTools.PrepareValidatorContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, completionReportingMode, verbose: true).ConfigureAwait(false);
         return ParsePacketRef(packetJson, "validator_context_packet");
     }
 
-    private static async Task<PacketRef> PrepareDriftCheckerPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes)
+    private static async Task<PacketRef> PrepareDriftCheckerPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes, string completionReportingMode)
     {
-        var packetJson = await PacketTools.PrepareDriftCheckerContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, verbose: true).ConfigureAwait(false);
+        var packetJson = await PacketTools.PrepareDriftCheckerContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, completionReportingMode, verbose: true).ConfigureAwait(false);
         return ParsePacketRef(packetJson, "drift_checker_context_packet");
     }
 
-    private static async Task<PacketRef> PreparePacketAuditorPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes)
+    private static async Task<PacketRef> PreparePacketAuditorPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes, string completionReportingMode)
     {
-        var packetJson = await PacketTools.PreparePacketAuditorContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, verbose: true).ConfigureAwait(false);
+        var packetJson = await PacketTools.PreparePacketAuditorContextPacket(tasks, messages, projectId, taskId, requestedBy, branch, baseBranch, baseCommit, headCommit, allowedScope, notes, completionReportingMode, verbose: true).ConfigureAwait(false);
         return ParsePacketRef(packetJson, "packet_auditor_context_packet");
     }
 
-    private static async Task<PacketRef> PrepareCoderPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? allowedScope, string? notes)
+    private static async Task<PacketRef> PrepareCoderPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, string? branch, string? baseBranch, string? baseCommit, string? allowedScope, string? notes, string completionReportingMode)
     {
         var packetJson = await PacketTools.PrepareCoderContextPacket(
             tasks,
@@ -302,11 +311,12 @@ public sealed class RoleWorkerTools
             baseCommit,
             allowedScope,
             notes,
+            completionReportingMode,
             verbose: true).ConfigureAwait(false);
         return ParsePacketRef(packetJson, "coder_context_packet");
     }
 
-    private static async Task<PacketRef> PrepareReviewerPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, int? reviewRoundId, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes)
+    private static async Task<PacketRef> PrepareReviewerPacketRef(ITaskRepository tasks, IMessageRepository messages, string projectId, int taskId, string requestedBy, int? reviewRoundId, string? branch, string? baseBranch, string? baseCommit, string? headCommit, string? allowedScope, string? notes, string completionReportingMode)
     {
         var packetJson = await PacketTools.PrepareReviewerContextPacket(
             tasks,
@@ -321,6 +331,7 @@ public sealed class RoleWorkerTools
             headCommit,
             allowedScope,
             notes,
+            completionReportingMode,
             verbose: true).ConfigureAwait(false);
         return ParsePacketRef(packetJson, "reviewer_context_packet");
     }

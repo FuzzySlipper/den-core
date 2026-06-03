@@ -45,6 +45,7 @@ public sealed class WorkerTools
         [Description("Optional dev dir override.")] string? dev_dir = null,
         [Description("Optional Pi state dir override.")] string? pi_state_dir = null,
         [Description("Optional compose file override.")] string? compose_file = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         try
@@ -59,7 +60,7 @@ public sealed class WorkerTools
                 return SerializeLaunchResult(existing, normalizedRole, "existing", prompt_packet_message_id, state_file_ref, session_mode, timeout_seconds, branch, base_branch, base_commit, head_commit, null, verbose);
 
             var workerRunId = NormalizeIdentifier(run_id) ?? NewRunId();
-            var startupPrompt = BuildStartupPrompt(project_id, task_id, normalizedRole, prompt_packet_message_id, state_file_ref);
+            var startupPrompt = BuildStartupPrompt(project_id, task_id, normalizedRole, prompt_packet_message_id, state_file_ref, completion_reporting_mode);
             var title = $"LEGACY Den Pi {normalizedRole} worker";
             var detail = await service.LaunchAsync(project_id, new PiSessionLaunchRequest
             {
@@ -825,7 +826,7 @@ public sealed class WorkerTools
         return false;
     }
 
-    private static string BuildStartupPrompt(string projectId, int? taskId, string role, int? promptPacketMessageId, string? stateFileRef)
+    private static string BuildStartupPrompt(string projectId, int? taskId, string role, int? promptPacketMessageId, string? stateFileRef, string completionReportingMode = "worker_mcp_tool")
     {
         var packetLine = promptPacketMessageId is null
             ? "- prompt_packet_message_id: `not provided`"
@@ -833,6 +834,10 @@ public sealed class WorkerTools
         var stateLine = string.IsNullOrWhiteSpace(stateFileRef)
             ? "- state_file_ref: `not provided`"
             : $"- state_file_ref: `{stateFileRef.Trim()}`";
+        var normalizedMode = NormalizeCompletionMode(completionReportingMode);
+        var completionInstruction = normalizedMode == "artifact_reconciled"
+            ? $"5. This is a terminal/file-only worker; you do NOT have a model-callable Den MCP tool for completion posting. On completion/block/failure, write a deterministic `completion.json` artifact to the expected artifact path and exit. The Runner/orchestrator will verify the artifact and post the tracked Den completion packet. Do NOT attempt raw MCP HTTP/curl calls to post completion — they will loop without effect."
+            : "5. On completion/block/failure, call MCP tool `post_worker_completion_packet` as the tracked worker completion record; do not rely on `send_message` alone.";
         return $"""
             You are a legacy Den Pi {role} worker.
 
@@ -841,7 +846,7 @@ public sealed class WorkerTools
             2. Treat the referenced Den packet/state file as authoritative task context.
             3. This startup prompt is intentionally bounded; do not expect large prompt bodies in process args.
             4. Keep secrets and raw reasoning out of logs and completion packets.
-            5. On completion/block/failure, call MCP tool `post_worker_completion_packet` as the tracked worker completion record; do not rely on `send_message` alone.
+            {completionInstruction}
             6. Use literal runtime environment values for identity: pass `run_id` = value of `DEN_WORKER_RUN_ID`, `project_id` = `DEN_WORKER_PROJECT_ID`, and `role` = `DEN_WORKER_ROLE`; use `DEN_WORKER_TASK_ID` only to verify you are completing the expected task. Never pass placeholder text like `(literal DEN_WORKER_RUN_ID)` or `$DEN_WORKER_RUN_ID`.
 
             Packet reference:
@@ -929,6 +934,16 @@ public sealed class WorkerTools
             "drift_sentinel" => "drift_checker",
             "raw" or "coder" or "reviewer" or "validator" or "drift_checker" or "packet_auditor" => normalized,
             _ => throw new ArgumentException($"Unsupported worker role '{role}'."),
+        };
+    }
+
+    private static string NormalizeCompletionMode(string? mode)
+    {
+        var normalized = string.IsNullOrWhiteSpace(mode) ? "worker_mcp_tool" : mode.Trim().ToLowerInvariant().Replace('-', '_');
+        return normalized switch
+        {
+            "artifact_reconciled" => "artifact_reconciled",
+            _ => "worker_mcp_tool",
         };
     }
 

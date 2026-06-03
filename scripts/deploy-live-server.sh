@@ -277,6 +277,15 @@ sudo -n rsync -a --delete --chown="$REMOTE_SERVICE_USER:$REMOTE_SERVICE_GROUP" \
   --exclude 'appsettings.Development.json' \
   "$publish_stage/" "$new_app/"
 
+# Compatibility for the live systemd unit while Den Core transitions away from
+# the historical DenMcp.Server binary name. The published executable is now
+# DenCore.Service, but existing live units may still ExecStart DenMcp.Server.
+# Keep deployment non-disruptive without mutating systemd units in this script.
+if sudo -n test -x "$new_app/DenCore.Service" && ! sudo -n test -e "$new_app/DenMcp.Server"; then
+  sudo -n ln -s DenCore.Service "$new_app/DenMcp.Server"
+  sudo -n chown -h "$REMOTE_SERVICE_USER:$REMOTE_SERVICE_GROUP" "$new_app/DenMcp.Server"
+fi
+
 # Preserve live-local configuration/state that is intentionally excluded from
 # the publish output. The live app tree remains the source of truth for these
 # paths unless operators move them to systemd environment files or another
@@ -381,8 +390,10 @@ smoke_http_and_mcp() {
   echo "Running health smoke against $HEALTH_URL ..."
   curl --retry 20 --retry-delay 1 --retry-connrefused -fsS "$HEALTH_URL" >/dev/null
 
-  echo "Running MCP tools/list smoke against Core proxy and LAN facade ..."
-  MCP_CORE_URL="$MCP_CORE_URL" MCP_LAN_URL="$MCP_LAN_URL" python3 - <<'PY'
+  echo "Running MCP tools/list smoke against live loopback MCP endpoint ..."
+  local smoke_url="${MCP_LOOPBACK_URL:-http://127.0.0.1:5299/mcp}"
+  if [[ "$DEPLOY_MODE" == "remote" ]]; then
+    ssh "$SSH_TARGET" "MCP_LOOPBACK_URL=$(shell_quote "$smoke_url") python3 -" <<'PY'
 import json
 import os
 import urllib.request
@@ -404,7 +415,7 @@ def post(url: str, payload: dict, sid: str | None = None):
         headers["Mcp-Session-Id"] = sid
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=30) as response:
-        return response.headers.get("Mcp-Session-Id"), parse(response.read().decode())
+        return response.headers.get("Mcp-Session-Id") or sid, parse(response.read().decode())
 
 
 def tool_names(url: str) -> set[str]:
@@ -413,7 +424,7 @@ def tool_names(url: str) -> set[str]:
         "id": 1,
         "method": "initialize",
         "params": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {"name": "den-core-deploy-live-smoke", "version": "1"},
         },
@@ -423,17 +434,77 @@ def tool_names(url: str) -> set[str]:
     names = {tool.get("name", "") for tool in tools}
     if not names:
         raise SystemExit(f"{url}: tools/list returned no tools: {payload!r}")
-    required = {"send_message", "get_task", "register_worker_run", "post_worker_completion_packet"}
+    required = {
+        "send_message", "get_task", "register_worker_run", "post_worker_completion_packet",
+        "detect_orphaned_worker_runs", "force_terminate_orphan_run",
+    }
     missing = sorted(required - names)
     if missing:
         raise SystemExit(f"{url}: missing expected Core MCP tools: {missing}")
     return names
 
 
-for url in [os.environ["MCP_CORE_URL"], os.environ["MCP_LAN_URL"]]:
-    names = tool_names(url)
-    print(f"{url}: tools/list ok ({len(names)} tools)")
+url = os.environ["MCP_LOOPBACK_URL"]
+names = tool_names(url)
+print(f"{url}: tools/list ok ({len(names)} tools)")
 PY
+  else
+    MCP_LOOPBACK_URL="$smoke_url" python3 - <<'PY'
+import json
+import os
+import urllib.request
+
+
+def parse(text: str):
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        data = [line[5:].strip() for line in text.splitlines() if line.startswith("data:")]
+        if data:
+            return json.loads("\n".join(data))
+        raise
+
+
+def post(url: str, payload: dict, sid: str | None = None):
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if sid:
+        headers["Mcp-Session-Id"] = sid
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return response.headers.get("Mcp-Session-Id") or sid, parse(response.read().decode())
+
+
+def tool_names(url: str) -> set[str]:
+    sid, _ = post(url, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "den-core-deploy-live-smoke", "version": "1"},
+        },
+    })
+    _, payload = post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, sid)
+    tools = payload.get("result", {}).get("tools", [])
+    names = {tool.get("name", "") for tool in tools}
+    if not names:
+        raise SystemExit(f"{url}: tools/list returned no tools: {payload!r}")
+    required = {
+        "send_message", "get_task", "register_worker_run", "post_worker_completion_packet",
+        "detect_orphaned_worker_runs", "force_terminate_orphan_run",
+    }
+    missing = sorted(required - names)
+    if missing:
+        raise SystemExit(f"{url}: missing expected Core MCP tools: {missing}")
+    return names
+
+
+url = os.environ["MCP_LOOPBACK_URL"]
+names = tool_names(url)
+print(f"{url}: tools/list ok ({len(names)} tools)")
+PY
+  fi
 
   echo "Smoke checks passed."
 }

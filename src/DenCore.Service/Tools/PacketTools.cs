@@ -340,6 +340,8 @@ public sealed class PacketTools
         sb.AppendLine("- Do not print or preserve API keys, tokens, passwords, cookies, private keys, or connection strings; redact as `[REDACTED]`.");
         sb.AppendLine();
         var normalizedMode = NormalizeCompletionMode(completionReportingMode);
+        sb.AppendLine($"## Completion reporting mode: `{normalizedMode}`");
+        sb.AppendLine();
         if (normalizedMode == "artifact_reconciled")
         {
             sb.AppendLine("## Required tracked completion (artifact-reconciled)");
@@ -480,15 +482,7 @@ public sealed class PacketTools
     }
 
     private static string NormalizeRole(string? role) => string.IsNullOrWhiteSpace(role) ? "worker" : role.Trim().ToLowerInvariant().Replace('-', '_');
-    private static string NormalizeCompletionMode(string? mode)
-    {
-        var normalized = string.IsNullOrWhiteSpace(mode) ? "worker_mcp_tool" : mode.Trim().ToLowerInvariant().Replace('-', '_');
-        return normalized switch
-        {
-            "artifact_reconciled" => "artifact_reconciled",
-            _ => "worker_mcp_tool",
-        };
-    }
+    private static string NormalizeCompletionMode(string? mode) => CompletionModeHelper.NormalizeCompletionMode(mode);
     private static string ToTitle(string role) => string.Join(' ', role.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     private static string FirstLine(string value)
     {

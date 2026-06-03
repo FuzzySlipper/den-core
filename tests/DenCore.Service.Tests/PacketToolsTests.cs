@@ -137,7 +137,7 @@ public class PacketToolsTests
     }
 
     [Fact]
-    public async Task PrepareCoderContextPacket_ArtifactReconciled_DoesNotRecommendRawHttpCurl()
+    public async Task PrepareCoderContextPacket_ArtifactReconciled_ForbidsRawHttpCurl()
     {
         var tasks = new FakeTaskRepository();
         var messages = new FakeMessageRepository(null);

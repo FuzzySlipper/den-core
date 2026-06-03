@@ -937,15 +937,7 @@ public sealed class WorkerTools
         };
     }
 
-    private static string NormalizeCompletionMode(string? mode)
-    {
-        var normalized = string.IsNullOrWhiteSpace(mode) ? "worker_mcp_tool" : mode.Trim().ToLowerInvariant().Replace('-', '_');
-        return normalized switch
-        {
-            "artifact_reconciled" => "artifact_reconciled",
-            _ => "worker_mcp_tool",
-        };
-    }
+    private static string NormalizeCompletionMode(string? mode) => CompletionModeHelper.NormalizeCompletionMode(mode);
 
     private static string Role(PiSessionSummary session) => NormalizeRole(session.ToolProfile);
     private static string RunId(PiSessionSummary session) => string.IsNullOrWhiteSpace(session.RunId) ? session.SessionId : session.RunId!;

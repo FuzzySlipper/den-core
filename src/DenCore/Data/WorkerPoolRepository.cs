@@ -1121,7 +1121,11 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 }
                 else if (stats.Total == 0)
                 {
-                    diagMessage = "No workers registered in the pool matching the requested role/profile/capabilities.";
+                    var roleAliasNote = input.RequiredCapabilities?
+                        .Any(c => WorkerPoolStates.IsRoleAlias(c)) == true
+                        ? $" (Note: input contained role-alias capabilities [{string.Join(", ", input.RequiredCapabilities!.Where(WorkerPoolStates.IsRoleAlias))}] that were normalized against worker_role; no worker with matching role registered.)"
+                        : "";
+                    diagMessage = $"No workers registered in the pool matching the requested role/profile/capabilities.{roleAliasNote}";
                 }
                 else
                 {

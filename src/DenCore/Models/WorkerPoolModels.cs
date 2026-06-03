@@ -398,6 +398,10 @@ public static class WorkerPoolStates
     /// These are checked against the worker's worker_role, not their capabilities JSON.
     /// Required_capabilities=["coder"] matches a worker with worker_role="coder"
     /// regardless of what strings appear in the capabilities column.
+    ///
+    /// FUTURE: If additional roles are added or external roles need mapping,
+    /// centralize this list via a config/registry source rather than extending
+    /// the hardcoded array.
     /// </summary>
     public static readonly string[] RoleAliases =
     [

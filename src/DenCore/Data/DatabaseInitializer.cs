@@ -3220,7 +3220,7 @@ public sealed class DatabaseInitializer
     /// 'hard_selector_mismatch'. SQLite does not support ALTER-ing CHECK constraints,
     /// so we drop and recreate the table if the old constraint is present.
     /// </summary>
-    private static async Task EnsureNoCapacityReasonCodesAsync(SqliteConnection connection)
+    private async Task EnsureNoCapacityReasonCodesAsync(SqliteConnection connection)
     {
         // Check if the table exists and has the old constraint (missing hard_selector_mismatch)
         await using var schemaCmd = connection.CreateCommand();
@@ -3290,10 +3290,11 @@ public sealed class DatabaseInitializer
             await EnsureIndexAsync(connection, "idx_no_capacity_run",
                 "CREATE INDEX IF NOT EXISTS idx_no_capacity_run ON worker_no_capacity_requests(run_id, created_at DESC)");
         }
-        catch
+        catch (Exception ex)
         {
-            // If migration fails (e.g. concurrent access), leave table as-is.
-            // New reason code inserts will fail with CHECK constraint violation.
+            _logger.LogWarning(ex,
+                "Migration: failed to expand worker_no_capacity_requests reason_code CHECK for hard_selector_mismatch. " +
+                "Table left as-is. New reason code inserts will fail with CHECK constraint violation. (R1910-2 #1921)");
         }
         finally
         {

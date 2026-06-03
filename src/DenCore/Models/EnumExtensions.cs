@@ -411,6 +411,49 @@ public static class EnumExtensions
         _ => false
     };
 
+    // --- TaskAvailability helpers ---
+
+    public static string ToDbValue(this TaskAvailability availability) => availability switch
+    {
+        TaskAvailability.Available => "available",
+        TaskAvailability.WaitingOnDependencies => "waiting_on_dependencies",
+        TaskAvailability.InProgress => "in_progress",
+        TaskAvailability.Review => "review",
+        TaskAvailability.Blocked => "blocked",
+        TaskAvailability.Done => "done",
+        TaskAvailability.Cancelled => "cancelled",
+        _ => throw new ArgumentOutOfRangeException(nameof(availability), availability, null)
+    };
+
+    /// <summary>
+    /// Compute projected availability from a task's status and dependency state.
+    /// </summary>
+    public static TaskAvailability ComputeTaskAvailability(TaskStatus status, bool hasUnfinishedDependencies)
+    {
+        return status switch
+        {
+            TaskStatus.Planned when hasUnfinishedDependencies => TaskAvailability.WaitingOnDependencies,
+            TaskStatus.Planned => TaskAvailability.Available,
+            TaskStatus.InProgress => TaskAvailability.InProgress,
+            TaskStatus.Review => TaskAvailability.Review,
+            TaskStatus.Blocked => TaskAvailability.Blocked,
+            TaskStatus.Done => TaskAvailability.Done,
+            TaskStatus.Cancelled => TaskAvailability.Cancelled,
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, null)
+        };
+    }
+
+    /// <summary>
+    /// Compute availability from a list of dependency infos (the dependency states are already resolved).
+    /// A dependency is "done" when its status is Done or Cancelled.
+    /// </summary>
+    public static TaskAvailability ComputeTaskAvailability(TaskStatus status, List<TaskDependencyInfo> dependencies)
+    {
+        var hasUnfinished = dependencies.Count > 0 && dependencies.Any(d =>
+            d.Status != TaskStatus.Done && d.Status != TaskStatus.Cancelled);
+        return ComputeTaskAvailability(status, hasUnfinished);
+    }
+
     /// <summary>
     /// Maps AgentRecipientResolutionStatus to compact API-facing string values
     /// used in wake_resolution_status responses and wake_dropped metadata.

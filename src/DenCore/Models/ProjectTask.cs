@@ -26,7 +26,13 @@ public sealed class TaskSummary
     public int? ParentId { get; set; }
     public List<string>? Tags { get; set; }
     public int DependencyCount { get; set; }
+    public int UnfinishedDependencyCount { get; set; }
     public int SubtaskCount { get; set; }
+    /// <summary>
+    /// Computed availability projection (snake_case serialized as "availability").
+    /// Distinguishes waiting_on_dependencies from blocked.
+    /// </summary>
+    public string Availability { get; set; } = "available";
 }
 
 public sealed class TaskDetail
@@ -80,6 +86,11 @@ public sealed class TaskWorkflowSummary
 
     // Hint for deep read
     public required string DeepReadHint { get; set; }
+
+    /// <summary>
+    /// Computed availability projection (snake_case serialized as "availability").
+    /// </summary>
+    public required string Availability { get; set; }
 }
 
 public sealed class CompactSubtaskEntry

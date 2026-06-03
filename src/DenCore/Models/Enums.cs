@@ -126,3 +126,25 @@ public enum ReviewFindingStatus
     Superseded,
     SplitToFollowUp
 }
+
+/// <summary>
+/// Projected availability for a task based on its status and dependency state.
+/// This is a computed projection, not a persisted column.
+/// </summary>
+public enum TaskAvailability
+{
+    /// <summary>Planned or InProgress, no unfinished dependencies – ready to be claimed.</summary>
+    Available,
+    /// <summary>Planned, has at least one unfinished dependency – not runnable but not manually blocked.</summary>
+    WaitingOnDependencies,
+    /// <summary>Status is InProgress – currently claimed/worked on.</summary>
+    InProgress,
+    /// <summary>Status is Review – under review.</summary>
+    Review,
+    /// <summary>Status is Blocked – manual/attention-required blocker, not auto-resolved by dependency completion.</summary>
+    Blocked,
+    /// <summary>Status is Done.</summary>
+    Done,
+    /// <summary>Status is Cancelled.</summary>
+    Cancelled
+}

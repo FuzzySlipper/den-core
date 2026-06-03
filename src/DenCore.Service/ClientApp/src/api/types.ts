@@ -1,4 +1,5 @@
 export type TaskStatus = 'planned' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled';
+export type TaskAvailability = 'available' | 'waiting_on_dependencies' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled';
 export type DocType = 'prd' | 'spec' | 'adr' | 'convention' | 'reference' | 'note';
 export type MessageIntent =
   | 'general'
@@ -103,7 +104,9 @@ export interface TaskSummary {
   parent_id: number | null;
   tags: string[] | null;
   dependency_count: number;
+  unfinished_dependency_count: number;
   subtask_count: number;
+  availability: TaskAvailability;
 }
 
 export interface TaskDependencyInfo {

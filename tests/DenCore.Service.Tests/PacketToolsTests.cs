@@ -295,6 +295,7 @@ public class PacketToolsTests
                 RecentMessages = new List<CompactMessageHeader>(),
                 UnresolvedFindings = new List<CompactFindingEntry>(),
                 DeepReadHint = "Use get_task for full details.",
+                Availability = "in_progress",
             });
         public Task<List<TaskSummary>> ListAsync(string projectId, DenCore.Models.TaskStatus[]? statuses = null,
             string? assignedTo = null, string[]? tags = null, int? maxPriority = null, int? parentId = null,

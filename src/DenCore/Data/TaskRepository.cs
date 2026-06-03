@@ -119,6 +119,7 @@ public sealed class TaskRepository : ITaskRepository
         subCmd.CommandText = """
             SELECT t.id, t.project_id, t.title, t.status, t.priority, t.assigned_to, t.parent_id, t.tags,
                    (SELECT COUNT(*) FROM task_dependencies WHERE task_id = t.id) as dep_count,
+                   (SELECT COUNT(*) FROM task_dependencies td JOIN tasks dep ON dep.id = td.depends_on WHERE td.task_id = t.id AND dep.status NOT IN ('done', 'cancelled')) as unfinished_dep_count,
                    (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id) as sub_count
             FROM tasks t WHERE t.parent_id = @id ORDER BY t.priority, t.id
             """;
@@ -439,7 +440,8 @@ public sealed class TaskRepository : ITaskRepository
             ReviewWorkflow = compactWorkflow,
             RecentMessages = messageHeaders,
             UnresolvedFindings = unresolvedEntries,
-            DeepReadHint = $"Use get_task(task_id={id}) or get_thread(thread_id=...) for full content."
+            DeepReadHint = $"Use get_task(task_id={id}) or get_thread(thread_id=...) for full content.",
+            Availability = EnumExtensions.ComputeTaskAvailability(task.Status, deps).ToDbValue()
         };
     }
 
@@ -518,6 +520,7 @@ public sealed class TaskRepository : ITaskRepository
         cmd.CommandText = $"""
             SELECT t.id, t.project_id, t.title, t.status, t.priority, t.assigned_to, t.parent_id, t.tags,
                    (SELECT COUNT(*) FROM task_dependencies WHERE task_id = t.id) as dep_count,
+                   (SELECT COUNT(*) FROM task_dependencies td JOIN tasks dep ON dep.id = td.depends_on WHERE td.task_id = t.id AND dep.status NOT IN ('done', 'cancelled')) as unfinished_dep_count,
                    (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id) as sub_count
             FROM tasks t
             WHERE {string.Join(" AND ", where)}
@@ -732,18 +735,23 @@ public sealed class TaskRepository : ITaskRepository
     private static TaskSummary ReadTaskSummary(SqliteDataReader reader)
     {
         var tagsJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+        var status = EnumExtensions.ParseTaskStatus(reader.GetString(3));
+        var dependencyCount = reader.GetInt32(8);
+        var unfinishedDependencyCount = reader.GetInt32(9);
         return new TaskSummary
         {
             Id = reader.GetInt32(0),
             ProjectId = reader.GetString(1),
             Title = reader.GetString(2),
-            Status = EnumExtensions.ParseTaskStatus(reader.GetString(3)),
+            Status = status,
             Priority = reader.GetInt32(4),
             AssignedTo = reader.IsDBNull(5) ? null : reader.GetString(5),
             ParentId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
             Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
-            DependencyCount = reader.GetInt32(8),
-            SubtaskCount = reader.GetInt32(9)
+            DependencyCount = dependencyCount,
+            UnfinishedDependencyCount = unfinishedDependencyCount,
+            SubtaskCount = reader.GetInt32(10),
+            Availability = EnumExtensions.ComputeTaskAvailability(status, unfinishedDependencyCount > 0).ToDbValue()
         };
     }
 

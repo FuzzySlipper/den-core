@@ -241,4 +241,171 @@ public class TaskRepositoryTests : IAsyncLifetime
         Assert.Equal(1, detail.ReviewWorkflow.Timeline[0].OpenFindingCount);
         Assert.Equal(1, detail.ReviewWorkflow.Timeline[0].ResolvedFindingCount);
     }
+
+    #region Dependency-waiting availability
+
+    [Fact]
+    public async Task PlannedTaskWithUnfinishedDependency_HasWaitingOnDependenciesAvailability()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.InProgress });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Waiting", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        var list = await _repo.ListAsync("proj");
+        var waiting = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("waiting_on_dependencies", waiting.Availability);
+        Assert.Equal(1, waiting.DependencyCount);
+        Assert.Equal(1, waiting.UnfinishedDependencyCount);
+    }
+
+    [Fact]
+    public async Task PlannedTaskWithAllDependenciesDone_HasAvailableAvailability()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });
+        await _repo.UpdateAsync(dep.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Done }, "test");
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Ready", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        var list = await _repo.ListAsync("proj");
+        var ready = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("available", ready.Availability);
+        Assert.Equal(1, ready.DependencyCount);
+        Assert.Equal(0, ready.UnfinishedDependencyCount);
+    }
+
+    [Fact]
+    public async Task PlannedTaskWithCancelledDependency_HasAvailableAvailability()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });
+        await _repo.UpdateAsync(dep.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Cancelled }, "test");
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Ready", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        var list = await _repo.ListAsync("proj");
+        var ready = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("available", ready.Availability);
+        Assert.Equal(0, ready.UnfinishedDependencyCount);
+    }
+
+    [Fact]
+    public async Task BlockedTask_StaysBlocked_WhenDependencyDone()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "BlockedTask", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        // Mark the task as manually blocked
+        await _repo.UpdateAsync(task.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Blocked }, "test");
+
+        // Now complete the dependency
+        await _repo.UpdateAsync(dep.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Done }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var blocked = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("blocked", blocked.Availability);
+    }
+
+    [Fact]
+    public async Task DependencyDone_AutoAvailable_IsClaimableByNextTask()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned, Priority = 2 });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Waiting", Status = TaskStatus.Planned, Priority = 1 });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        // Task should not appear in next_task while dependency is unfinished
+        var nextBefore = await _repo.GetNextTaskAsync("proj");
+        // dep is top-level planned, so it should be returned (higher priority task is blocked on dep)
+        Assert.NotNull(nextBefore);
+        Assert.Equal(dep.Id, nextBefore!.Id); // dep (P2) is available; task (P1) is waiting on dep
+
+        // Complete the dependency
+        await _repo.UpdateAsync(dep.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Done }, "test");
+
+        // Now the task should be available via next_task (priority 1, no unfinished deps)
+        var nextAfter = await _repo.GetNextTaskAsync("proj");
+        Assert.NotNull(nextAfter);
+        Assert.Equal(task.Id, nextAfter!.Id); // Priority 1, all deps done
+    }
+
+    [Fact]
+    public async Task WorkflowSummary_ExposesAvailability()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Waiting", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+
+        var summary = await _repo.GetWorkflowSummaryAsync(task.Id);
+
+        Assert.Equal("waiting_on_dependencies", summary.Availability);
+        Assert.Single(summary.Dependencies);
+    }
+
+    [Fact]
+    public async Task InProgressTask_HasInProgressAvailability_RegardlessOfDependencies()
+    {
+        var dep = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Dependency", Status = TaskStatus.Planned });
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Working", Status = TaskStatus.Planned });
+        await _repo.AddDependencyAsync(task.Id, dep.Id);
+        await _repo.UpdateAsync(task.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.InProgress }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var working = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("in_progress", working.Availability);
+    }
+
+    [Fact]
+    public async Task PlannedTaskWithoutDependencies_HasAvailableAvailability()
+    {
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Simple", Status = TaskStatus.Planned });
+
+        var list = await _repo.ListAsync("proj");
+        var simple = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("available", simple.Availability);
+        Assert.Equal(0, simple.DependencyCount);
+        Assert.Equal(0, simple.UnfinishedDependencyCount);
+    }
+
+    [Fact]
+    public async Task ReviewTask_HasReviewAvailability()
+    {
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Under review", Status = TaskStatus.Planned });
+        await _repo.UpdateAsync(task.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Review }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var review = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("review", review.Availability);
+    }
+
+    [Fact]
+    public async Task DoneTask_HasDoneAvailability()
+    {
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Finished", Status = TaskStatus.Planned });
+        await _repo.UpdateAsync(task.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Done }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var done = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("done", done.Availability);
+    }
+
+    [Fact]
+    public async Task CancelledTask_HasCancelledAvailability()
+    {
+        var task = await _repo.CreateAsync(new ProjectTask { ProjectId = "proj", Title = "Cancelled", Status = TaskStatus.Planned });
+        await _repo.UpdateAsync(task.Id, new Dictionary<string, object?> { ["status"] = TaskStatus.Cancelled }, "test");
+
+        var list = await _repo.ListAsync("proj");
+        var cancelled = list.Single(t => t.Id == task.Id);
+
+        Assert.Equal("cancelled", cancelled.Availability);
+    }
+
+    #endregion
 }

@@ -76,7 +76,7 @@ public sealed class DirectDeliveryBindingSnapshot
     /// <summary>Project id this binding is scoped to.</summary>
     public required string ProjectId { get; set; }
 
-    /// <summary>Agent family identifier (e.g. "hermes", "codex", "claude").</summary>
+    /// <summary>Generic adapter/runtime family identifier.</summary>
     public required string AgentFamily { get; set; }
 
     /// <summary>Agent identity / display handle.</summary>
@@ -107,7 +107,7 @@ public sealed class DirectDeliveryBindingSnapshot
     /// </summary>
     public string? SessionOwnerId { get; set; }
 
-    /// <summary>Hermes/worker session id for correlation with active sessions.</summary>
+    /// <summary>Runtime session id for correlation with active sessions.</summary>
     public string? SessionId { get; set; }
 
     /// <summary>Optional Den channel id for correlation with channel membership.</summary>
@@ -142,8 +142,8 @@ public sealed class DirectDeliveryBindingSnapshot
     public string? WorkerRole { get; set; }
 
     /// <summary>
-    /// Gateway adapter instance id for direct-message routing to this worker's
-    /// concrete session. Provided when the pool member has an adapter binding.
+    /// Adapter instance id for direct-message routing to this worker's concrete
+    /// session. Provided when the pool member has an adapter binding.
     /// </summary>
     public string? AdapterInstanceId { get; set; }
 
@@ -156,7 +156,7 @@ public sealed class DirectDeliveryBindingSnapshot
     public int? AssignmentId { get; set; }
 
     /// <summary>
-    /// The worker run id tracking execution (e.g. spawned-Hermes run_id).
+    /// The Core worker run id tracking this execution attempt.
     /// Populated from the active assignment's run_id.
     /// </summary>
     public string? WorkerRunId { get; set; }
@@ -264,7 +264,7 @@ public sealed class DirectDeliveryEnvelope
     /// <summary>Session owner identity (who owns the session).</summary>
     public string? SessionOwnerId { get; set; }
 
-    /// <summary>Hermes/worker session id.</summary>
+    /// <summary>Runtime session id.</summary>
     public string? SessionId { get; set; }
 
     /// <summary>Adapter instance id for direct-message routing.</summary>

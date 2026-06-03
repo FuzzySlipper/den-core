@@ -157,9 +157,12 @@ public static class DirectDeliveryContractRoutes
                 // Try to find a pool member by agent instance id
                 membersByAgentInstanceId.TryGetValue(binding.InstanceId, out var poolMember);
 
-                // If pool filters active, skip non-matching bindings
-                if (hasPoolFilters && poolMember != null &&
-                    !filteredMemberIds.Contains(poolMember.WorkerIdentity))
+                // If pool filters are active, only pool-linked bindings can match.
+                // Raw adapter bindings without a pool member have no profile_identity
+                // or worker_role to compare, so they must not leak through filtered
+                // direct-delivery projections.
+                if (hasPoolFilters &&
+                    (poolMember == null || !filteredMemberIds.Contains(poolMember.WorkerIdentity)))
                 {
                     continue;
                 }

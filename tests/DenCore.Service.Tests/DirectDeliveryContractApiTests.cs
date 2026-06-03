@@ -651,6 +651,21 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
             Status = WorkerPoolStates.MemberAvailable,
         });
 
+        // Seed a raw adapter binding with no pool member. Pool-profile filters
+        // must not let unlinked bindings leak through because there is no
+        // profile_identity to compare.
+        await bindingsRepo.UpsertAsync(new AgentInstanceBinding
+        {
+            InstanceId = "dd-filter-unlinked-1",
+            ProjectId = ProjectId,
+            AgentIdentity = "filter-unlinked",
+            AgentFamily = "local-adapter",
+            Role = "coder",
+            TransportKind = "local_adapter",
+            SessionId = "session-filter-unlinked",
+            Status = AgentInstanceBindingStatus.Active,
+        });
+
         // Filter by profile_identity=spawned-coder
         var response = await _client.GetAsync(
             $"/api/direct-delivery/bindings?projectId={ProjectId}&profileIdentity=spawned-coder");
@@ -661,6 +676,7 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         Assert.Single(items);
         Assert.Equal("spawned-coder", items[0].GetProperty("profile_identity").GetString());
         Assert.Equal("filter-coder", items[0].GetProperty("agent_identity").GetString());
+        Assert.DoesNotContain(items, i => i.GetProperty("agent_identity").GetString() == "filter-unlinked");
     }
 
     [Fact]

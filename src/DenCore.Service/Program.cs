@@ -188,6 +188,7 @@ app.MapDispatchRoutes();
 app.MapAgentStreamRoutes();
 app.MapChannelsContractRoutes();
 app.MapGatewayContractRoutes();
+app.MapDirectDeliveryContractRoutes();
 app.MapSubagentRunRoutes();
 app.MapAgentWorkspaceRoutes();
 app.MapDesktopSnapshotRoutes();

@@ -395,11 +395,14 @@ public sealed class WorkerPoolTools
         IWorkerPoolRepository repo)
     {
         var summary = await repo.GetSummaryAsync();
+        var orphanNote = summary.OrphanedLaunchingAssignments > 0
+            ? $" | {summary.OrphanedLaunchingAssignments} orphaned-launching"
+            : "";
         return JsonSerializer.Serialize(new
         {
             summary = $"pool: {summary.AvailableMembers} available, {summary.BusyMembers} busy, {summary.QuarantinedMembers} quarantined | " +
                       $"assignments: {summary.ActiveAssignments} active, {summary.CompletedAssignments} completed, " +
-                      $"{summary.FailedAssignments} failed, {summary.ExpiredAssignments} expired | " +
+                      $"{summary.FailedAssignments} failed, {summary.ExpiredAssignments} expired{orphanNote} | " +
                       $"{summary.RecentCheckpoints} checkpoints in 24h",
             members = new
             {
@@ -414,6 +417,7 @@ public sealed class WorkerPoolTools
                 completed = summary.CompletedAssignments,
                 failed = summary.FailedAssignments,
                 expired = summary.ExpiredAssignments,
+                orphaned_launching = summary.OrphanedLaunchingAssignments,
             },
             recent_checkpoints_24h = summary.RecentCheckpoints,
         }, JsonOpts.Default);
@@ -807,5 +811,96 @@ public sealed class WorkerPoolTools
             summary = $"reconciled {affected} stale orchestrator lease(s)",
             expired_or_degraded = affected,
         }, JsonOpts.Default);
+    }
+
+    // ── Orphaned Worker-Run Detection & Reconciliation (#1879) ─────────
+
+    [McpToolProfile("admin-current", "runner", "planner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "detect_orphaned_worker_runs"), Description(
+        "Detect orphaned worker runs — pi_sessions stuck in 'launching' state with " +
+        "no matching active assignment and no live process handle. These are registrations " +
+        "that never completed launch. Returns diagnostics with age, staleness, and pool member info. " +
+        "Use stale_threshold_minutes to control how old a launching session must be to qualify.")]
+    public static async Task<string> DetectOrphanedWorkerRuns(
+        IWorkerPoolRepository repo,
+        [Description("Minutes a launching session must have existed to be considered orphaned. Default 10.")] int stale_threshold_minutes = 10)
+    {
+        var orphans = await repo.DetectOrphanedWorkerRunsAsync(stale_threshold_minutes);
+
+        if (orphans.Count == 0)
+            return JsonSerializer.Serialize(new
+            {
+                summary = "no orphaned worker runs detected",
+                orphans = Array.Empty<object>(),
+                count = 0,
+            }, JsonOpts.Default);
+
+        var diagnostics = orphans.Select(o => new
+        {
+            session_id = o.SessionId,
+            run_id = o.RunId,
+            project_id = o.ProjectId,
+            task_id = o.TaskId,
+            launch_profile_kind = o.LaunchProfileKind,
+            created_at = o.CreatedAt.ToString("o"),
+            age_minutes = o.AgeMinutes,
+            has_busy_pool_member = o.HasBusyPoolMember,
+            busy_worker_identity = o.BusyWorkerIdentity,
+            no_active_assignment = o.NoActiveAssignment,
+            is_stale = o.IsStale,
+        });
+
+        return JsonSerializer.Serialize(new
+        {
+            summary = $"detected {orphans.Count} orphaned worker run(s)",
+            count = orphans.Count,
+            orphans = diagnostics,
+        }, JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "runner")]
+    [McpToolBundle("worker-pool")]
+    [McpServerTool(Name = "force_terminate_orphan_run"), Description(
+        "Force-terminate an orphaned worker run by session_id. Sets the pi_session to 'failed', " +
+        "expires any non-terminal assignment, and releases any busy pool member. " +
+        "Idempotent — safe to call on already-terminal sessions. Creates an audit trail. " +
+        "Use detect_orphaned_worker_runs first to identify candidates.")]
+    public static async Task<string> ForceTerminateOrphanRun(
+        IWorkerPoolRepository repo,
+        [Description("Session id of the orphaned worker run to force-terminate.")] string session_id,
+        [Description("Actor requesting termination (e.g. 'runner', admin agent name).")] string terminated_by,
+        [Description("Optional reason for the force termination.")] string? reason = null)
+    {
+        try
+        {
+            var result = await repo.ForceTerminateOrphanRunAsync(session_id, terminated_by, reason);
+
+            return JsonSerializer.Serialize(new
+            {
+                summary = result.IsAlreadyTerminal
+                    ? $"session '{result.SessionId}' was already terminal"
+                    : result.WasTerminated
+                        ? $"force-terminated orphaned run '{result.RunId}' (session {result.SessionId})"
+                        : $"session '{result.SessionId}' could not be terminated (may have been race-resolved)",
+                session_id = result.SessionId,
+                run_id = result.RunId,
+                was_terminated = result.WasTerminated,
+                already_terminal = result.IsAlreadyTerminal,
+                released_pool_member = result.ReleasedPoolMember,
+                released_worker_identity = result.ReleasedWorkerIdentity,
+                expired_assignment = result.ExpiredAssignment,
+                expired_assignment_id = result.ExpiredAssignmentId,
+                reconciled_at = result.ReconciledAt.ToString("o"),
+            }, JsonOpts.Default);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                summary = $"force-terminate failed: {ex.Message}",
+                error = true,
+            }, JsonOpts.Default);
+        }
     }
 }

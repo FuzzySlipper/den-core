@@ -29,13 +29,14 @@ Documents carry a `visibility` column matching the spaces-aligned enum: `normal 
 - Returns `can_archive: false` with `referenced_by` details when references exist.
 - Callers should prefer refusing the archive unless forced or the references are explicitly handled.
 
-### 4. Default exclusion
+### 4. Default to normal-only
 
-- `list_documents` (both MCP and REST) excludes archived documents by default.
-- `search_documents` excludes archived documents from FTS results.
-- `query_librarian` (via `LibrarianGatherer.SearchDocsSafe` → `SearchAsync`) excludes archived.
+- `list_documents` (both MCP and REST) returns only normal-visibility documents by default.
+- `search_documents` returns only normal-visibility documents from FTS results.
+- `query_librarian` (via `LibrarianGatherer.SearchDocsSafe` → `SearchAsync`) returns only normal.
 - `get_agent_guidance` / `ResolveAsync` excludes archived documents from resolved guidance content.
-- Hidden documents are excluded from default list/search (only returned when `visibility=hidden` filter is explicit).
+- Hidden and archived documents require an explicit `visibility` filter to appear in list/search results.
+- `GetAsync` by slug always returns any document regardless of visibility.
 
 ### 5. Deliberate archived recall
 
@@ -44,15 +45,16 @@ Documents carry a `visibility` column matching the spaces-aligned enum: `normal 
 - REST routes: `GET /api/projects/{id}/documents/archived` and `GET /api/projects/{id}/documents/archived/search`.
 - These are intentionally separate from the primary hot paths — no `include_archived` flag on the main list/search.
 
-### 6. Legacy global docs archived
+### 6. Legacy global docs (deferred archival)
 
-The following four `_global` legacy documents are archived as part of this change:
+The following four `_global` legacy documents are **candidates for archival** but are not force-archived as part of this change. The archival mechanism exists and works; they should be archived via a runtime data operation using the `update_document_visibility` tool:
+
 - `pi-local-worker-source-policy`
 - `pi-coder-subagent-prompt-default`
 - `pi-reviewer-subagent-prompt-default`
 - `pi-orchestrator-guidance-default`
 
-They disappear from default search, librarian, and guidance but are recoverable via `query_archived_documents`.
+Once archived, they disappear from default search, librarian, and guidance but remain recoverable via `query_archived_documents`. Deferred to avoid coupling schema changes to specific document content.
 
 ## Deferred
 
@@ -62,5 +64,5 @@ They disappear from default search, librarian, and guidance but are recoverable 
 ## Implementation Notes
 
 - Migration adds `visibility TEXT NOT NULL DEFAULT 'normal' CHECK (visibility IN ('normal', 'hidden', 'archived'))` to the `documents` table via `TryAddColumnAsync`.
-- FTS `documents_fts` is not filtered — filtering happens at the JOIN level (`d.visibility != 'archived'`), so archived documents remain FTS-indexed for archived recall.
+- FTS `documents_fts` is not filtered — filtering happens at the JOIN level (`d.visibility = 'normal'`), so archived and hidden documents remain FTS-indexed for archived recall.
 - All changes are in den-core. den-mcp is an MCP-facing adapter only.

@@ -34,7 +34,6 @@ public sealed class DocumentRepository : IDocumentRepository
                 title = excluded.title,
                 content = excluded.content,
                 doc_type = excluded.doc_type,
-                visibility = excluded.visibility,
                 tags = excluded.tags,
                 summary = excluded.summary,
                 updated_at = datetime('now')
@@ -80,7 +79,8 @@ public sealed class DocumentRepository : IDocumentRepository
 
         var where = new List<string>();
 
-        // Default: only return non-archived (normal + hidden) documents
+        // Default: only return normal-visibility documents
+        // (hidden and archived require explicit visibility filter)
         if (visibility is not null)
         {
             where.Add("visibility = @visibility");
@@ -88,7 +88,7 @@ public sealed class DocumentRepository : IDocumentRepository
         }
         else
         {
-            where.Add("visibility != 'archived'");
+            where.Add("visibility = 'normal'");
         }
 
         if (projectId is not null)
@@ -155,7 +155,7 @@ public sealed class DocumentRepository : IDocumentRepository
             FROM documents_fts fts
             JOIN documents d ON d.id = fts.rowid
             WHERE documents_fts MATCH @query {projectFilter}
-              AND d.visibility != 'archived'
+              AND d.visibility = 'normal'
             ORDER BY rank
             """;
         cmd.Parameters.AddWithValue("@query", query);

@@ -106,13 +106,10 @@ public static class DirectDeliveryContractRoutes
 
             // Build lookup by AgentInstanceId
             var membersByAgentInstanceId = new Dictionary<string, WorkerPoolMember>(StringComparer.Ordinal);
-            var membersByWorkerIdentity = new Dictionary<string, WorkerPoolMember>(StringComparer.Ordinal);
             foreach (var m in allMembers)
             {
                 if (!string.IsNullOrWhiteSpace(m.AgentInstanceId))
                     membersByAgentInstanceId[m.AgentInstanceId] = m;
-                if (!string.IsNullOrWhiteSpace(m.WorkerIdentity))
-                    membersByWorkerIdentity[m.WorkerIdentity] = m;
             }
 
             // Apply profile/workerRole filters on pool members if requested

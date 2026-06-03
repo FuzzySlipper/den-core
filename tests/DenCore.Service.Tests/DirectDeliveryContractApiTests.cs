@@ -734,6 +734,117 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         Assert.Equal("reviewer", items[0].GetProperty("worker_role").GetString());
     }
 
+    [Fact]
+    public async Task Bindings_UnlinkedBindingWithoutPoolFilters_UsesBindingAsSessionOwner()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var bindingsRepo = scope.ServiceProvider.GetRequiredService<IAgentInstanceBindingRepository>();
+
+        await bindingsRepo.UpsertAsync(new AgentInstanceBinding
+        {
+            InstanceId = "dd-unlinked-binding",
+            ProjectId = ProjectId,
+            AgentIdentity = "unlinked-adapter-agent",
+            AgentFamily = "local-adapter",
+            Role = "observer",
+            TransportKind = "local_adapter",
+            SessionId = "session-unlinked",
+            Status = AgentInstanceBindingStatus.Active,
+        });
+
+        var response = await _client.GetAsync($"/api/direct-delivery/bindings?projectId={ProjectId}&agentIdentity=unlinked-adapter-agent");
+        response.EnsureSuccessStatusCode();
+
+        using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        var item = Assert.Single(payload.RootElement.GetProperty("items").EnumerateArray());
+
+        Assert.Equal("dd-unlinked-binding", item.GetProperty("agent_instance_id").GetString());
+        Assert.Equal("dd-unlinked-binding", item.GetProperty("session_owner_id").GetString());
+        Assert.Equal("session-unlinked", item.GetProperty("session_id").GetString());
+        Assert.True(!item.TryGetProperty("pool_member_id", out var poolMemberId) || poolMemberId.ValueKind == JsonValueKind.Null);
+        Assert.True(!item.TryGetProperty("profile_identity", out var profileIdentity) || profileIdentity.ValueKind == JsonValueKind.Null);
+        Assert.True(!item.TryGetProperty("worker_role", out var workerRole) || workerRole.ValueKind == JsonValueKind.Null);
+        Assert.True(!item.TryGetProperty("lane", out var lane) || lane.ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Bindings_FilterByProfileIdentityAndWorkerRole_UsesAndSemantics()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var bindingsRepo = scope.ServiceProvider.GetRequiredService<IAgentInstanceBindingRepository>();
+        var poolRepo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+
+        await SeedBindingWithPoolMemberAsync(
+            bindingsRepo,
+            poolRepo,
+            instanceId: "dd-combo-coder",
+            agentIdentity: "combo-coder",
+            workerIdentity: "combo-coder-worker",
+            profileIdentity: "spawned-coder",
+            workerRole: "coder");
+
+        await SeedBindingWithPoolMemberAsync(
+            bindingsRepo,
+            poolRepo,
+            instanceId: "dd-combo-reviewer",
+            agentIdentity: "combo-reviewer",
+            workerIdentity: "combo-reviewer-worker",
+            profileIdentity: "spawned-coder",
+            workerRole: "reviewer");
+
+        await SeedBindingWithPoolMemberAsync(
+            bindingsRepo,
+            poolRepo,
+            instanceId: "dd-combo-other-profile",
+            agentIdentity: "combo-other-profile",
+            workerIdentity: "combo-other-profile-worker",
+            profileIdentity: "spawned-reviewer",
+            workerRole: "reviewer");
+
+        var response = await _client.GetAsync(
+            $"/api/direct-delivery/bindings?projectId={ProjectId}&profileIdentity=spawned-coder&workerRole=reviewer");
+        response.EnsureSuccessStatusCode();
+
+        using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        var items = payload.RootElement.GetProperty("items").EnumerateArray().ToList();
+        var item = Assert.Single(items);
+
+        Assert.Equal("combo-reviewer", item.GetProperty("agent_identity").GetString());
+        Assert.Equal("spawned-coder", item.GetProperty("profile_identity").GetString());
+        Assert.Equal("reviewer", item.GetProperty("worker_role").GetString());
+    }
+
+    private static async Task SeedBindingWithPoolMemberAsync(
+        IAgentInstanceBindingRepository bindingsRepo,
+        IWorkerPoolRepository poolRepo,
+        string instanceId,
+        string agentIdentity,
+        string workerIdentity,
+        string profileIdentity,
+        string workerRole)
+    {
+        await bindingsRepo.UpsertAsync(new AgentInstanceBinding
+        {
+            InstanceId = instanceId,
+            ProjectId = ProjectId,
+            AgentIdentity = agentIdentity,
+            AgentFamily = "local-adapter",
+            Role = workerRole,
+            TransportKind = "local_adapter",
+            SessionId = $"session-{instanceId}",
+            Status = AgentInstanceBindingStatus.Active,
+        });
+
+        await poolRepo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = workerIdentity,
+            ProfileIdentity = profileIdentity,
+            WorkerRole = workerRole,
+            AgentInstanceId = instanceId,
+            Status = WorkerPoolStates.MemberAvailable,
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // Test infrastructure
     // ═══════════════════════════════════════════════════════════════════

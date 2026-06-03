@@ -210,8 +210,12 @@ public static class DirectDeliveryContractRoutes
                     Metadata = ParseMetadata(binding.Metadata),
 
                     // Updated timestamp
-                    UpdatedAt = poolMember?.UpdatedAt ?? binding.LastHeartbeat
-                });
+                    UpdatedAt = poolMember?.UpdatedAt ?? binding.LastHeartbeat,
+
+                    // Outbox cursor: NOT populated yet. Delivery event/wake endpoint
+                    // is future work (#1912/R1901-2, R1901-3). Will be populated from
+                    // delivery event sequencing once that endpoint exists.
+                    });
             }
 
             return Results.Ok(new DirectDeliveryBindingSnapshotPage

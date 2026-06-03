@@ -183,6 +183,10 @@ public sealed class DirectDeliveryBindingSnapshot
     /// <summary>
     /// Outbox cursor for delivery-readback polling. Local adapters can use this
     /// to track which delivery events they have already processed.
+    ///
+    /// NOTE: Not currently populated by the route projection. Will be populated
+    /// when the delivery event/wake endpoint exists and begins producing delivery
+    /// events. See DirectDeliveryEnvelope.OutboxCursor for the event-level cursor.
     /// </summary>
     public string? OutboxCursor { get; set; }
 

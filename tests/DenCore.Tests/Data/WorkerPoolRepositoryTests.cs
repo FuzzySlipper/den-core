@@ -1,5 +1,6 @@
 using DenCore.Data;
 using DenCore.Models;
+using System.Text.Json;
 using DenCore.Tests;
 using Microsoft.Data.Sqlite;
 
@@ -2297,11 +2298,16 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         // Verify audit event was created
         await using var conn = await _testDb.Db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT event_type, reason FROM pi_session_events WHERE session_id = 'audit-session-1' ORDER BY id DESC LIMIT 1";
+        cmd.CommandText = "SELECT event_type, reason, payload FROM pi_session_events WHERE session_id = 'audit-session-1' ORDER BY id DESC LIMIT 1";
         await using var reader = await cmd.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal("orphan_force_terminated", reader.GetString(0));
         Assert.NotNull(reader.GetString(1));
+
+        var payload = reader.GetString(2);
+        using var payloadJson = JsonDocument.Parse(payload);
+        Assert.Equal("launching", payloadJson.RootElement.GetProperty("previous_state").GetString());
+        Assert.True(payloadJson.RootElement.GetProperty("orphan_reconciliation").GetBoolean());
     }
 
     [Fact]

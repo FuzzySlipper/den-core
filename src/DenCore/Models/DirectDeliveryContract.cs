@@ -206,6 +206,61 @@ public sealed class DirectDeliveryBindingSnapshot
     public JsonElement? Metadata { get; set; }
 }
 
+// ── Binding Registration (request / response for PUT) ─────────────────
+
+/// <summary>
+/// Request to register or heartbeat an adapter binding with Core.
+/// Maps to the shape sent by den-host's AdapterBindingRequest.
+/// </summary>
+public sealed class DirectDeliveryBindingRegistration
+{
+    /// <summary>The adapter runtime family, e.g. "host".</summary>
+    public required string AdapterKind { get; set; }
+
+    /// <summary>Stable globally-unique adapter instance identifier.</summary>
+    public required string AdapterInstanceId { get; set; }
+
+    /// <summary>Human-readable machine or host identifier.</summary>
+    public required string Host { get; set; }
+
+    /// <summary>Roles this adapter claims to satisfy.</summary>
+    public List<string> ManagedRoles { get; set; } = [];
+
+    /// <summary>Capabilities this adapter claims to satisfy.</summary>
+    public List<string> ManagedCapabilities { get; set; } = [];
+
+    /// <summary>Optional project id scope. Defaults to empty (cross-project).</summary>
+    public string? ProjectId { get; set; }
+}
+
+/// <summary>
+/// Response from a successful binding registration or heartbeat.
+/// Matches the shape den-host's AdapterBindingSnapshot deserializer expects.
+/// </summary>
+public sealed class DirectDeliveryBindingRegistrationResponse
+{
+    /// <summary>The registered adapter instance id.</summary>
+    public required string AdapterInstanceId { get; set; }
+
+    /// <summary>The adapter runtime family.</summary>
+    public required string AdapterKind { get; set; }
+
+    /// <summary>Human-readable host identifier.</summary>
+    public required string Host { get; set; }
+
+    /// <summary>Roles this adapter manages.</summary>
+    public List<string> ManagedRoles { get; set; } = [];
+
+    /// <summary>Capabilities this adapter manages.</summary>
+    public List<string> ManagedCapabilities { get; set; } = [];
+
+    /// <summary>When the binding was last seen / heartbeated.</summary>
+    public DateTime LastSeen { get; set; }
+
+    /// <summary>Current binding status: active, degraded, inactive.</summary>
+    public required string Status { get; set; }
+}
+
 // ── Direct Delivery Envelope (message contract for adapter wake/delivery) ─
 
 /// <summary>

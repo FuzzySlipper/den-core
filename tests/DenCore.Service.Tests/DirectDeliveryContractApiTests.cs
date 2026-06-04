@@ -34,6 +34,8 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
     };
 
+    private static readonly JsonSerializerOptions JsonCamelOpts = new(JsonSerializerDefaults.Web);
+
     private DirectDeliveryAppFactory _factory = null!;
     private HttpClient _client = null!;
 
@@ -843,6 +845,139 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
             AgentInstanceId = instanceId,
             Status = WorkerPoolStates.MemberAvailable,
         });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Task #1930: Binding Registration (PUT /api/direct-delivery/bindings/{id})
+    // ═══════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task PutBinding_FreshRegistration_Returns200WithLastSeen()
+    {
+        // Use a concrete DTO to ensure serialization matches server expectations
+        var registration = new DirectDeliveryBindingRegistration
+        {
+            AdapterKind = "host",
+            AdapterInstanceId = "dd-reg-test-1",
+            Host = "workstation-01",
+            ManagedRoles = ["coder", "reviewer"],
+            ManagedCapabilities = ["dotnet"],
+            ProjectId = ProjectId,
+        };
+
+        var json = JsonSerializer.Serialize(registration, JsonOpts);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PutAsync("/api/direct-delivery/bindings/dd-reg-test-1", content);
+        response.EnsureSuccessStatusCode();
+
+        Assert.Equal(200, (int)response.StatusCode);
+
+        using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        var root = payload.RootElement;
+
+        Assert.Equal("dd-reg-test-1", root.GetProperty("adapterInstanceId").GetString());
+        Assert.Equal("host", root.GetProperty("adapterKind").GetString());
+        Assert.Equal("workstation-01", root.GetProperty("host").GetString());
+        Assert.Equal("active", root.GetProperty("status").GetString());
+        Assert.True(root.TryGetProperty("lastSeen", out var lastSeen) && lastSeen.ValueKind == JsonValueKind.String);
+        Assert.NotEmpty(lastSeen.GetString()!);
+
+        // Verify it appears in the GET listing
+        var getResponse = await _client.GetAsync($"/api/direct-delivery/bindings?projectId={ProjectId}");
+        getResponse.EnsureSuccessStatusCode();
+
+        using var listPayload = await JsonDocument.ParseAsync(await getResponse.Content.ReadAsStreamAsync());
+        var items = listPayload.RootElement.GetProperty("items").EnumerateArray().ToList();
+        var match = items.FirstOrDefault(i =>
+            i.GetProperty("agent_instance_id").GetString() == "dd-reg-test-1");
+        Assert.NotEqual(default, match);
+    }
+
+    [Fact]
+    public async Task PutBinding_ReRegistration_UpdatesHeartbeat()
+    {
+        var body = new
+        {
+            adapterKind = "host",
+            adapterInstanceId = "dd-reg-update-1",
+            host = "workstation-01",
+            managedRoles = Array.Empty<string>(),
+            managedCapabilities = Array.Empty<string>(),
+            projectId = ProjectId,
+        };
+
+        var json = JsonSerializer.Serialize(body, JsonOpts);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        // First registration
+        var response1 = await _client.PutAsync("/api/direct-delivery/bindings/dd-reg-update-1", content);
+        response1.EnsureSuccessStatusCode();
+
+        using var payload1 = await JsonDocument.ParseAsync(await response1.Content.ReadAsStreamAsync());
+        var lastSeen1 = payload1.RootElement.GetProperty("lastSeen").GetString();
+
+        // Wait for SQLite's datetime('now') to advance (second precision)
+        await Task.Delay(1100);
+
+        // Re-registration (same body)
+        var response2 = await _client.PutAsync("/api/direct-delivery/bindings/dd-reg-update-1", content);
+        response2.EnsureSuccessStatusCode();
+
+        using var payload2 = await JsonDocument.ParseAsync(await response2.Content.ReadAsStreamAsync());
+        var lastSeen2 = payload2.RootElement.GetProperty("lastSeen").GetString();
+
+        // lastSeen should have advanced
+        Assert.NotEqual(lastSeen1, lastSeen2);
+    }
+
+    [Fact]
+    public async Task PutBinding_MissingRequiredFields_Returns400()
+    {
+        // Missing adapterKind
+        var bodyMissingKind = new
+        {
+            adapterKind = "",
+            adapterInstanceId = "dd-400-1",
+            host = "test-host",
+            managedRoles = Array.Empty<string>(),
+            managedCapabilities = Array.Empty<string>(),
+        };
+
+        var json = JsonSerializer.Serialize(bodyMissingKind, JsonOpts);
+        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var response = await _client.PutAsync("/api/direct-delivery/bindings/dd-400-1", content);
+        Assert.Equal(400, (int)response.StatusCode);
+
+        // Missing host
+        var bodyMissingHost = new
+        {
+            adapterKind = "host",
+            adapterInstanceId = "dd-400-2",
+            host = "",
+            managedRoles = Array.Empty<string>(),
+            managedCapabilities = Array.Empty<string>(),
+        };
+
+        json = JsonSerializer.Serialize(bodyMissingHost, JsonOpts);
+        content = new StringContent(json, Encoding.UTF8, "application/json");
+        response = await _client.PutAsync("/api/direct-delivery/bindings/dd-400-2", content);
+        Assert.Equal(400, (int)response.StatusCode);
+
+        // URL/body mismatch
+        var bodyMismatch = new
+        {
+            adapterKind = "host",
+            adapterInstanceId = "dd-400-url-mismatch",
+            host = "test-host",
+            managedRoles = Array.Empty<string>(),
+            managedCapabilities = Array.Empty<string>(),
+        };
+
+        json = JsonSerializer.Serialize(bodyMismatch, JsonOpts);
+        content = new StringContent(json, Encoding.UTF8, "application/json");
+        response = await _client.PutAsync("/api/direct-delivery/bindings/dd-400-different-url", content);
+        Assert.Equal(400, (int)response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════════════

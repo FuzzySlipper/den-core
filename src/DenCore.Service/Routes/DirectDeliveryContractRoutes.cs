@@ -51,7 +51,8 @@ public static class DirectDeliveryContractRoutes
                         ["endpoints"] = new[]
                         {
                             "/api/direct-delivery/readiness",
-                            "/api/direct-delivery/bindings"
+                            "/api/direct-delivery/bindings",
+                            "/api/direct-delivery/bindings/{adapterInstanceId}"
                         }
                     }
                 }
@@ -70,6 +71,65 @@ public static class DirectDeliveryContractRoutes
                 CheckedAt = checkedAt,
                 Checks = checks
             });
+        });
+
+        // ── Binding Registration / Heartbeat (PUT) ─────────────────────
+
+        group.MapPut("/bindings/{instanceId}", async (
+            string instanceId,
+            DirectDeliveryBindingRegistration request,
+            IAgentInstanceBindingRepository bindingsRepo) =>
+        {
+            // Validate
+            if (string.IsNullOrWhiteSpace(request.AdapterKind))
+                return Results.BadRequest(new { error = "adapterKind is required." });
+
+            if (string.IsNullOrWhiteSpace(request.AdapterInstanceId))
+                return Results.BadRequest(new { error = "adapterInstanceId is required." });
+
+            if (string.IsNullOrWhiteSpace(request.Host))
+                return Results.BadRequest(new { error = "host is required." });
+
+            // The URL {instanceId} must match the body's AdapterInstanceId
+            if (!string.Equals(instanceId, request.AdapterInstanceId, StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "URL instanceId must match body adapterInstanceId." });
+
+            // Build metadata from host/roles/capabilities
+            var metadataObj = new Dictionary<string, object>
+            {
+                ["host"] = request.Host,
+                ["managedRoles"] = request.ManagedRoles,
+                ["managedCapabilities"] = request.ManagedCapabilities
+            };
+            var metadataJson = JsonSerializer.Serialize(metadataObj);
+
+            // Map to entity and upsert
+            var binding = new AgentInstanceBinding
+            {
+                InstanceId = request.AdapterInstanceId,
+                ProjectId = request.ProjectId ?? string.Empty,
+                AgentIdentity = request.AdapterInstanceId,
+                AgentFamily = request.AdapterKind,
+                TransportKind = "local_adapter",
+                Status = AgentInstanceBindingStatus.Active,
+                Metadata = metadataJson,
+            };
+
+            var saved = await bindingsRepo.UpsertAsync(binding);
+
+            // Use camelCase serialization for den-host's AdapterBindingSnapshot deserializer
+            var camelOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+            var response = new DirectDeliveryBindingRegistrationResponse
+            {
+                AdapterInstanceId = saved.InstanceId,
+                AdapterKind = saved.AgentFamily,
+                Host = request.Host,
+                ManagedRoles = request.ManagedRoles,
+                ManagedCapabilities = request.ManagedCapabilities,
+                LastSeen = saved.LastHeartbeat,
+                Status = saved.Status.ToDbValue()
+            };
+            return Results.Json(response, camelOptions);
         });
 
         // ── Binding projections ───────────────────────────────────────

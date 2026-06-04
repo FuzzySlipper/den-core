@@ -107,7 +107,7 @@ public static class DirectDeliveryContractRoutes
             var binding = new AgentInstanceBinding
             {
                 InstanceId = request.AdapterInstanceId,
-                ProjectId = request.ProjectId ?? string.Empty,
+                ProjectId = request.ProjectId ?? "_global",
                 AgentIdentity = request.AdapterInstanceId,
                 AgentFamily = request.AdapterKind,
                 TransportKind = "local_adapter",

@@ -229,7 +229,7 @@ public sealed class DirectDeliveryBindingRegistration
     /// <summary>Capabilities this adapter claims to satisfy.</summary>
     public List<string> ManagedCapabilities { get; set; } = [];
 
-    /// <summary>Optional project id scope. Defaults to empty (cross-project).</summary>
+    /// <summary>Optional project id scope. Defaults to '_global' (cross-project).</summary>
     public string? ProjectId { get; set; }
 }
 

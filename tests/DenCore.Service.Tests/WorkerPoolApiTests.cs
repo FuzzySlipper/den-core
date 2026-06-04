@@ -101,6 +101,37 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         return (workerId, lease.Id, runId);
     }
 
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_DoneTask_HoldsWithoutWorkerLaunch()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var tasks = scope.ServiceProvider.GetRequiredService<ITaskRepository>();
+        var messages = scope.ServiceProvider.GetRequiredService<IMessageRepository>();
+        var reviewRounds = scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>();
+        var reviewFindings = scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>();
+
+        var terminalTask = await tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = _projectId,
+            Title = "Terminal task replay guard",
+            Status = DenCore.Models.TaskStatus.Done,
+        });
+
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            tasks,
+            messages,
+            reviewRounds,
+            reviewFindings,
+            _projectId,
+            terminalTask.Id,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        Assert.Equal("hold", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("terminal_or_blocked_task", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.True(doc.RootElement.GetProperty("fail_closed").GetBoolean());
+    }
+
     // ── Member CRUD via REST ───────────────────────────────────────────
 
     [Fact]
@@ -398,6 +429,82 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AppendCheckpoint_ProgressAfterTerminal_ReturnsConflictAndKeepsCompletionLatest()
+    {
+        var (_, assignmentId, runId) = await SeedAndLeaseAsync("cp-terminal-guard");
+
+        var completionResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
+        {
+            run_id = runId,
+            checkpoint_type = "completion",
+            payload = """{"result":"success"}""",
+        });
+        completionResp.EnsureSuccessStatusCode();
+        using var completionDoc = JsonDocument.Parse(await completionResp.Content.ReadAsStringAsync());
+        var completionCheckpointId = completionDoc.RootElement.GetProperty("id").GetInt32();
+
+        var cleanupResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/cleanup", new
+        {
+            evidence = """{"reason":"terminal replay guard regression"}""",
+        });
+        cleanupResp.EnsureSuccessStatusCode();
+
+        var releaseResp = await _client.PostAsync($"/api/worker-pool/assignments/{assignmentId}/release", null);
+        releaseResp.EnsureSuccessStatusCode();
+
+        var staleResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
+        {
+            run_id = runId,
+            checkpoint_type = "progress",
+            payload = """{"stage":"stale plan replay"}""",
+        });
+        Assert.Equal(HttpStatusCode.Conflict, staleResp.StatusCode);
+        using var staleDoc = JsonDocument.Parse(await staleResp.Content.ReadAsStringAsync());
+        Assert.Contains("terminal", staleDoc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var getResp = await _client.GetAsync($"/api/worker-pool/assignments/{assignmentId}");
+        getResp.EnsureSuccessStatusCode();
+        using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        Assert.Equal("completed", getDoc.RootElement.GetProperty("state").GetString());
+        Assert.Equal(completionCheckpointId, getDoc.RootElement.GetProperty("latest_checkpoint_id").GetInt32());
+
+        var listResp = await _client.GetAsync($"/api/worker-pool/checkpoints?assignmentId={assignmentId}");
+        listResp.EnsureSuccessStatusCode();
+        using var listDoc = JsonDocument.Parse(await listResp.Content.ReadAsStringAsync());
+        Assert.Equal(1, listDoc.RootElement.GetProperty("count").GetInt32());
+    }
+
+    [Fact]
+    public async Task AppendCheckpoint_IdempotentCompletionAfterTerminal_DoesNotReopenAssignment()
+    {
+        var (_, assignmentId, runId) = await SeedAndLeaseAsync("cp-terminal-repost");
+
+        var firstResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
+        {
+            run_id = runId,
+            checkpoint_type = "completion",
+            payload = """{"result":"success"}""",
+        });
+        firstResp.EnsureSuccessStatusCode();
+        using var firstDoc = JsonDocument.Parse(await firstResp.Content.ReadAsStringAsync());
+        var firstCheckpointId = firstDoc.RootElement.GetProperty("id").GetInt32();
+
+        var repostResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
+        {
+            run_id = runId,
+            checkpoint_type = "completion",
+            payload = """{"result":"success","idempotent":true}""",
+        });
+        repostResp.EnsureSuccessStatusCode();
+
+        var getResp = await _client.GetAsync($"/api/worker-pool/assignments/{assignmentId}");
+        getResp.EnsureSuccessStatusCode();
+        using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        Assert.Equal("completed", getDoc.RootElement.GetProperty("state").GetString());
+        Assert.Equal(firstCheckpointId, getDoc.RootElement.GetProperty("latest_checkpoint_id").GetInt32());
+    }
+
+    [Fact]
     public async Task AppendCheckpoint_Failure_SetsState()
     {
         var (workerId, assignmentId, cpFailRunId) = await SeedAndLeaseAsync("cp-fail");
@@ -505,6 +612,53 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         getResp.EnsureSuccessStatusCode();
         using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
         Assert.Equal("expired", getDoc.RootElement.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task AppendCheckpointResponse_AckAfterTerminal_ReturnsConflictAndAbortIsAuditOnly()
+    {
+        var (_, assignmentId, runId) = await SeedAndLeaseAsync("resp-terminal-guard");
+
+        var completionResp = await _client.PostAsJsonAsync($"/api/worker-pool/assignments/{assignmentId}/checkpoints", new
+        {
+            run_id = runId,
+            checkpoint_type = "completion",
+            payload = """{"result":"success"}""",
+        });
+        completionResp.EnsureSuccessStatusCode();
+        using var cpDoc = JsonDocument.Parse(await completionResp.Content.ReadAsStringAsync());
+        var checkpointId = cpDoc.RootElement.GetProperty("id").GetInt32();
+
+        var ackResp = await _client.PostAsJsonAsync($"/api/worker-pool/checkpoints/{checkpointId}/responses", new
+        {
+            assignment_id = assignmentId,
+            run_id = runId,
+            response_type = "ack",
+            payload = """{"instruction":"stale plan replay"}""",
+        });
+        Assert.Equal(HttpStatusCode.Conflict, ackResp.StatusCode);
+        using var ackDoc = JsonDocument.Parse(await ackResp.Content.ReadAsStringAsync());
+        Assert.Contains("terminal", ackDoc.RootElement.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
+
+        var abortResp = await _client.PostAsJsonAsync($"/api/worker-pool/checkpoints/{checkpointId}/responses", new
+        {
+            assignment_id = assignmentId,
+            run_id = runId,
+            response_type = "abort",
+            payload = """{"reason":"stale terminal checkpoint response suppressed"}""",
+        });
+        abortResp.EnsureSuccessStatusCode();
+
+        var getResp = await _client.GetAsync($"/api/worker-pool/assignments/{assignmentId}");
+        getResp.EnsureSuccessStatusCode();
+        using var getDoc = JsonDocument.Parse(await getResp.Content.ReadAsStringAsync());
+        Assert.Equal("completed", getDoc.RootElement.GetProperty("state").GetString());
+
+        var responsesResp = await _client.GetAsync($"/api/worker-pool/checkpoints/{checkpointId}/responses");
+        responsesResp.EnsureSuccessStatusCode();
+        using var responsesDoc = JsonDocument.Parse(await responsesResp.Content.ReadAsStringAsync());
+        Assert.Equal(1, responsesDoc.RootElement.GetProperty("count").GetInt32());
+        Assert.Equal("abort", responsesDoc.RootElement.GetProperty("responses")[0].GetProperty("response_type").GetString());
     }
 
     [Fact]

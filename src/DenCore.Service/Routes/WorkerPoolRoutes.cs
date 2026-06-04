@@ -185,8 +185,15 @@ public static class WorkerPoolRoutes
         {
             if (string.IsNullOrWhiteSpace(req.RunId) || string.IsNullOrWhiteSpace(req.ResponseType) || string.IsNullOrWhiteSpace(req.Payload))
                 return Results.BadRequest(new { error = "run_id, response_type, and payload are required" });
-            var response = await repo.AppendCheckpointResponseAsync(checkpointId, req.AssignmentId, req.RunId, req.ResponseType, req.Payload);
-            return Results.Created($"/api/worker-pool/responses/{response.Id}", response);
+            try
+            {
+                var response = await repo.AppendCheckpointResponseAsync(checkpointId, req.AssignmentId, req.RunId, req.ResponseType, req.Payload);
+                return Results.Created($"/api/worker-pool/responses/{response.Id}", response);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(new { error = ex.Message });
+            }
         });
 
         pool.MapGet("/checkpoints/{checkpointId:int}/responses", async (IWorkerPoolRepository repo, int checkpointId) =>

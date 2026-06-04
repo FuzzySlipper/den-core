@@ -581,13 +581,26 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var tx = await conn.BeginTransactionAsync();
         try
         {
-            // Run ID mismatch guard: verify assignment exists and run_id matches
+            // Run ID mismatch guard: verify assignment exists and run_id matches.
             var assignment = await GetAssignmentByIdAsync(conn, assignmentId);
             if (assignment is null)
                 throw new InvalidOperationException($"Assignment {assignmentId} not found");
             if (assignment.RunId != runId)
                 throw new InvalidOperationException(
                     $"Run ID mismatch for assignment {assignmentId}: checkpoint claims '{runId}', assignment has '{assignment.RunId}'");
+
+            var newState = StateForCheckpointType(checkpointType);
+            if (WorkerPoolStates.IsTerminal(assignment.State))
+            {
+                // Terminal assignments may receive an idempotent terminal checkpoint repost
+                // as audit evidence, but must never accept non-terminal checkpoints that
+                // would move them back to checkpoint_waiting/running and re-route workers.
+                if (!string.Equals(assignment.State, newState, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Assignment {assignmentId} is terminal ({assignment.State}); refusing checkpoint '{checkpointType}' for run '{runId}'");
+                }
+            }
 
             // Insert checkpoint
             await using var cmd = conn.CreateCommand();
@@ -606,19 +619,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             var checkpoint = ReadCheckpoint(reader);
             await reader.CloseAsync();
 
-            // Update assignment: link latest checkpoint and derive state
-            string newState;
-            switch (checkpointType)
+            // Update assignment: link latest checkpoint and derive state. Idempotent
+            // terminal reposts are persisted as audit rows but intentionally do not
+            // replace latest_checkpoint_id or mutate the terminal assignment.
+            if (WorkerPoolStates.IsTerminal(assignment.State))
             {
-                case WorkerPoolStates.CheckpointCompletion:
-                    newState = WorkerPoolStates.Completed;
-                    break;
-                case WorkerPoolStates.CheckpointFailure:
-                    newState = WorkerPoolStates.Failed;
-                    break;
-                default:
-                    newState = WorkerPoolStates.CheckpointWaiting;
-                    break;
+                await tx.CommitAsync();
+                return checkpoint;
             }
 
             await using var updateCmd = conn.CreateCommand();
@@ -701,6 +708,31 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var tx = await conn.BeginTransactionAsync();
         try
         {
+            var checkpoint = await GetCheckpointByIdAsync(conn, checkpointId);
+            if (checkpoint is null)
+                throw new InvalidOperationException($"Checkpoint {checkpointId} not found");
+            if (!string.Equals(checkpoint.RunId, runId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"Run ID mismatch for checkpoint {checkpointId}: response claims '{runId}', checkpoint has '{checkpoint.RunId}'");
+            if (assignmentId is not null && checkpoint.AssignmentId != assignmentId.Value)
+                throw new InvalidOperationException(
+                    $"Assignment ID mismatch for checkpoint {checkpointId}: response claims '{assignmentId.Value}', checkpoint has '{checkpoint.AssignmentId}'");
+
+            var effectiveAssignmentId = assignmentId ?? checkpoint.AssignmentId;
+            var assignment = await GetAssignmentByIdAsync(conn, effectiveAssignmentId);
+            if (assignment is null)
+                throw new InvalidOperationException($"Assignment {effectiveAssignmentId} not found");
+            if (assignment.RunId != runId)
+                throw new InvalidOperationException(
+                    $"Run ID mismatch for assignment {effectiveAssignmentId}: response claims '{runId}', assignment has '{assignment.RunId}'");
+
+            if (WorkerPoolStates.IsTerminal(assignment.State)
+                && responseType != WorkerPoolStates.ResponseAbort)
+            {
+                throw new InvalidOperationException(
+                    $"Assignment {effectiveAssignmentId} is terminal ({assignment.State}); refusing response '{responseType}' for checkpoint {checkpointId}");
+            }
+
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 INSERT INTO checkpoint_responses (checkpoint_id, assignment_id, run_id, response_type, payload)
@@ -708,7 +740,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 RETURNING id, checkpoint_id, assignment_id, run_id, response_type, payload, created_at
                 """;
             cmd.Parameters.AddWithValue("@checkpointId", checkpointId);
-            cmd.Parameters.AddWithValue("@assignmentId", (object?)assignmentId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
             cmd.Parameters.AddWithValue("@runId", runId);
             cmd.Parameters.AddWithValue("@responseType", responseType);
             cmd.Parameters.AddWithValue("@payload", payload);
@@ -719,7 +751,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             await reader.CloseAsync();
 
             // If response is ack, transition assignment back to running
-            if (responseType == WorkerPoolStates.ResponseAck && assignmentId is not null)
+            if (responseType == WorkerPoolStates.ResponseAck)
             {
                 await using var updateCmd = conn.CreateCommand();
                 updateCmd.CommandText = """
@@ -727,12 +759,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SET state = 'running', updated_at = datetime('now')
                     WHERE id = @assignmentId AND state = 'checkpoint_waiting'
                     """;
-                updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
+                updateCmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
-            // If response is abort, transition to expired
-            if (responseType == WorkerPoolStates.ResponseAbort && assignmentId is not null)
+            // If response is abort, transition to expired for non-terminal assignments.
+            // Abort responses against terminal assignments are still recorded as audit
+            // evidence, but the terminal assignment state is preserved.
+            if (responseType == WorkerPoolStates.ResponseAbort)
             {
                 await using var updateCmd = conn.CreateCommand();
                 updateCmd.CommandText = """
@@ -740,7 +774,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SET state = 'expired', released_at = datetime('now'), updated_at = datetime('now')
                     WHERE id = @assignmentId AND state NOT IN ('completed', 'failed', 'expired')
                     """;
-                updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId.Value);
+                updateCmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
@@ -1653,6 +1687,27 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadAssignmentWithJoin(reader) : null;
     }
+
+    private static async Task<WorkerCheckpoint?> GetCheckpointByIdAsync(SqliteConnection conn, int checkpointId)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, assignment_id, run_id, checkpoint_type, payload, created_at
+            FROM worker_checkpoints
+            WHERE id = @id
+            """;
+        cmd.Parameters.AddWithValue("@id", checkpointId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        return await reader.ReadAsync() ? ReadCheckpoint(reader) : null;
+    }
+
+    private static string StateForCheckpointType(string checkpointType) => checkpointType switch
+    {
+        WorkerPoolStates.CheckpointCompletion => WorkerPoolStates.Completed,
+        WorkerPoolStates.CheckpointFailure => WorkerPoolStates.Failed,
+        _ => WorkerPoolStates.CheckpointWaiting,
+    };
 
     private static WorkerCheckpoint ReadCheckpoint(SqliteDataReader reader) => new()
     {

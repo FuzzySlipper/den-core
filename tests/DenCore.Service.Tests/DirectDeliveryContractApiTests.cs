@@ -876,11 +876,11 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         using var payload = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
         var root = payload.RootElement;
 
-        Assert.Equal("dd-reg-test-1", root.GetProperty("adapterInstanceId").GetString());
-        Assert.Equal("host", root.GetProperty("adapterKind").GetString());
+        Assert.Equal("dd-reg-test-1", root.GetProperty("adapter_instance_id").GetString());
+        Assert.Equal("host", root.GetProperty("adapter_kind").GetString());
         Assert.Equal("workstation-01", root.GetProperty("host").GetString());
         Assert.Equal("active", root.GetProperty("status").GetString());
-        Assert.True(root.TryGetProperty("lastSeen", out var lastSeen) && lastSeen.ValueKind == JsonValueKind.String);
+        Assert.True(root.TryGetProperty("last_seen", out var lastSeen) && lastSeen.ValueKind == JsonValueKind.String);
         Assert.NotEmpty(lastSeen.GetString()!);
 
         // Verify it appears in the GET listing
@@ -915,7 +915,7 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         response1.EnsureSuccessStatusCode();
 
         using var payload1 = await JsonDocument.ParseAsync(await response1.Content.ReadAsStreamAsync());
-        var lastSeen1 = payload1.RootElement.GetProperty("lastSeen").GetString();
+        var lastSeen1 = payload1.RootElement.GetProperty("last_seen").GetString();
 
         // Wait for SQLite's datetime('now') to advance (second precision)
         await Task.Delay(1100);
@@ -925,7 +925,7 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         response2.EnsureSuccessStatusCode();
 
         using var payload2 = await JsonDocument.ParseAsync(await response2.Content.ReadAsStreamAsync());
-        var lastSeen2 = payload2.RootElement.GetProperty("lastSeen").GetString();
+        var lastSeen2 = payload2.RootElement.GetProperty("last_seen").GetString();
 
         // lastSeen should have advanced
         Assert.NotEqual(lastSeen1, lastSeen2);

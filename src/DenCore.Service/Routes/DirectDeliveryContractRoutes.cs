@@ -117,8 +117,6 @@ public static class DirectDeliveryContractRoutes
 
             var saved = await bindingsRepo.UpsertAsync(binding);
 
-            // Use camelCase serialization for den-host's AdapterBindingSnapshot deserializer
-            var camelOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var response = new DirectDeliveryBindingRegistrationResponse
             {
                 AdapterInstanceId = saved.InstanceId,
@@ -129,7 +127,7 @@ public static class DirectDeliveryContractRoutes
                 LastSeen = saved.LastHeartbeat,
                 Status = saved.Status.ToDbValue()
             };
-            return Results.Json(response, camelOptions);
+            return Results.Ok(response);
         });
 
         // ── Binding projections ───────────────────────────────────────

@@ -982,6 +982,24 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             var result = await cmd.ExecuteScalarAsync();
             summary.RecentCheckpoints = Convert.ToInt32(result ?? 0L);
         }
+
+        // Stale launching assignments: assignments in 'ack' state (leased but never
+        // claimed/started by any runtime substrate) older than 10 minutes.
+        // Detected purely from generic worker_assignments state — no pi_sessions,
+        // Hermes, or Pi runtime table join. den-host provides the host-level
+        // process confirmation path.
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT count(*)
+                FROM worker_assignments
+                WHERE state = 'ack'
+                  AND created_at <= datetime('now', '-10 minutes')
+                """;
+            var result = await cmd.ExecuteScalarAsync();
+            summary.StaleLaunchingAssignments = Convert.ToInt32(result ?? 0L);
+        }
+
         // Per-profile lane capacity breakdown for observability ("spawned-coder: 2/4 busy").
         var laneProfiles = new List<string>();
         await using (var cmd = conn.CreateCommand())

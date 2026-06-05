@@ -306,12 +306,16 @@ public sealed class WorkerPoolSummary
     public int RecentCheckpoints { get; set; }
 
     /// <summary>
-    /// Count of assignments stuck in a non-terminal state whose pi_session is
-    /// still 'launching' and was created >10 minutes ago. These are orphaned
-    /// runs that were never actually started by the bridge — not truly active.
+    /// Count of assignments stuck in 'launching' state more than 10 minutes
+    /// past created_at with no transition to a runtime-active or terminal state.
+    /// These are stale assignments that were leased but never claimed/started
+    /// by any runtime substrate — not truly active.
+    /// Detected purely from generic worker_assignment state; no pi_sessions or
+    /// Hermes/Pi runtime table join required. den-host supplies the runtime-side
+    /// evidence path for host-level process confirmation.
     /// Excluded from <see cref="ActiveAssignments"/> for projection accuracy.
     /// </summary>
-    public int OrphanedLaunchingAssignments { get; set; }
+    public int StaleLaunchingAssignments { get; set; }
 
     /// <summary>
     /// JSON array of <see cref="ProfileCapacitySummary"/> — per-profile capacity

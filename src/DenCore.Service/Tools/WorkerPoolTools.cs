@@ -400,14 +400,14 @@ public sealed class WorkerPoolTools
         IWorkerPoolRepository repo)
     {
         var summary = await repo.GetSummaryAsync();
-        var orphanNote = summary.OrphanedLaunchingAssignments > 0
-            ? $" | {summary.OrphanedLaunchingAssignments} orphaned-launching"
+        var staleNote = summary.StaleLaunchingAssignments > 0
+            ? $" | {summary.StaleLaunchingAssignments} stale-launching"
             : "";
         return JsonSerializer.Serialize(new
         {
             summary = $"pool: {summary.AvailableMembers} available, {summary.BusyMembers} busy, {summary.QuarantinedMembers} quarantined | " +
                       $"assignments: {summary.ActiveAssignments} active, {summary.CompletedAssignments} completed, " +
-                      $"{summary.FailedAssignments} failed, {summary.ExpiredAssignments} expired{orphanNote} | " +
+                      $"{summary.FailedAssignments} failed, {summary.ExpiredAssignments} expired{staleNote} | " +
                       $"{summary.RecentCheckpoints} checkpoints in 24h",
             members = new
             {
@@ -422,7 +422,7 @@ public sealed class WorkerPoolTools
                 completed = summary.CompletedAssignments,
                 failed = summary.FailedAssignments,
                 expired = summary.ExpiredAssignments,
-                orphaned_launching = summary.OrphanedLaunchingAssignments,
+                stale_launching = summary.StaleLaunchingAssignments,
             },
             recent_checkpoints_24h = summary.RecentCheckpoints,
         }, JsonOpts.Default);

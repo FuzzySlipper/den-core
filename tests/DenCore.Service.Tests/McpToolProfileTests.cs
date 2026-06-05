@@ -77,7 +77,7 @@ public sealed class McpToolProfileTests : IAsyncLifetime
 
         var names = tools.Where(t => t is not null).Select(t => t!["name"]!.GetValue<string>()).ToHashSet();
         Assert.Contains("legacy_get_dispatch", names);
-        Assert.Contains("legacy_launch_pi_worker", names);
+        Assert.DoesNotContain("legacy_launch_pi_worker", names);
         Assert.Contains("send_agent_stream_message", names);
     }
 

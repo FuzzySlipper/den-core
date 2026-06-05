@@ -122,9 +122,9 @@ public class McpToolProfileAnnotationTests
     }
 
     [Fact]
-    public void LegacyPiLaunchTools_AreAdminOnly()
+    public void RetiredRuntimeLaunchTools_AreRemovedFromCurrentProfiles()
     {
-        var legacyPiTools = new[]
+        var retiredLaunchTools = new[]
         {
             "legacy_launch_pi_worker",
             "legacy_launch_coder_worker",
@@ -133,13 +133,12 @@ public class McpToolProfileAnnotationTests
             "legacy_launch_drift_checker_worker",
             "legacy_launch_packet_auditor_worker",
             "legacy_start_coder_worker_path",
-            "legacy_start_reviewer_worker_path",
-            "legacy_publish_worker_branch"
+            "legacy_start_reviewer_worker_path"
         };
 
-        foreach (var tool in legacyPiTools)
+        foreach (var tool in retiredLaunchTools)
         {
-            Assert.True(_registry.ToolInProfile(tool, McpToolProfiles.LegacyFull), tool);
+            Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.LegacyFull), tool);
             Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.AdminCurrent), tool);
             Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.Planner), tool);
             Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.Runner), tool);
@@ -149,6 +148,9 @@ public class McpToolProfileAnnotationTests
             Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerDriftChecker), tool);
             Assert.False(_registry.ToolInProfile(tool, McpToolProfiles.WorkerPacketAuditor), tool);
         }
+
+        Assert.True(_registry.ToolInProfile("legacy_publish_worker_branch", McpToolProfiles.LegacyFull));
+        Assert.False(_registry.ToolInProfile("legacy_publish_worker_branch", McpToolProfiles.AdminCurrent));
     }
 
     private static string? GetToolName(MethodInfo method)

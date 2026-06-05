@@ -19,12 +19,10 @@ var builder = WebApplication.CreateBuilder(args);
 // DenCore is the primary config section; DenMcp is checked as a legacy fallback
 // so existing appsettings.json files continue to work without changes.
 var options = new DenCoreOptions();
-PreparePiSessionHostArraysForBinding(options.PiSessionHost);
 var coreSection = builder.Configuration.GetSection("DenCore");
 var legacySection = builder.Configuration.GetSection("DenMcp");
 var activeConfigSection = coreSection.Exists() ? coreSection : legacySection;
 activeConfigSection.Bind(options);
-ApplyPiSessionHostArrayDefaults(options.PiSessionHost);
 
 // CLI overrides: --port and --db-path
 if (builder.Configuration["port"] is { } port)
@@ -33,7 +31,6 @@ if (builder.Configuration["db-path"] is { } dbPathOverride)
     options.DatabasePath = dbPathOverride;
 
 builder.Services.AddSingleton(options);
-builder.Services.AddSingleton(options.PiSessionHost);
 builder.Services.AddSingleton(options.BlockedTaskEscalation);
 var trustedPublisherOptions = new TrustedPublisherOptions();
 activeConfigSection.GetSection("TrustedPublisher").Bind(trustedPublisherOptions);
@@ -93,7 +90,6 @@ builder.Services.AddSingleton<DispatchRepository>();
 builder.Services.AddSingleton<IAgentStreamRepository, AgentStreamRepository>();
 builder.Services.AddSingleton<IAgentRunRepository, AgentRunRepository>();
 builder.Services.AddSingleton<IAgentWorkspaceRepository, AgentWorkspaceRepository>();
-builder.Services.AddSingleton<IPiSessionRepository, PiSessionRepository>();
 builder.Services.AddSingleton<IDesktopSnapshotRepository, DesktopSnapshotRepository>();
 builder.Services.AddSingleton<IDesktopSessionEventRepository, DesktopSessionEventRepository>();
 builder.Services.AddSingleton<ICollaborationRepository, CollaborationRepository>();
@@ -122,10 +118,7 @@ builder.Services.AddHttpClient<IDenPublishFacadeService, DenPublishFacadeService
     var facadeOptions = services.GetRequiredService<DenPublishFacadeOptions>();
     client.BaseAddress = new Uri(facadeOptions.Endpoint.TrimEnd('/'));
 });
-builder.Services.AddSingleton<IPiDockerLaunchProfileRenderer, PiDockerLaunchProfileRenderer>();
 builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
-builder.Services.AddSingleton<IPiSessionHost, TmuxDockerPiSessionHost>();
-builder.Services.AddSingleton<IPiSessionService, PiSessionService>();
 
 // Dispatch
 builder.Services.AddSingleton<IRoutingService, RoutingService>();
@@ -196,8 +189,6 @@ app.MapDesktopSessionEventRoutes();
 app.MapCollaborationRoutes();
 app.MapAttentionRoutes();
 app.MapGitInspectionRoutes();
-app.MapPiLaunchProfileRoutes();
-app.MapPiSessionRoutes();
 app.MapLibrarianRoutes();
 app.MapDiscussionRoutes();
 app.MapWorkerPoolRoutes();
@@ -208,26 +199,6 @@ app.MapMcp("/mcp");
 
 // SPA fallback — serves index.html for unmatched routes
 app.MapFallbackToFile("index.html");
-
-static void PreparePiSessionHostArraysForBinding(PiDockerLaunchProfileOptions options)
-{
-    // Microsoft.Extensions.Configuration binds array values by extending existing
-    // initialized collections. Clear array defaults before binding so configured
-    // arrays replace defaults instead of appending to them.
-    options.TmuxShellCommand = [];
-    options.ProviderSecretEnvironmentVariables = [];
-    options.RequiredPiStatePaths = [];
-}
-
-static void ApplyPiSessionHostArrayDefaults(PiDockerLaunchProfileOptions options)
-{
-    if (options.TmuxShellCommand.Length == 0)
-        options.TmuxShellCommand = PiDockerLaunchProfileDefaults.TmuxShellCommand.ToArray();
-    if (options.ProviderSecretEnvironmentVariables.Length == 0)
-        options.ProviderSecretEnvironmentVariables = PiDockerLaunchProfileDefaults.ProviderSecretEnvironmentVariables.ToArray();
-    if (options.RequiredPiStatePaths.Length == 0)
-        options.RequiredPiStatePaths = ["agent/settings.json"];
-}
 
 app.Run();
 

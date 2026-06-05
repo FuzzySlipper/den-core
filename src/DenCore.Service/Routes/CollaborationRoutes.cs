@@ -325,6 +325,8 @@ public sealed record CreateCollaborationSessionRequest
     public int? TaskId { get; init; }
     public long? MessageId { get; init; }
     public long? AgentStreamEntryId { get; init; }
+    // Legacy collaboration correlation fields only; preserved for historical
+    // transcript references, not Core-owned runtime/session launch.
     public string? PiRunId { get; init; }
     public string? PiSessionId { get; init; }
     public string? DesktopOperatorSessionId { get; init; }

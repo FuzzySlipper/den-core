@@ -100,7 +100,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
     private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IProjectRepository _projects;
-    private readonly IPiSessionService _piSessions;
+    private readonly IWorkerPoolRepository _pool;
     private readonly IMessageRepository _messages;
     private readonly IReviewRoundRepository _reviewRounds;
     private readonly IReviewFindingRepository _reviewFindings;
@@ -110,7 +110,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
 
     public TrustedPublisherService(
         IProjectRepository projects,
-        IPiSessionService piSessions,
+        IWorkerPoolRepository pool,
         IMessageRepository messages,
         IReviewRoundRepository reviewRounds,
         IReviewFindingRepository reviewFindings,
@@ -119,7 +119,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         ILogger<TrustedPublisherService> logger)
     {
         _projects = projects;
-        _piSessions = piSessions;
+        _pool = pool;
         _messages = messages;
         _reviewRounds = reviewRounds;
         _reviewFindings = reviewFindings;
@@ -140,20 +140,20 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         var rootPath = await ProjectRootAsync(project, _options, diagnostics, decisions, request.ExpectedRemoteUrl, cancellationToken).ConfigureAwait(false);
         var run = await FindRunAsync(request.ProjectId, request.RunId, request.TaskId, cancellationToken).ConfigureAwait(false);
         if (run is null)
-            diagnostics.Add($"Worker run/session '{request.RunId}' was not found for project '{request.ProjectId}'.");
+            diagnostics.Add($"Worker run '{request.RunId}' was not found for project '{request.ProjectId}'.");
         else
         {
-            if (run.Session.TaskId != request.TaskId)
-                diagnostics.Add($"Worker task mismatch: expected {request.TaskId}, found {run.Session.TaskId?.ToString() ?? "none"}.");
-            if (!string.Equals(run.Session.State, PiSessionStates.Completed, StringComparison.Ordinal))
-                diagnostics.Add($"Worker session must be durable terminal/completed before publish; found '{run.Session.State}'.");
+            if (run.TaskId != request.TaskId)
+                diagnostics.Add($"Worker task mismatch: expected {request.TaskId}, found {run.TaskId?.ToString() ?? "none"}.");
+            if (!string.Equals(run.State, "completed", StringComparison.Ordinal))
+                diagnostics.Add($"Worker assignment must be completed before publish; found '{run.State}'.");
             else
-                decisions.Add("worker session state is completed in durable Den state");
+                decisions.Add("worker assignment state is completed in durable Den state");
             var role = NormalizeRole(request.Role);
-            var durableRole = NormalizeRole(run.Session.ToolProfile ?? run.LaunchProfile?.WorkerRole);
+            var durableRole = NormalizeRole(run.Role);
             if (durableRole is not null && role != durableRole)
                 diagnostics.Add($"Worker role mismatch: expected '{role}', found '{durableRole}'.");
-            decisions.Add("resolved worker run/session from Den state");
+            decisions.Add("resolved worker run from Den assignment state");
         }
 
         var completion = await FindLatestCompletionAsync(request.ProjectId, request.TaskId, request.RunId, request.Role).ConfigureAwait(false);
@@ -166,7 +166,7 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
             VerifyCompletion(completion, request.RunId, request.TaskId, request.Role, request.ExpectedBranch, request.ExpectedHeadCommit, diagnostics, decisions);
         }
 
-        var workspace = run?.LaunchProfile?.WorkspaceSourceProjectDir ?? run?.LaunchProfile?.DevDir;
+        var workspace = (string?)null; // workspace resolved from den-host runtime evidence, not Core
         if (string.IsNullOrWhiteSpace(workspace) || !Directory.Exists(workspace))
             diagnostics.Add($"Worker workspace path is missing or unavailable: {workspace ?? "<missing>"}.");
 
@@ -426,13 +426,9 @@ public sealed class TrustedPublisherService : ITrustedPublisherService
         return sb.ToString().TrimEnd();
     }
 
-    private async Task<PiSessionDetail?> FindRunAsync(string projectId, string runOrSessionId, int taskId, CancellationToken cancellationToken)
+    private async Task<WorkerAssignment?> FindRunAsync(string projectId, string runOrSessionId, int taskId, CancellationToken cancellationToken)
     {
-        var bySession = await _piSessions.GetAsync(projectId, runOrSessionId, cancellationToken).ConfigureAwait(false);
-        if (bySession is not null) return bySession;
-        var sessions = await _piSessions.ListAsync(new PiSessionListOptions { ProjectId = projectId, TaskId = taskId, Limit = 200 }, cancellationToken).ConfigureAwait(false);
-        var match = sessions.FirstOrDefault(s => string.Equals(s.RunId, runOrSessionId, StringComparison.Ordinal));
-        return match is null ? null : await _piSessions.GetAsync(projectId, match.SessionId, cancellationToken).ConfigureAwait(false);
+        return await _pool.GetAssignmentByRunIdAsync(runOrSessionId).ConfigureAwait(false);
     }
 
     private async Task<Message?> FindLatestCompletionAsync(string projectId, int taskId, string runId, string role)

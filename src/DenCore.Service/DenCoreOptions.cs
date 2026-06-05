@@ -6,7 +6,6 @@ public sealed class DenCoreOptions
 {
     public string DatabasePath { get; set; } = "";
     public string ListenUrl { get; set; } = "http://localhost:5199";
-    public PiDockerLaunchProfileOptions PiSessionHost { get; set; } = new();
     public GatewayContractOptions GatewayContract { get; set; } = new();
     public BlockedTaskEscalationPolicyOptions BlockedTaskEscalation { get; set; } = new();
 

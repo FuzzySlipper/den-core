@@ -34,6 +34,8 @@ public sealed class CollaborationRepository : ICollaborationRepository
     // snapshots and annotations remain anchored to their stored segment rows.
     public static string SegmenterVersion => MarkdownBlockSegmenter.DefaultSegmenterVersion;
 
+    // pi_run_id / pi_session_id are legacy collaboration correlation columns
+    // only. Runtime/session launch ownership has moved out of Core.
     private const string SessionColumns = "id, project_id, task_id, message_id, agent_stream_entry_id, pi_run_id, pi_session_id, desktop_operator_session_id, title, status, created_by, created_at, updated_at";
     private const string TurnColumns = "id, session_id, turn_order, role, source_kind, source_ref, source_label, source_uri, source_context, raw_markdown, source_content_hash, segmenter_version, created_at";
     private const string SegmentColumns = "id, turn_id, sequence_number, segment_hash, segment_type, raw_markdown, text, heading_level, code_language, created_at";

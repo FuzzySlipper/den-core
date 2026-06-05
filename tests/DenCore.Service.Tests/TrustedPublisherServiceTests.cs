@@ -12,7 +12,7 @@ public class TrustedPublisherServiceTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"den-mcp-tests-{Environment.UserName}", "trusted-publisher-tests", Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public async Task PublishWorkerBranch_ValidatesVerifiedWorkerRunAndAudits()
+    public async Task PublishWorkerBranch_RejectsWithoutRuntimeWorkspaceEvidenceAndAudits()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
         var repos = BuildRepositories(fixture, includeCompletion: true);
@@ -32,9 +32,9 @@ public class TrustedPublisherServiceTests : IDisposable
             ValidateOnly = true,
         });
 
-        Assert.Equal("validated", result.Status);
-        Assert.Empty(result.Diagnostics);
-        Assert.Contains("src/app.txt", result.ChangedFiles);
+        Assert.Equal("rejected", result.Status);
+        Assert.Contains(result.Diagnostics, d => d.Contains("Worker workspace path is missing or unavailable", StringComparison.Ordinal));
+        Assert.Empty(result.ChangedFiles);
         Assert.NotNull(result.AuditMessageId);
         Assert.Contains(repos.Messages.Created, m => m.Metadata?.GetProperty("type").GetString() == "trusted_publisher_audit");
     }
@@ -413,7 +413,7 @@ public class TrustedPublisherServiceTests : IDisposable
 
         Assert.Equal("rejected", result.Status);
         Assert.Empty(result.ChangedFiles);
-        Assert.Contains(result.Diagnostics, d => d.Contains("changed-file scope diff failed", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, d => d.Contains("Worker workspace path is missing or unavailable", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -446,7 +446,7 @@ public class TrustedPublisherServiceTests : IDisposable
     public async Task PublishWorkerBranch_RejectsNonCompletedDurableSessionState()
     {
         var fixture = await GitFixture.CreateAsync(_root, taskId: 1285);
-        var repos = BuildRepositories(fixture, includeCompletion: true, sessionState: PiSessionStates.Running);
+        var repos = BuildRepositories(fixture, includeCompletion: true, assignmentState: WorkerPoolStates.Running);
         var service = BuildService(repos);
 
         var result = await service.PublishWorkerBranchAsync(new PublishWorkerBranchRequest
@@ -463,7 +463,7 @@ public class TrustedPublisherServiceTests : IDisposable
         });
 
         Assert.Equal("rejected", result.Status);
-        Assert.Contains(result.Diagnostics, d => d.Contains("must be durable terminal/completed", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, d => d.Contains("Worker assignment must be completed before publish", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -502,7 +502,7 @@ public class TrustedPublisherServiceTests : IDisposable
         catch { }
     }
 
-    private static TestRepositories BuildRepositories(GitFixture fixture, bool includeCompletion, string? completionHead = null, string sessionState = PiSessionStates.Completed, string? projectRootPath = null)
+    private static TestRepositories BuildRepositories(GitFixture fixture, bool includeCompletion, string? completionHead = null, string assignmentState = WorkerPoolStates.Completed, string? projectRootPath = null)
     {
         var messages = new FakeMessageRepository();
         if (includeCompletion)
@@ -525,7 +525,6 @@ public class TrustedPublisherServiceTests : IDisposable
                     project_id = "proj",
                     task_id = 1285,
                     run_id = "run-1",
-                    session_id = "session-1",
                     branch = "task/1285-trusted-publisher",
                     head_commit = completionHead ?? fixture.Head,
                     base_commit = fixture.Base,
@@ -533,10 +532,25 @@ public class TrustedPublisherServiceTests : IDisposable
             });
         }
 
+        var pool = new FakeWorkerPoolRepository().AddAssignment(new WorkerAssignment
+        {
+            Id = 1,
+            WorkerIdentity = "worker-1",
+            RunId = "run-1",
+            ProjectId = "proj",
+            TaskId = 1285,
+            Role = "coder",
+            AssignedBy = "runner",
+            State = assignmentState,
+            ProfileIdentity = "den-worker",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+
         return new TestRepositories
         {
             Projects = new FakeProjectRepository(new Project { Id = "proj", Name = "Proj", RootPath = projectRootPath ?? fixture.RootPath }),
-            Sessions = new FakePiSessionService(fixture.WorkspacePath, sessionState),
+            Pool = pool,
             Messages = messages,
             Findings = new FakeReviewFindingRepository(),
         };
@@ -544,7 +558,7 @@ public class TrustedPublisherServiceTests : IDisposable
 
     private static TrustedPublisherService BuildService(TestRepositories repos, TrustedPublisherOptions? options = null) => new(
         repos.Projects,
-        repos.Sessions,
+        repos.Pool,
         repos.Messages,
         repos.Rounds,
         repos.Findings,
@@ -569,7 +583,7 @@ public class TrustedPublisherServiceTests : IDisposable
     private sealed class TestRepositories
     {
         public required FakeProjectRepository Projects { get; init; }
-        public required FakePiSessionService Sessions { get; init; }
+        public required FakeWorkerPoolRepository Pool { get; init; }
         public required FakeMessageRepository Messages { get; init; }
         public FakeReviewRoundRepository Rounds { get; } = new();
         public required FakeReviewFindingRepository Findings { get; init; }
@@ -665,51 +679,6 @@ public class TrustedPublisherServiceTests : IDisposable
         public Task<Project> UpdateVisibilityAsync(string id, string visibility) => throw new NotSupportedException();
         public Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id) => Task.FromResult(new Dictionary<string, int>());
         public Task DeleteSpaceAsync(string id) => Task.CompletedTask;
-    }
-
-    private sealed class FakePiSessionService(string workspacePath, string state) : IPiSessionService
-    {
-        private PiSessionDetail Detail => new()
-        {
-            Session = new PiSessionSummary
-            {
-                ProjectId = "proj",
-                SessionId = "session-1",
-                RunId = "run-1",
-                TaskId = 1285,
-                ToolProfile = "coder",
-                HostId = "host",
-                TmuxSessionName = "tmux",
-                State = state,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-            },
-            LaunchProfile = new PiDockerLaunchProfile
-            {
-                ProfileId = "profile",
-                ProjectId = "proj",
-                SessionId = "session-1",
-                ComposeProjectName = "compose",
-                ComposeFile = "/tmp/compose.yaml",
-                Service = "pi",
-                DevDir = workspacePath,
-                WorkspaceSourceProjectDir = workspacePath,
-                PiStateDir = "/tmp/pi-state",
-                Image = "pi",
-                PiVersion = "0",
-                NodeVersion = "0",
-                WorkerRole = "coder",
-                WorkerRunId = "run-1",
-            }
-        };
-
-        public Task<PiSessionDetail> LaunchAsync(string projectId, PiSessionLaunchRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PiSessionDetail> RegisterAsync(string projectId, PiSessionRegistrationRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<List<PiSessionSummary>> ListAsync(PiSessionListOptions options, CancellationToken cancellationToken = default) => Task.FromResult(new List<PiSessionSummary> { Detail.Session });
-        public Task<PiSessionDetail?> GetAsync(string projectId, string sessionId, CancellationToken cancellationToken = default) => Task.FromResult<PiSessionDetail?>(sessionId is "session-1" or "run-1" ? Detail : null);
-        public Task<PiSessionDetail?> TerminateAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PiSessionDetail?> CleanupAsync(string projectId, string sessionId, PiSessionControlRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PiSessionAttachInfo?> GetAttachInfoAsync(string projectId, string sessionId, PiSessionAttachRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
     private sealed class FakeMessageRepository : IMessageRepository

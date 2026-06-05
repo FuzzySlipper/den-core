@@ -818,94 +818,49 @@ public sealed class WorkerPoolTools
         }, JsonOpts.Default);
     }
 
-    // ── Orphaned Worker-Run Detection & Reconciliation (#1879) ─────────
+    // ── Retired Core-owned runtime reconciliation tools ────────────────
 
     [McpToolProfile("admin-current", "runner", "planner")]
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "detect_orphaned_worker_runs"), Description(
-        "Detect orphaned worker runs — pi_sessions stuck in 'launching' state with " +
-        "no matching active assignment and no live process handle. These are registrations " +
-        "that never completed launch. Returns diagnostics with age, staleness, and pool member info. " +
-        "Use stale_threshold_minutes to control how old a launching session must be to qualify.")]
-    public static async Task<string> DetectOrphanedWorkerRuns(
+        "Retired: Core no longer owns worker runtime/session launch state. Use den-host/runtime substrate diagnostics for orphaned launch detection.")]
+    public static string DetectOrphanedWorkerRuns(
         IWorkerPoolRepository repo,
-        [Description("Minutes a launching session must have existed to be considered orphaned. Default 10.")] int stale_threshold_minutes = 10)
+        [Description("Deprecated. Runtime launch staleness is no longer tracked by Core.")] int stale_threshold_minutes = 10)
     {
-        var orphans = await repo.DetectOrphanedWorkerRunsAsync(stale_threshold_minutes);
-
-        if (orphans.Count == 0)
-            return JsonSerializer.Serialize(new
-            {
-                summary = "no orphaned worker runs detected",
-                orphans = Array.Empty<object>(),
-                count = 0,
-            }, JsonOpts.Default);
-
-        var diagnostics = orphans.Select(o => new
-        {
-            session_id = o.SessionId,
-            run_id = o.RunId,
-            project_id = o.ProjectId,
-            task_id = o.TaskId,
-            launch_profile_kind = o.LaunchProfileKind,
-            created_at = o.CreatedAt.ToString("o"),
-            age_minutes = o.AgeMinutes,
-            has_busy_pool_member = o.HasBusyPoolMember,
-            busy_worker_identity = o.BusyWorkerIdentity,
-            no_active_assignment = o.NoActiveAssignment,
-            is_stale = o.IsStale,
-        });
-
+        _ = repo;
+        _ = stale_threshold_minutes;
         return JsonSerializer.Serialize(new
         {
-            summary = $"detected {orphans.Count} orphaned worker run(s)",
-            count = orphans.Count,
-            orphans = diagnostics,
+            summary = "orphaned worker-run detection moved out of Core runtime ownership",
+            count = 0,
+            orphans = Array.Empty<object>(),
+            retired = true,
+            guidance = "Use assignment/checkpoint/completion state in Core and den-host diagnostics for external runtime launch/session state.",
         }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner")]
     [McpToolBundle("worker-pool")]
     [McpServerTool(Name = "force_terminate_orphan_run"), Description(
-        "Force-terminate an orphaned worker run by session_id. Sets the pi_session to 'failed', " +
-        "expires any non-terminal assignment, and releases any busy pool member. " +
-        "Idempotent — safe to call on already-terminal sessions. Creates an audit trail. " +
-        "Use detect_orphaned_worker_runs first to identify candidates.")]
-    public static async Task<string> ForceTerminateOrphanRun(
+        "Retired: Core no longer force-terminates runtime sessions. Expire durable assignments or terminate external runtime sessions in den-host.")]
+    public static string ForceTerminateOrphanRun(
         IWorkerPoolRepository repo,
-        [Description("Session id of the orphaned worker run to force-terminate.")] string session_id,
-        [Description("Actor requesting termination (e.g. 'runner', admin agent name).")] string terminated_by,
-        [Description("Optional reason for the force termination.")] string? reason = null)
+        [Description("Deprecated runtime session id. Core no longer owns runtime sessions.")] string session_id,
+        [Description("Actor requesting termination (e.g. 'runner', admin agent name).")]
+        string terminated_by,
+        [Description("Optional reason for the request.")] string? reason = null)
     {
-        try
+        _ = repo;
+        return JsonSerializer.Serialize(new
         {
-            var result = await repo.ForceTerminateOrphanRunAsync(session_id, terminated_by, reason);
-
-            return JsonSerializer.Serialize(new
-            {
-                summary = result.IsAlreadyTerminal
-                    ? $"session '{result.SessionId}' was already terminal"
-                    : result.WasTerminated
-                        ? $"force-terminated orphaned run '{result.RunId}' (session {result.SessionId})"
-                        : $"session '{result.SessionId}' could not be terminated (may have been race-resolved)",
-                session_id = result.SessionId,
-                run_id = result.RunId,
-                was_terminated = result.WasTerminated,
-                already_terminal = result.IsAlreadyTerminal,
-                released_pool_member = result.ReleasedPoolMember,
-                released_worker_identity = result.ReleasedWorkerIdentity,
-                expired_assignment = result.ExpiredAssignment,
-                expired_assignment_id = result.ExpiredAssignmentId,
-                reconciled_at = result.ReconciledAt.ToString("o"),
-            }, JsonOpts.Default);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return JsonSerializer.Serialize(new
-            {
-                summary = $"force-terminate failed: {ex.Message}",
-                error = true,
-            }, JsonOpts.Default);
-        }
+            summary = "force-terminate orphan run moved out of Core runtime ownership",
+            session_id,
+            terminated_by,
+            reason,
+            was_terminated = false,
+            retired = true,
+            guidance = "Use abort_worker_run to expire a durable assignment in Core; use den-host/runtime tooling to terminate an external process/session.",
+        }, JsonOpts.Default);
     }
 }

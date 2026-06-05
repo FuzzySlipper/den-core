@@ -191,7 +191,6 @@ public sealed class ProjectRepository : IProjectRepository
             ["channels"] = "SELECT COUNT(*) FROM channels WHERE project_id = @id",
             ["agent_stream_entries"] = "SELECT COUNT(*) FROM agent_stream_entries WHERE project_id = @id",
             ["agent_workspaces"] = "SELECT COUNT(*) FROM agent_workspaces WHERE project_id = @id",
-            ["pi_sessions"] = "SELECT COUNT(*) FROM pi_sessions WHERE project_id = @id",
             ["desktop_git_snapshots"] = "SELECT COUNT(*) FROM desktop_git_snapshots WHERE project_id = @id",
             ["desktop_diff_snapshots"] = "SELECT COUNT(*) FROM desktop_diff_snapshots WHERE project_id = @id",
             ["desktop_session_events"] = "SELECT COUNT(*) FROM desktop_session_events WHERE project_id = @id",

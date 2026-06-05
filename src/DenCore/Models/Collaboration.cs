@@ -33,6 +33,9 @@ public sealed class CollaborationSession
     public int? TaskId { get; set; }
     public long? MessageId { get; set; }
     public long? AgentStreamEntryId { get; set; }
+    // Legacy collaboration correlation fields only. These preserve historical
+    // transcript links created when Core still used Pi-named worker sessions;
+    // they do not imply active Core ownership of worker runtime/session launch.
     public string? PiRunId { get; set; }
     public string? PiSessionId { get; set; }
     public string? DesktopOperatorSessionId { get; set; }
@@ -121,6 +124,8 @@ public sealed class CreateCollaborationSessionRequestModel
     public int? TaskId { get; set; }
     public long? MessageId { get; set; }
     public long? AgentStreamEntryId { get; set; }
+    // Legacy collaboration correlation fields only; not runtime/session launch
+    // inputs for Core.
     public string? PiRunId { get; set; }
     public string? PiSessionId { get; set; }
     public string? DesktopOperatorSessionId { get; set; }

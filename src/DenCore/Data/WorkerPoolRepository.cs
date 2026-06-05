@@ -151,23 +151,6 @@ public interface IWorkerPoolRepository
     /// </summary>
     Task<List<PoolResidencyProjection>> GetPoolResidencyProjectionAsync(string projectId);
 
-    // ── Orphaned Worker-Run Detection & Reconciliation (#1879) ─────────
-
-    /// <summary>
-    /// Detect orphaned worker runs: pi_sessions in 'launching' state that have
-    /// no matching non-terminal assignment in worker_assignments and are older
-    /// than <paramref name="staleThresholdMinutes"/> minutes.
-    /// Returns diagnostics for each orphan found, with staleness and pool member info.
-    /// </summary>
-    Task<List<OrphanedWorkerRunDiagnostic>> DetectOrphanedWorkerRunsAsync(int staleThresholdMinutes = 10);
-
-    /// <summary>
-    /// Force-terminate an orphaned worker run by session_id. Sets the pi_session
-    /// to 'failed' state, expires any non-terminal assignment, and releases any
-    /// busy pool member. Idempotent — safe to call on already-terminal sessions.
-    /// Creates an audit trail via pi_session_events.
-    /// </summary>
-    Task<ForceTerminateOrphanResult> ForceTerminateOrphanRunAsync(string sessionId, string terminatedBy, string? reason = null);
 }
 
 public sealed class WorkerPoolRepository : IWorkerPoolRepository
@@ -970,26 +953,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         }
 
         // Assignment counts by state
-        // Exclude orphaned "ack" assignments: those whose pi_session is still in
-        // 'launching' state and was created >10 minutes ago. These are not truly
-        // active — the bridge never started — and should not inflate the active count.
-        // Use C#-computed cutoff so the format matches pi_sessions.created_at (ISO 8601 "O").
-        var orphanCutoff = DateTime.UtcNow.AddMinutes(-10).ToString("O", CultureInfo.InvariantCulture);
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = """
                 SELECT wa.state, count(*)
                 FROM worker_assignments wa
-                WHERE wa.state IN ('completed', 'failed', 'expired')
-                   OR NOT EXISTS (
-                       SELECT 1 FROM pi_sessions ps
-                       WHERE ps.run_id = wa.run_id
-                         AND ps.state = 'launching'
-                         AND ps.created_at < @orphanCutoff
-                   )
                 GROUP BY wa.state
                 """;
-            cmd.Parameters.AddWithValue("@orphanCutoff", orphanCutoff);
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -1003,22 +973,6 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     default: summary.ActiveAssignments += count; break;
                 }
             }
-        }
-
-        // Count orphaned launching assignments separately for reporting
-        await using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = """
-                SELECT count(*)
-                FROM worker_assignments wa
-                INNER JOIN pi_sessions ps ON wa.run_id = ps.run_id
-                WHERE wa.state NOT IN ('completed', 'failed', 'expired')
-                  AND ps.state = 'launching'
-                  AND ps.created_at < @orphanCutoff2
-                """;
-            cmd.Parameters.AddWithValue("@orphanCutoff2", orphanCutoff);
-            var orphanCount = Convert.ToInt32(await cmd.ExecuteScalarAsync() ?? 0L);
-            summary.OrphanedLaunchingAssignments = orphanCount;
         }
 
         // Recent checkpoints (last 24h)
@@ -2664,219 +2618,5 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         };
     }
 
-    // ── Orphaned Worker-Run Detection & Reconciliation (#1879) ─────────
-
-    public async Task<List<OrphanedWorkerRunDiagnostic>> DetectOrphanedWorkerRunsAsync(int staleThresholdMinutes = 10)
-    {
-        await using var conn = await _db.CreateConnectionAsync();
-
-        // Compute cutoff in C# rather than relying on SQLite string interpolation of parameters
-        var cutoff = DateTime.UtcNow.AddMinutes(-staleThresholdMinutes).ToString("o");
-
-        // Find pi_sessions in 'launching' state that are older than the threshold.
-        // Cross-reference with worker_assignments and worker_pool_members.
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT
-                ps.session_id,
-                ps.run_id,
-                ps.project_id,
-                ps.task_id,
-                ps.launch_profile_kind,
-                ps.created_at,
-                wm.worker_identity,
-                wm.status AS member_status,
-                wa.id AS assignment_id,
-                wa.state AS assignment_state
-            FROM pi_sessions ps
-            LEFT JOIN worker_assignments wa ON ps.run_id = wa.run_id
-                AND wa.state NOT IN ('completed', 'failed', 'expired')
-            LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
-            WHERE ps.state = 'launching'
-              AND ps.created_at < @cutoff
-            ORDER BY ps.created_at ASC
-            """;
-        cmd.Parameters.AddWithValue("@cutoff", cutoff);
-
-        var orphans = new Dictionary<string, OrphanedWorkerRunDiagnostic>(StringComparer.Ordinal);
-        await using (var reader = await cmd.ExecuteReaderAsync())
-        {
-            while (await reader.ReadAsync())
-            {
-                var runId = reader.IsDBNull(1) ? null : reader.GetString(1);
-                var sessionId = reader.GetString(0);
-                var projectId = reader.GetString(2);
-
-                // Skip if we already have this session
-                if (orphans.ContainsKey(sessionId))
-                    continue;
-
-                var createdAt = DateTime.Parse(reader.GetString(5));
-                var ageMinutes = (int)(DateTime.UtcNow - createdAt).TotalMinutes;
-                var memberStatus = reader.IsDBNull(7) ? null : reader.GetString(7);
-                var assignmentId = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8);
-                var assignmentState = reader.IsDBNull(9) ? null : reader.GetString(9);
-
-                orphans[sessionId] = new OrphanedWorkerRunDiagnostic
-                {
-                    SessionId = sessionId,
-                    RunId = runId ?? sessionId,
-                    ProjectId = projectId,
-                    TaskId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                    LaunchProfileKind = reader.IsDBNull(4) ? null : reader.GetString(4),
-                    CreatedAt = createdAt,
-                    AgeMinutes = ageMinutes,
-                    HasBusyPoolMember = memberStatus == WorkerPoolStates.MemberBusy,
-                    BusyWorkerIdentity = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    NoActiveAssignment = assignmentId is null,
-                    IsStale = true, // Already filtered by stale threshold in query
-                };
-            }
-        }
-
-        return orphans.Values.ToList();
-    }
-
-    public async Task<ForceTerminateOrphanResult> ForceTerminateOrphanRunAsync(
-        string sessionId,
-        string terminatedBy,
-        string? reason = null)
-    {
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var tx = await conn.BeginTransactionAsync();
-        try
-        {
-            var now = DateTime.UtcNow;
-            var result = new ForceTerminateOrphanResult
-            {
-                SessionId = sessionId,
-                RunId = sessionId, // Will be updated below
-                ReconciledAt = now,
-            };
-
-            // 1. Check current session state
-            string? runId = null;
-            string currentState;
-            await using (var checkCmd = conn.CreateCommand())
-            {
-                checkCmd.CommandText = """
-                    SELECT state, run_id FROM pi_sessions
-                    WHERE session_id = @sessionId
-                    """;
-                checkCmd.Parameters.AddWithValue("@sessionId", sessionId);
-                await using var reader = await checkCmd.ExecuteReaderAsync();
-                if (!await reader.ReadAsync())
-                    throw new InvalidOperationException($"Pi session '{sessionId}' not found.");
-                currentState = reader.GetString(0);
-                runId = reader.IsDBNull(1) ? null : reader.GetString(1);
-            }
-
-            result.RunId = runId ?? sessionId;
-
-            // Already terminal — idempotent success
-            if (!PiSessionStates.IsActive(currentState))
-            {
-                result.IsAlreadyTerminal = true;
-                await tx.CommitAsync();
-                return result;
-            }
-
-            // 2. Force-transition session to 'failed'
-            await using (var failCmd = conn.CreateCommand())
-            {
-                failCmd.CommandText = """
-                    UPDATE pi_sessions
-                    SET state = 'failed',
-                        state_reason = @reason,
-                        ended_at = datetime('now'),
-                        updated_at = datetime('now')
-                    WHERE session_id = @sessionId
-                      AND state IN ('launching', 'running', 'terminating')
-                    """;
-                failCmd.Parameters.AddWithValue("@sessionId", sessionId);
-                failCmd.Parameters.AddWithValue("@reason",
-                    reason ?? $"Force-terminated orphaned worker run by {terminatedBy}");
-                var rows = await failCmd.ExecuteNonQueryAsync();
-                result.WasTerminated = rows > 0;
-            }
-
-            // 3. Create audit event
-            await using (var auditCmd = conn.CreateCommand())
-            {
-                auditCmd.CommandText = """
-                    INSERT INTO pi_session_events
-                        (project_id, session_id, event_type, payload, requested_by, reason, created_at)
-                    SELECT
-                        project_id, @sessionId, 'orphan_force_terminated', @payload, @terminatedBy, @reason, datetime('now')
-                    FROM pi_sessions
-                    WHERE session_id = @sessionId
-                    """;
-                auditCmd.Parameters.AddWithValue("@sessionId", sessionId);
-                auditCmd.Parameters.AddWithValue("@payload",
-                    $"{{\"previous_state\":\"{currentState}\",\"orphan_reconciliation\":true}}");
-                auditCmd.Parameters.AddWithValue("@terminatedBy", terminatedBy);
-                auditCmd.Parameters.AddWithValue("@reason",
-                    reason ?? "Orphaned worker run force-terminated via reconciliation (#1879)");
-                await auditCmd.ExecuteNonQueryAsync();
-            }
-
-            // 4. Expire any non-terminal assignment for this run
-            if (!string.IsNullOrWhiteSpace(runId))
-            {
-                await using (var expireCmd = conn.CreateCommand())
-                {
-                    expireCmd.CommandText = """
-                        UPDATE worker_assignments
-                        SET state = 'expired',
-                            released_at = datetime('now'),
-                            updated_at = datetime('now')
-                        WHERE run_id = @runId
-                          AND state NOT IN ('completed', 'failed', 'expired')
-                        RETURNING id
-                        """;
-                    expireCmd.Parameters.AddWithValue("@runId", runId);
-                    await using var expireReader = await expireCmd.ExecuteReaderAsync();
-                    if (await expireReader.ReadAsync())
-                    {
-                        result.ExpiredAssignment = true;
-                        result.ExpiredAssignmentId = expireReader.GetInt32(0);
-                    }
-                }
-            }
-
-            // 5. Release any busy pool member associated with this run
-            if (!string.IsNullOrWhiteSpace(runId))
-            {
-                await using (var releaseCmd = conn.CreateCommand())
-                {
-                    releaseCmd.CommandText = """
-                        UPDATE worker_pool_members
-                        SET status = 'available', updated_at = datetime('now')
-                        WHERE worker_identity IN (
-                            SELECT wa.worker_identity
-                            FROM worker_assignments wa
-                            WHERE wa.run_id = @runId
-                        )
-                        AND status = 'busy'
-                        RETURNING worker_identity
-                        """;
-                    releaseCmd.Parameters.AddWithValue("@runId", runId);
-                    await using var releaseReader = await releaseCmd.ExecuteReaderAsync();
-                    if (await releaseReader.ReadAsync())
-                    {
-                        result.ReleasedPoolMember = true;
-                        result.ReleasedWorkerIdentity = releaseReader.GetString(0);
-                    }
-                }
-            }
-
-            await tx.CommitAsync();
-            return result;
-        }
-        catch
-        {
-            await tx.RollbackAsync();
-            throw;
-        }
-    }
+    // ── Pool Residency ────────────────────────────────────────────────
 }

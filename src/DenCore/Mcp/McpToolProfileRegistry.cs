@@ -254,12 +254,6 @@ public sealed class McpToolProfileRegistry
 
         // ---- legacy bundle ----
         m.Add(McpToolBundles.Legacy,
-            "legacy_start_coder_worker_path", "legacy_verify_coder_worker_completion",
-            "legacy_start_reviewer_worker_path", "legacy_verify_reviewer_worker_completion",
-            "legacy_launch_coder_worker", "legacy_launch_reviewer_worker",
-            "legacy_launch_validator_worker", "legacy_launch_drift_checker_worker",
-            "legacy_launch_packet_auditor_worker",
-            "legacy_launch_pi_worker",
             "legacy_approve_dispatch", "legacy_complete_dispatch", "legacy_get_dispatch",
             "legacy_list_dispatches", "legacy_reject_dispatch",
             "legacy_request_den_publish_dry_run",

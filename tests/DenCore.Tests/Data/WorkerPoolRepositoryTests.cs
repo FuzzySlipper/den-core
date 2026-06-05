@@ -72,6 +72,20 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         return member.WorkerIdentity;
     }
 
+    private async Task BackdateAssignmentAsync(long assignmentId, string sqliteRelativeTime)
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE worker_assignments
+            SET created_at = datetime('now', @relative_time)
+            WHERE id = @assignment_id
+            """;
+        cmd.Parameters.AddWithValue("@relative_time", sqliteRelativeTime);
+        cmd.Parameters.AddWithValue("@assignment_id", assignmentId);
+        Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Fresh DB creates tables
     // ─────────────────────────────────────────────────────────────────
@@ -659,6 +673,47 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.Equal(1, summary.CompletedAssignments);
         Assert.Equal(1, summary.FailedAssignments);
         Assert.Equal(0, summary.ActiveAssignments); // a1 completed, a2 failed
+    }
+
+    [Fact]
+    public async Task Summary_CountsOnlyAckAssignmentsOlderThanTenMinutesAsStaleLaunching()
+    {
+        await SeedMemberAsync("stale-ack-worker");
+        await SeedMemberAsync("fresh-ack-worker");
+        await SeedMemberAsync("running-old-worker");
+
+        var staleAck = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-stale-ack"
+        });
+        var freshAck = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-fresh-ack"
+        });
+        var runningOld = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            AssignedBy = "runner",
+            RunId = "run-running-old"
+        });
+        Assert.NotNull(staleAck);
+        Assert.NotNull(freshAck);
+        Assert.NotNull(runningOld);
+
+        await BackdateAssignmentAsync(staleAck.Id, "-11 minutes");
+        await BackdateAssignmentAsync(runningOld.Id, "-11 minutes");
+        await _repo.TransitionAssignmentStateAsync(runningOld.Id, WorkerPoolStates.Running);
+
+        var summary = await _repo.GetSummaryAsync();
+
+        Assert.Equal(1, summary.StaleLaunchingAssignments);
     }
 
     // ─────────────────────────────────────────────────────────────────

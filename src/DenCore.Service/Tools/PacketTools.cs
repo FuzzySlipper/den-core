@@ -393,6 +393,16 @@ public sealed class PacketTools
         {
             sb.AppendLine("- Report files changed, commits created, tests run, validation results, and remaining risks/blockers.");
             sb.AppendLine("- Include final branch and head commit when code changes are made.");
+            sb.AppendLine();
+            sb.AppendLine("### Scope accounting (required for substantial tasks)");
+            sb.AppendLine("For tasks tagged `architecture-boundary`, `migration/removal`, `observability/projection`, `UI/API`, `worker-pool/direct-agent`, `coherent-refactor`, or with a parent task, include scope-accounting details via `post_worker_completion_packet` parameters:");
+            sb.AppendLine("- `scope_acceptance`: which acceptance criteria are fully satisfied.");
+            sb.AppendLine("- `scope_deferred`: acceptance criteria intentionally narrowed or deferred.");
+            sb.AppendLine("- `scope_follow_ups`: follow-up tasks created, each with classification: `polish`, `downstream_integration`, or `acceptance_gap_candidate`.");
+            sb.AppendLine("  - `acceptance_gap_candidate`: the follow-up is plausibly required for parent-task acceptance; reviewers should scrutinize whether the parent task can close without it.");
+            sb.AppendLine("  - Example (from #1956): lifecycle API foundation + empty live projection = `acceptance_gap_candidate`, not ordinary downstream backlog.");
+            sb.AppendLine("- `scope_parent_closable`: whether any follow-up is required for parent acceptance, and why the parent is still closable if yes or uncertain.");
+            sb.AppendLine("- Keep this lightweight for small/localized patches with no scope narrowing.");
         }
         if (!string.IsNullOrWhiteSpace(notes))
         {

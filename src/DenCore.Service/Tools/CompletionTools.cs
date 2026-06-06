@@ -51,6 +51,10 @@ public sealed class CompletionTools
         [Description("Optional failure category for non-success statuses.")] string? failure_category = null,
         [Description("Optional recovery guidance for failed/blocked/incomplete work.")] string? recovery_guidance = null,
         [Description("Optional idempotency key for retry-safe completion posting.")] string? dedupe_key = null,
+        [Description("Optional scope accounting: which acceptance criteria are fully satisfied.")] string? scope_acceptance = null,
+        [Description("Optional scope accounting: acceptance criteria intentionally narrowed or deferred.")] string? scope_deferred = null,
+        [Description("Optional scope accounting: follow-up tasks created with classification (polish, downstream integration, acceptance gap candidate). JSON array of {task_id,title,classification}.")] string? scope_follow_ups = null,
+        [Description("Optional scope accounting: whether any follow-up is required for parent acceptance, and why parent is still closable if yes/uncertain.")] string? scope_parent_closable = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var identityDiagnostics = ValidateSubmittedRunId(run_id);
@@ -87,8 +91,8 @@ public sealed class CompletionTools
             return SerializeCompletionResult(existing, "existing", isMalformed ? "malformed" : "present", verbose);
 
         var taskId = assignment.TaskId?.ToString() ?? "none";
-        var content = BuildCompletionContent(project_id, taskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, summary, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, isMalformed);
-        var metadata = BuildMetadata(project_id, assignment.TaskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, role, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, dedupe_key, isMalformed);
+        var content = BuildCompletionContent(project_id, taskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, summary, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable);
+        var metadata = BuildMetadata(project_id, assignment.TaskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, role, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, dedupe_key, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable);
         var message = await messages.CreateAsync(new Message
         {
             ProjectId = project_id,
@@ -191,7 +195,11 @@ public sealed class CompletionTools
         string? findingIds,
         string? failureCategory,
         string? recoveryGuidance,
-        bool malformed)
+        bool malformed,
+        string? scopeAcceptance,
+        string? scopeDeferred,
+        string? scopeFollowUps,
+        string? scopeParentClosable)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"# {ToTitle(packetType)}");
@@ -212,6 +220,29 @@ public sealed class CompletionTools
         sb.AppendLine();
         sb.AppendLine("## Summary");
         sb.AppendLine(summary.Trim());
+        sb.AppendLine();
+        sb.AppendLine("## Scope accounting");
+        if (!string.IsNullOrWhiteSpace(scopeAcceptance) || !string.IsNullOrWhiteSpace(scopeDeferred) || !string.IsNullOrWhiteSpace(scopeFollowUps) || !string.IsNullOrWhiteSpace(scopeParentClosable))
+        {
+            if (!string.IsNullOrWhiteSpace(scopeAcceptance))
+            {
+                sb.AppendLine("- Acceptance criteria satisfied:");
+                sb.AppendLine($"  {scopeAcceptance.Trim()}");
+            }
+            if (!string.IsNullOrWhiteSpace(scopeDeferred))
+            {
+                sb.AppendLine("- Intentionally narrowed/deferred:");
+                sb.AppendLine($"  {scopeDeferred.Trim()}");
+            }
+            if (!string.IsNullOrWhiteSpace(scopeFollowUps))
+                sb.AppendLine($"- Follow-up tasks: {scopeFollowUps.Trim()}");
+            if (!string.IsNullOrWhiteSpace(scopeParentClosable))
+                sb.AppendLine($"- Parent closeable: {scopeParentClosable.Trim()}");
+        }
+        else
+        {
+            sb.AppendLine("- Not reported. Consider adding scope-accounting details for substantial tasks (see `prepare_coder_context_packet` output schema).");
+        }
         sb.AppendLine();
         sb.AppendLine("## Repo metadata");
         sb.AppendLine($"- Branch: `{branch ?? "not reported"}`");
@@ -252,7 +283,11 @@ public sealed class CompletionTools
         string? failureCategory,
         string? recoveryGuidance,
         string? dedupeKey,
-        bool malformed)
+        bool malformed,
+        string? scopeAcceptance,
+        string? scopeDeferred,
+        string? scopeFollowUps,
+        string? scopeParentClosable)
     {
         var obj = new Dictionary<string, object?>
         {
@@ -277,6 +312,10 @@ public sealed class CompletionTools
             ["failure_category"] = NullIfWhiteSpace(failureCategory),
             ["recovery_guidance"] = NullIfWhiteSpace(recoveryGuidance),
             ["dedupe_key"] = NullIfWhiteSpace(dedupeKey),
+            ["scope_acceptance"] = NullIfWhiteSpace(scopeAcceptance),
+            ["scope_deferred"] = NullIfWhiteSpace(scopeDeferred),
+            ["scope_follow_ups"] = ParseJsonOrString(scopeFollowUps),
+            ["scope_parent_closable"] = NullIfWhiteSpace(scopeParentClosable),
             ["identity_provenance"] = "server_derived_from_worker_run",
             ["identity_validation"] = "matched_worker_run_record",
             ["provided_run_or_session_id"] = runId,

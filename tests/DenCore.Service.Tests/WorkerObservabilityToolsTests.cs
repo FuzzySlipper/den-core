@@ -185,6 +185,96 @@ public class WorkerObservabilityToolsTests
         Assert.StartsWith("You are a tracked Den ", prompt.TrimStart(), StringComparison.Ordinal);
     }
 
+    // ─── Scope accounting tests ─────────────────────────────────────────
+
+    [Fact]
+    public async Task PostWorkerCompletionPacket_WithScopeAccounting_RendersSection()
+    {
+        var pool = new FakeWorkerPoolRepository();
+        var messages = new CapturingMessageRepository();
+        await WorkerTools.RegisterWorkerRun(pool, "proj", 1245, "runner", "coder", run_id: "run-scope-1", verbose: true);
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-scope-1",
+            requested_by: "coder",
+            status: "completed",
+            role: "coder",
+            packet_type: "implementation_packet",
+            summary: "Implemented scope accounting.",
+            branch: "task/1245-foo",
+            head_commit: "0123456789abcdef0123456789abcdef01234567",
+            tests_run: "[\"dotnet test: passed\"]",
+            scope_acceptance: "All core acceptance criteria met.",
+            scope_deferred: "Polish items deferred to follow-up #2000.",
+            scope_follow_ups: "[{\"task_id\":2000,\"title\":\"Scope polish\",\"classification\":\"polish\"}]",
+            scope_parent_closable: "Yes — follow-ups are polish only.",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        var content = doc.RootElement.GetProperty("completion").GetProperty("content").GetString()!;
+        Assert.Contains("Scope accounting", content);
+        Assert.Contains("All core acceptance criteria met.", content);
+        Assert.Contains("Intentionally narrowed/deferred", content);
+        Assert.Contains("Follow-up tasks:", content);
+        Assert.Contains("Parent closeable:", content);
+        Assert.Contains("Yes", content);
+
+        var metadata = doc.RootElement.GetProperty("completion").GetProperty("metadata");
+        Assert.True(metadata.TryGetProperty("scope_acceptance", out _));
+        Assert.True(metadata.TryGetProperty("scope_follow_ups", out _));
+    }
+
+    [Fact]
+    public async Task PostWorkerCompletionPacket_WithoutScopeAccounting_RendersNotReported()
+    {
+        var pool = new FakeWorkerPoolRepository();
+        var messages = new CapturingMessageRepository();
+        await WorkerTools.RegisterWorkerRun(pool, "proj", 1245, "runner", "coder", run_id: "run-noscope-1", verbose: true);
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-noscope-1",
+            requested_by: "coder",
+            status: "completed",
+            role: "coder",
+            packet_type: "implementation_packet",
+            summary: "Simple change.",
+            branch: "task/1245-foo",
+            head_commit: "0123456789abcdef0123456789abcdef01234567",
+            tests_run: "[\"dotnet test: passed\"]",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        var content = doc.RootElement.GetProperty("completion").GetProperty("content").GetString()!;
+        Assert.Contains("Scope accounting", content);
+        Assert.Contains("Not reported", content);
+        Assert.Contains("prepare_coder_context_packet", content);
+    }
+
+    [Fact]
+    public async Task PrepareCoderContextPacket_IncludesScopeAccountingInstructions()
+    {
+        var tasks = new PacketToolsScopeFakeTaskRepository();
+        tasks.SetupTask(1, "test-proj");
+        var messages = new PacketToolsScopeFakeMessageRepository();
+
+        var result = await PacketTools.PrepareCoderContextPacket(
+            tasks, messages, "test-proj", 1, "test-user",
+            completion_reporting_mode: "worker_mcp_tool", verbose: true);
+
+        using var doc = JsonDocument.Parse(result);
+        var content = doc.RootElement.GetProperty("packet").GetProperty("content").GetString()!;
+        Assert.Contains("Scope accounting", content);
+        Assert.Contains("scope_acceptance", content);
+        Assert.Contains("scope_deferred", content);
+        Assert.Contains("scope_follow_ups", content);
+        Assert.Contains("acceptance_gap_candidate", content);
+        Assert.Contains("#1956", content);
+    }
+
     private static WorkerAssignment NewAssignment(string state, string projectId = "proj") => new()
     {
         Id = 1,
@@ -222,5 +312,86 @@ public class WorkerObservabilityToolsTests
             => throw new NotSupportedException();
         public Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds) => throw new NotSupportedException();
         public Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null) => throw new NotSupportedException();
+    }
+
+    private sealed class PacketToolsScopeFakeMessageRepository : IMessageRepository
+    {
+        private readonly List<Message> _messages = [];
+
+        public Task<Message> CreateAsync(Message message)
+        {
+            message.Id = _messages.Count + 1;
+            message.Sender ??= "test-user";
+            message.CreatedAt = DateTime.UtcNow;
+            _messages.Add(message);
+            return Task.FromResult(message);
+        }
+
+        public Task<Message?> GetByIdAsync(int id) => Task.FromResult(_messages.FirstOrDefault(m => m.Id == id));
+        public Task<List<Message>> GetMessagesAsync(string projectId, int? taskId = null, DateTime? since = null, string? unreadFor = null, int limit = 20, MessageIntent? intent = null)
+            => Task.FromResult(new List<Message>());
+        public Task<List<MessageFeedItem>> GetFeedAsync(string projectId, int limit = 20, MessageIntent? intent = null)
+            => Task.FromResult(new List<MessageFeedItem>());
+        public Task<Thread> GetThreadAsync(int threadId)
+            => Task.FromResult(new Thread
+            {
+                Root = new Message { Id = 1, ProjectId = "test", Sender = "test-user", Content = "root", },
+                Replies = new List<Message>(),
+            });
+        public Task<int> MarkReadAsync(string agent, int[] messageIds) => Task.FromResult(messageIds.Length);
+        public Task<List<NotificationFeedItem>> GetNotificationFeedAsync(string? projectId = null, int? taskId = null, string? sender = null, string? metadataType = null, string? urgency = null, bool? isRead = null, string? readForAgent = null, int limit = 20, int offset = 0)
+            => Task.FromResult(new List<NotificationFeedItem>());
+        public Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds) => Task.FromResult(notificationIds?.Length ?? 0);
+        public Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null) => Task.FromResult(0);
+    }
+
+    private sealed class PacketToolsScopeFakeTaskRepository : ITaskRepository
+    {
+        private TaskDetail? _detail;
+
+        public void SetupTask(int taskId, string projectId)
+        {
+            _detail = new TaskDetail
+            {
+                Task = new ProjectTask
+                {
+                    Id = taskId,
+                    ProjectId = projectId,
+                    Title = "Test Task",
+                    Description = "Test task description.",
+                    Status = DenCore.Models.TaskStatus.InProgress,
+                    Priority = 1,
+                },
+                Dependencies = new List<TaskDependencyInfo>(),
+                Subtasks = new List<TaskSummary>(),
+                RecentMessages = new List<Message>(),
+                ReviewRounds = new List<ReviewRound>(),
+                OpenReviewFindings = new List<ReviewFinding>(),
+                ResolvedReviewFindings = new List<ReviewFinding>(),
+                ReviewWorkflow = new ReviewWorkflowSummary { Timeline = new List<ReviewTimelineEntry>(), },
+            };
+        }
+
+        public Task<TaskDetail> GetDetailAsync(int id) => Task.FromResult(_detail!);
+        public Task<ProjectTask> CreateAsync(ProjectTask task, int[]? dependsOn = null) => Task.FromResult(task);
+        public Task<ProjectTask?> GetByIdAsync(int id) => Task.FromResult<ProjectTask?>(null);
+        public Task<TaskWorkflowSummary> GetWorkflowSummaryAsync(int id) =>
+            Task.FromResult(new TaskWorkflowSummary
+            {
+                Id = id, ProjectId = "test", Title = "Test", Status = "in_progress",
+                Dependencies = new List<TaskDependencyInfo>(), Subtasks = new List<CompactSubtaskEntry>(),
+                ReviewWorkflow = new CompactReviewWorkflow { Timeline = new List<CompactReviewRoundRef>(), },
+                RecentMessages = new List<CompactMessageHeader>(),
+                UnresolvedFindings = new List<CompactFindingEntry>(),
+                DeepReadHint = "Use get_task for full details.", Availability = "in_progress",
+            });
+        public Task<List<TaskSummary>> ListAsync(string projectId, DenCore.Models.TaskStatus[]? statuses = null,
+            string? assignedTo = null, string[]? tags = null, int? maxPriority = null, int? parentId = null, bool includeAll = false)
+            => Task.FromResult(new List<TaskSummary>());
+        public Task<ProjectTask> UpdateAsync(int id, Dictionary<string, object?> changes, string agent)
+            => Task.FromResult(new ProjectTask { Id = id, ProjectId = "test", Title = "Updated", Status = DenCore.Models.TaskStatus.InProgress, Priority = 1, });
+        public Task AddDependencyAsync(int taskId, int dependsOn) => Task.CompletedTask;
+        public Task RemoveDependencyAsync(int taskId, int dependsOn) => Task.CompletedTask;
+        public Task<ProjectTask?> GetNextTaskAsync(string projectId, string? assignedTo = null) => Task.FromResult<ProjectTask?>(null);
     }
 }

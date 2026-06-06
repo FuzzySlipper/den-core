@@ -295,6 +295,11 @@ public sealed class ReviewWorkflowService : IReviewWorkflowService
         AppendListSection(sb, "Findings addressed", findingsAddressed, skipIfEmpty: !isRereview);
         AppendListSection(sb, "Open findings", openFindings, skipIfEmpty: !isRereview);
         AppendListSection(sb, "Tests run by implementer", round.TestsRun ?? [], skipIfEmpty: false);
+        sb.AppendLine();
+        sb.AppendLine("Scope accounting (reviewer):");
+        sb.AppendLine("- If the implementation packet includes scope-accounting details, check whether reported follow-ups contain acceptance-gap candidates.");
+        sb.AppendLine("- Ask: do any deferred items or follow-up tasks plausibly steal parent-task acceptance criteria?");
+        sb.AppendLine("- If a follow-up is classified as `acceptance_gap_candidate`, the parent task should not close cleanly without it; raise a `scope_gap` finding.");
         AppendOptionalNotes(sb, notes ?? round.Notes);
 
         return new ReviewPacket

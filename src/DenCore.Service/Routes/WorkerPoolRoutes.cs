@@ -461,7 +461,8 @@ public static class WorkerPoolRoutes
 
                 if (plannerBinding is not null)
                 {
-                    // Create a wake message in the task thread
+                    // Create a wake message in the task thread with routable metadata
+                    // consumed by downstream planner/runner wake paths (MessageRoutingMetadata)
                     await messages.CreateAsync(new Message
                     {
                         ProjectId = condition.ProjectId,
@@ -479,7 +480,10 @@ public static class WorkerPoolRoutes
                             stale_signature = condition.StaleSignature,
                             classification = condition.Classification,
                             severity = condition.Severity,
-                            planner_target_role = plannerBinding.Role,
+                            // Routeable wake fields consumed by MessageRoutingMetadata and planner/runner wake paths
+                            recipient = plannerBinding.AgentIdentity,
+                            target_role = plannerBinding.Role,
+                            recipient_instance_id = plannerBinding.InstanceId,
                         }),
                     });
                     routedEvents++;

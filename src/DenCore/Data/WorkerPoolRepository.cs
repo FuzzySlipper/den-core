@@ -2220,7 +2220,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
         cmd.CommandText = $"""
             SELECT wa.id, wa.worker_identity, wa.run_id, wa.project_id, wa.task_id,
-                   wa.role, wa.state, wa.profile_identity, wa.created_at
+                   wa.role, wa.state, wa.profile_identity, wa.created_at,
+                   latest_wc.latest_checkpoint_at
             FROM worker_assignments wa
             LEFT JOIN (
                 SELECT assignment_id, MAX(created_at) AS latest_checkpoint_at
@@ -2243,6 +2244,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             var state = reader.GetString(6);
             var profileId = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
             var createdAt = reader.GetString(8);
+            var latestCheckpointAt = reader.IsDBNull(9) ? null : reader.GetString(9);
+
+            // Use the latest checkpoint timestamp as the real last-activity evidence,
+            // falling back to assignment created_at when no checkpoints exist.
+            var lastActivityAt = latestCheckpointAt ?? createdAt;
+            var hasCheckpoints = latestCheckpointAt is not null;
 
             conditions.Add(new StaleWorkerCondition
             {
@@ -2256,11 +2263,15 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 ProfileIdentity = profileId,
                 WorkerRole = role,
                 CurrentState = state,
-                LastActivityAt = createdAt,
-                StalenessDeadline = ComputeStalenessDeadline(createdAt, options.RunningStaleThresholdMinutes),
-                Age = ComputeAge(createdAt),
-                StateReason = $"Assignment #{assignmentId} is 'running' but has produced no checkpoints or completion packets. "
-                    + $"Started at {createdAt}.",
+                LastActivityAt = lastActivityAt,
+                StalenessDeadline = ComputeStalenessDeadline(lastActivityAt, options.RunningStaleThresholdMinutes),
+                Age = ComputeAge(lastActivityAt),
+                StateReason = hasCheckpoints
+                    ? $"Assignment #{assignmentId} is 'running' and last checkpoint was at {latestCheckpointAt} — "
+                        + $"over threshold of {options.RunningStaleThresholdMinutes} minutes. "
+                        + $"Started at {createdAt}."
+                    : $"Assignment #{assignmentId} is 'running' but has produced no checkpoints or completion packets. "
+                        + $"Started at {createdAt}.",
                 SuggestedNextAction = $"Investigate worker #{workerId} — it may be stalled or the runtime has lost track. "
                     + "Expire or abort the assignment if the worker is unrecoverable.",
                 EvidenceIds = $"[{assignmentId}]",

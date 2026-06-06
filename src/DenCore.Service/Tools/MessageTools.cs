@@ -116,7 +116,7 @@ public sealed class MessageTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("messaging")]
-    [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first.")]
+    [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first. Concise by default with content previews; use verbose=true for full message bodies.")]
     public static async Task<string> GetMessages(
         IMessageRepository repo,
         [Description("Project ID.")] string project_id,
@@ -124,23 +124,29 @@ public sealed class MessageTools
         [Description("ISO datetime — only messages after this time.")] string? since = null,
         [Description("Agent identity — only unread messages for this agent.")] string? unread_for = null,
         [Description("Max messages to return. Default 20, max 100.")] int limit = 20,
-        [Description("Optional canonical intent filter.")] string? intent = null)
+        [Description("Optional canonical intent filter.")] string? intent = null,
+        [Description("If true, return full message bodies. Default is concise with content previews.")] bool verbose = false)
     {
         DateTime? sinceDate = since is not null ? DateTime.Parse(since) : null;
         var (parsedIntent, _) = ParseIntent(intent);
         var messages = await repo.GetMessagesAsync(project_id, task_id, sinceDate, unread_for, limit, parsedIntent);
-        return JsonSerializer.Serialize(messages, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(messages, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = messages, count = messages.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("messaging")]
-    [McpServerTool(Name = "get_thread"), Description("Get a complete message thread — the root message plus all replies in chronological order.")]
+    [McpServerTool(Name = "get_thread"), Description("Get a complete message thread — the root message plus all replies in chronological order. Concise by default with content previews; use verbose=true for full message bodies.")]
     public static async Task<string> GetThread(
         IMessageRepository repo,
-        [Description("ID of the root message.")] int thread_id)
+        [Description("ID of the root message.")] int thread_id,
+        [Description("If true, return full message bodies. Default is concise with content previews.")] bool verbose = false)
     {
         var thread = await repo.GetThreadAsync(thread_id);
-        return JsonSerializer.Serialize(thread, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(thread, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = thread.Replies, count = thread.Replies.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
@@ -162,7 +168,8 @@ public sealed class MessageTools
     [McpServerTool(Name = "get_user_notifications"), Description(
         "Get the canonical user notification feed. Returns notifications across projects, " +
         "newest first, with optional filters for project, task, sender, metadata type, urgency, and read state. " +
-        "Each notification includes id, project_id, task_id, sender, content, metadata, urgency, is_read, and created_at.")]
+        "Each notification includes id, project_id, task_id, sender, content, metadata, urgency, is_read, and created_at. " +
+        "Concise by default with content previews; use verbose=true for full content.")]
     public static async Task<string> GetUserNotifications(
         IMessageRepository repo,
         [Description("Filter to a specific project/space ID. Omit for cross-project listing.")] string? project_id = null,
@@ -173,12 +180,15 @@ public sealed class MessageTools
         [Description("Filter by read state. Must provide read_for_agent when set.")] bool? is_read = null,
         [Description("Agent identity for read-state derivation. Required when is_read is set.")] string? read_for_agent = null,
         [Description("Max results. Default 20, max 100.")] int limit = 20,
-        [Description("Offset for pagination. Default 0.")] int offset = 0)
+        [Description("Offset for pagination. Default 0.")] int offset = 0,
+        [Description("If true, return full notification content. Default is concise with content previews.")] bool verbose = false)
     {
         var notifications = await repo.GetNotificationFeedAsync(
             project_id, task_id, sender, metadata_type, urgency,
             is_read, read_for_agent, limit, offset);
-        return JsonSerializer.Serialize(notifications, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(notifications, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = notifications, count = notifications.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

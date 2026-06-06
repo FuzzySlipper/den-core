@@ -46,7 +46,7 @@ public sealed class WorkerTools
         [Description("Optional Den task-thread prompt packet message id.")] int? prompt_packet_message_id = null,
         [Description("Optional Den-managed state file reference.")] string? state_file_ref = null,
         [Description("Optional idempotency key. When supplied, session identity is derived from it for retry-safe registration.")] string? dedupe_key = null,
-        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+        [Description("If true, return full JSON record including launch metadata. Default is concise.")] bool verbose = false)
     {
         try
         {
@@ -60,13 +60,13 @@ public sealed class WorkerTools
             if (existing is not null)
             {
                 if (!BelongsToProject(existing, project_id))
-                    return Error($"Worker run {workerRunId} belongs to project {existing.ProjectId}, not {project_id}.");
+                    return Error($"{workerRunId} belongs to project {existing.ProjectId}, not {project_id}.");
                 return Serialize(new
                 {
                     summary = $"existing worker {workerRunId} ({existing.State})",
                     idempotency = new { status = "existing" },
                     worker_run = ToWorkerRunProjection(existing, normalizedRole, substrate, branch, base_branch, base_commit, head_commit, profile, toolsets, workdir, host, timeout_seconds, artifact_path, log_path, prompt_packet_message_id, state_file_ref),
-                }, verbose: true);
+                }, verbose);
             }
 
             // Upsert the member and lease
@@ -101,7 +101,7 @@ public sealed class WorkerTools
                 summary = $"registered worker {workerRunId} ({assignment.State})",
                 idempotency = new { status = "created" },
                 worker_run = ToWorkerRunProjection(assignment, normalizedRole, substrate, branch, base_branch, base_commit, head_commit, profile, toolsets, workdir, host, timeout_seconds, artifact_path, log_path, prompt_packet_message_id, state_file_ref),
-            }, verbose: true);
+            }, verbose);
         }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or ArgumentException)
         {
@@ -111,22 +111,26 @@ public sealed class WorkerTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
-    [McpServerTool(Name = "get_worker_run"), Description("Get a tracked Den worker run by run id or session id.")]
+    [McpServerTool(Name = "get_worker_run"), Description("Get a tracked Den worker run by run id or session id. Concise by default; use verbose=true for full projection including launch metadata.")]
     public static async Task<string> GetWorkerRun(
         IWorkerPoolRepository pool,
         [Description("Project ID.")] string project_id,
         [Description("Worker run id, or session id as fallback.")] string run_id,
-        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+        [Description("If true, return full JSON record including launch metadata. Default is concise.")] bool verbose = false)
     {
         var assignment = await GetAssignmentInProjectAsync(pool, run_id, project_id).ConfigureAwait(false);
         if (assignment is null)
             return Error($"Worker run {run_id} not found in project {project_id}.");
-        return Serialize(new { worker_run = ToWorkerRunProjection(assignment), summary = $"worker {run_id} is {assignment.State}" }, verbose);
+        return Serialize(new
+        {
+            summary = $"worker {run_id} is {assignment.State}",
+            worker_run = ToWorkerRunProjection(assignment),
+        }, verbose);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
-    [McpServerTool(Name = "list_worker_runs"), Description("List tracked Den worker runs with optional filters.")]
+    [McpServerTool(Name = "list_worker_runs"), Description("List tracked Den worker runs with optional filters. Concise by default; use verbose=true for full worker run projections including launch metadata.")]
     public static async Task<string> ListWorkerRuns(
         IWorkerPoolRepository pool,
         [Description("Project ID.")] string project_id,
@@ -149,19 +153,24 @@ public sealed class WorkerTools
 
         var assignments = await pool.ListAssignmentsAsync(options).ConfigureAwait(false);
         var workers = assignments.Select(assignment => ToWorkerRunProjection(assignment)).ToList();
-        return Serialize(new { worker_runs = workers, count = workers.Count, summary = $"listed {workers.Count} worker run(s)" }, verbose: true);
+        return Serialize(new
+        {
+            worker_runs = workers,
+            count = workers.Count,
+            summary = $"listed {workers.Count} worker run(s)",
+        }, verbose);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("worker")]
-    [McpServerTool(Name = "get_worker_run_status"), Description("Get a tracked Den worker run status projection combining assignment state and latest completion-packet state.")]
+    [McpServerTool(Name = "get_worker_run_status"), Description("Get a tracked Den worker run status projection combining assignment state and latest completion-packet state. Concise by default; use verbose=true for full detail.")]
     public static async Task<string> GetWorkerRunStatus(
         IWorkerPoolRepository pool,
         IMessageRepository messages,
         [Description("Project ID.")] string project_id,
         [Description("Worker run id, or session id as fallback.")] string run_id,
         [Description("Optional task id to narrow completion lookup.")] int? task_id = null,
-        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+        [Description("If true, return full JSON record. Default is concise.")] bool verbose = false)
     {
         var assignment = await GetAssignmentInProjectAsync(pool, run_id, project_id).ConfigureAwait(false);
         if (assignment is null)
@@ -173,7 +182,7 @@ public sealed class WorkerTools
             worker_run = ToWorkerRunProjection(assignment),
             completion = CompletionProjection(completion),
             reconciliation = ReconcileState(assignment, completion),
-        }, verbose: true);
+        }, verbose);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
@@ -207,21 +216,24 @@ public sealed class WorkerTools
             {
                 return Serialize(new
                 {
+                    summary = $"cleanup blocked for worker {run_id} (release failed)",
                     worker_run = ToWorkerRunProjection(assignment),
                     cleanup = new { status = "blocked", state = "release_failed", reason = "release refused even after cleanup evidence was recorded" }
-                }, verbose: true);
+                }, verbose);
             }
             return Serialize(new
             {
+                summary = $"cleaned up worker {run_id}",
                 worker_run = ToWorkerRunProjection(released),
                 cleanup = new { status = "cleaned_up", state = "cleaned_up", reason }
-            }, verbose: true);
+            }, verbose);
         }
         return Serialize(new
         {
+            summary = $"cleanup blocked for worker {run_id} ({assignment.State})",
             worker_run = ToWorkerRunProjection(assignment),
             cleanup = new { status = "blocked", state = "not_eligible_active", reason = $"worker is {assignment.State}; terminal state required before cleanup" }
-        }, verbose: true);
+        }, verbose);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
@@ -242,18 +254,20 @@ public sealed class WorkerTools
         {
             return Serialize(new
             {
+                summary = $"abort noop for worker {run_id} (already terminal)",
                 worker_run = ToWorkerRunProjection(assignment),
                 control = new { status = "noop", reason = "worker is already terminal" }
-            }, verbose: true);
+            }, verbose);
         }
         // Core no longer owns worker runtime processes; abort only expires the durable assignment.
         var terminated = await pool.TransitionAssignmentStateAsync(assignment.Id, "expired",
             JsonSerializer.Serialize(new { aborted_by = requested_by, reason }, JsonOptions)).ConfigureAwait(false);
         return Serialize(new
         {
+            summary = $"aborted worker {run_id}",
             worker_run = ToWorkerRunProjection(terminated ?? assignment, statusOverride: "aborted"),
             control = new { status = "aborted", reason }
-        }, verbose: true);
+        }, verbose);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
@@ -306,6 +320,10 @@ public sealed class WorkerTools
         var role = roleOverride ?? assignment.Role ?? "coder";
         var substrate = substrateOverride ?? "external";
         var status = statusOverride ?? assignment.State ?? "unknown";
+
+        var requestedRepo = new { branch, base_branch = baseBranch, base_commit = baseCommit, head_commit = headCommit };
+        var launchMetadata = new { substrate, host, workdir, branch, base_branch = baseBranch, base_commit = baseCommit, head_commit = headCommit, profile, toolsets, timeout_seconds = timeoutSeconds, artifact_path = artifactPath, log_path = logPath, prompt_packet_message_id = promptPacketMessageId, state_file_ref = stateFileRef };
+
         return new
         {
             run_id = assignment.RunId,
@@ -318,10 +336,26 @@ public sealed class WorkerTools
             state = assignment.State,
             worker_identity = assignment.WorkerIdentity,
             assigned_by = assignment.AssignedBy,
-            requested_repo = new { branch, base_branch = baseBranch, base_commit = baseCommit, head_commit = headCommit },
-            launch_metadata = new { substrate, host, workdir, branch, base_branch = baseBranch, base_commit = baseCommit, head_commit = headCommit, profile, toolsets, timeout_seconds = timeoutSeconds, artifact_path = artifactPath, log_path = logPath, prompt_packet_message_id = promptPacketMessageId, state_file_ref = stateFileRef },
+            requested_repo = requestedRepo,
+            launch_metadata = launchMetadata,
             created_at = assignment.CreatedAt,
             updated_at = assignment.UpdatedAt,
+        };
+    }
+
+    internal static object ToConciseWorkerProjection(WorkerAssignment assignment)
+    {
+        return new
+        {
+            run_id = assignment.RunId,
+            assignment_id = assignment.Id,
+            project_id = assignment.ProjectId,
+            task_id = assignment.TaskId,
+            role = assignment.Role ?? "coder",
+            state = assignment.State,
+            worker_identity = assignment.WorkerIdentity,
+            updated_at = assignment.UpdatedAt,
+            deep_read_hint = "Use get_worker_run with verbose=true for full projection including launch metadata.",
         };
     }
 
@@ -423,7 +457,15 @@ public sealed class WorkerTools
 
     private static string? NormalizeIdentifier(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string Serialize(object obj, bool verbose) => JsonSerializer.Serialize(obj, JsonOptions);
+    /// <summary>
+    /// Serialize using concise projections when verbose=false, full projection when verbose=true.
+    /// For worker run objects, concise mode uses ToConciseWorkerProjection.
+    /// </summary>
+    private static string Serialize(object obj, bool verbose)
+    {
+        if (verbose) return JsonSerializer.Serialize(obj, JsonOptions);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(obj), JsonOptions);
+    }
 
     private static string Error(string message) => JsonSerializer.Serialize(new { error = message }, JsonOptions);
 }

@@ -42,16 +42,32 @@ public sealed class DocumentTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug. Returns documents regardless of visibility (normal, hidden, archived).")]
+    [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug. Returns documents regardless of visibility (normal, hidden, archived). Concise by default with content preview; use verbose=true for full content.")]
     public static async Task<string> GetDocument(
         IDocumentRepository repo,
         [Description("Project or space ID.")] string project_id,
-        [Description("Document slug.")] string slug)
+        [Description("Document slug.")] string slug,
+        [Description("If true, return full document content. Default is concise with content preview.")] bool verbose = false)
     {
         var doc = await repo.GetAsync(project_id, slug);
         if (doc is null)
             return JsonSerializer.Serialize(new { error = $"Document '{slug}' not found in project '{project_id}'." }, JsonOpts.Default);
-        return JsonSerializer.Serialize(doc, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(doc, JsonOpts.Default);
+
+        return JsonSerializer.Serialize(new
+        {
+            project_id = doc.ProjectId,
+            slug = doc.Slug,
+            title = doc.Title,
+            doc_type = doc.DocType.ToDbValue(),
+            visibility = doc.Visibility.ToDbValue(),
+            summary = doc.Summary,
+            tags = doc.Tags,
+            created_at = doc.CreatedAt,
+            updated_at = doc.UpdatedAt,
+            content = ConciseReadResponse.ContentPreview(doc.Content ?? ""),
+        }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]

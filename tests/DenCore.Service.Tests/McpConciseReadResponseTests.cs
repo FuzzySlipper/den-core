@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DenCore.Data;
 using DenCore.Models;
 using DenCore.Service.Tools;
 using TaskStatus = DenCore.Models.TaskStatus;
@@ -711,5 +712,177 @@ public class McpConciseReadResponseTests
         var hint = doc.RootElement.GetProperty("deep_read_hint").GetString();
         Assert.NotNull(hint);
         Assert.Contains("verbose=true", hint);
+    }
+
+    // ── Direct TaskTools.GetTask tests (fake repo, end-to-end) ──────────
+
+    private sealed class FakeTaskRepo : ITaskRepository
+    {
+        private readonly TaskDetail _detail;
+        public FakeTaskRepo(TaskDetail detail) => _detail = detail;
+
+        public Task<TaskDetail> GetDetailAsync(int id) => Task.FromResult(_detail);
+        public Task<ProjectTask> CreateAsync(ProjectTask task, int[]? dependsOn = null) =>
+            Task.FromResult(task);
+        public Task<ProjectTask?> GetByIdAsync(int id) =>
+            Task.FromResult<ProjectTask?>(null);
+        public Task<TaskWorkflowSummary> GetWorkflowSummaryAsync(int id) =>
+            Task.FromResult(new TaskWorkflowSummary
+            {
+                Id = id, ProjectId = "test", Title = "Summary", Status = "planned",
+                Dependencies = [], Subtasks = [],
+                ReviewWorkflow = new CompactReviewWorkflow { Timeline = [] },
+                RecentMessages = [], UnresolvedFindings = [],
+                DeepReadHint = "", Availability = "available",
+            });
+        public Task<List<TaskSummary>> ListAsync(string projectId, DenCore.Models.TaskStatus[]? statuses = null,
+            string? assignedTo = null, string[]? tags = null, int? maxPriority = null, int? parentId = null,
+            bool includeAll = false) => Task.FromResult(new List<TaskSummary>());
+        public Task<ProjectTask> UpdateAsync(int id, Dictionary<string, object?> changes, string agent) =>
+            Task.FromResult(new ProjectTask { Id = id, ProjectId = "test", Title = "Updated", Status = DenCore.Models.TaskStatus.InProgress, Priority = 1 });
+        public Task AddDependencyAsync(int taskId, int dependsOn) => Task.CompletedTask;
+        public Task RemoveDependencyAsync(int taskId, int dependsOn) => Task.CompletedTask;
+        public Task<ProjectTask?> GetNextTaskAsync(string projectId, string? assignedTo = null) =>
+            Task.FromResult<ProjectTask?>(null);
+    }
+
+    private static TaskDetail CreateSeededTaskDetail(string? desc, List<Message> msgs)
+    {
+        return new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 42, ProjectId = "den-mcp",
+                Title = "Test task with long description",
+                Status = DenCore.Models.TaskStatus.InProgress,
+                Priority = 2,
+                Description = desc,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>
+            {
+                new() { Id = 1, Title = "Sub A", Status = DenCore.Models.TaskStatus.Planned, Priority = 3, ProjectId = "den-mcp" },
+            },
+            RecentMessages = msgs,
+            ReviewRounds = new List<ReviewRound>
+            {
+                new()
+                {
+                    Id = 1, TaskId = 42, RoundNumber = 1,
+                    RequestedBy = "runner", Branch = "task/2001-concise",
+                    BaseBranch = "main", BaseCommit = "abc", HeadCommit = "def",
+                    Verdict = ReviewVerdict.ChangesRequested,
+                    RequestedAt = DateTime.UtcNow,
+                },
+            },
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                ReviewRoundCount = 1,
+                CurrentVerdict = ReviewVerdict.ChangesRequested,
+                UnresolvedFindingCount = 0,
+                ResolvedFindingCount = 0,
+                AddressedFindingCount = 0,
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+    }
+
+    [Fact]
+    public async Task GetTask_ConciseDefault_BoundsRecentMessagesAndDescriptions()
+    {
+        var sentinelDesc = "SENTINEL_DESCRIPTION_" + new string('X', 1200);
+        var sentinelBody = "SENTINEL_MESSAGE_BODY_" + new string('Y', 800);
+        var msgs = new List<Message>();
+        for (int i = 0; i < 10; i++)
+            msgs.Add(new Message
+            {
+                Id = 100 + i, ProjectId = "den-mcp", Sender = "agent",
+                Content = $"{sentinelBody} #{i}",
+                TaskId = 42, CreatedAt = DateTime.UtcNow,
+            });
+
+        var detail = CreateSeededTaskDetail(sentinelDesc, msgs);
+        var repo = new FakeTaskRepo(detail);
+
+        var resultJson = await TaskTools.GetTask(repo, task_id: 42, verbose: false);
+        using var doc = JsonDocument.Parse(resultJson);
+        var root = doc.RootElement;
+
+        // Task identity preserved
+        Assert.Equal(42, root.GetProperty("id").GetInt32());
+        Assert.Equal("den-mcp", root.GetProperty("project_id").GetString());
+
+        // Description is a preview object, NOT the raw sentinel string
+        Assert.Equal(JsonValueKind.Object, root.GetProperty("description").ValueKind);
+        var desc = root.GetProperty("description");
+        Assert.True(desc.GetProperty("content_truncated").GetBoolean());
+        Assert.True(desc.GetProperty("content_chars").GetInt32() >= sentinelDesc.Length);
+
+        // Raw Description field (PascalCase from C# model) is absent —
+        // description is only the preview object
+        Assert.False(root.TryGetProperty("Description", out _));
+
+        // Recent messages bounded (max 5), each truncated
+        var recentMsgs = root.GetProperty("recent_messages");
+        Assert.True(recentMsgs.GetArrayLength() <= 5);
+        foreach (var msg in recentMsgs.EnumerateArray())
+        {
+            Assert.True(msg.TryGetProperty("content_preview", out _));
+            Assert.True(msg.GetProperty("content_truncated").GetBoolean());
+            // Raw Content/Ccontent fields are absent (only content_preview)
+            Assert.False(msg.TryGetProperty("Content", out _));
+            Assert.False(msg.TryGetProperty("content", out _));
+        }
+
+        // Deep read hint present
+        var hint = root.GetProperty("deep_read_hint").GetString();
+        Assert.NotNull(hint);
+        Assert.Contains("verbose=true", hint);
+
+        // Subtasks included
+        var subs = root.GetProperty("subtasks");
+        Assert.Equal(1, subs.GetArrayLength());
+        Assert.Equal("Sub A", subs[0].GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task GetTask_VerboseTrue_ReturnsFullDetail()
+    {
+        var sentinelDesc = "SENTINEL_FULL_DESC_" + new string('Z', 200);
+        var sentinelBody = "SENTINEL_FULL_BODY_" + new string('W', 300);
+        var msgs = new List<Message>
+        {
+            new()
+            {
+                Id = 200, ProjectId = "den-mcp", Sender = "agent",
+                Content = sentinelBody,
+                TaskId = 42, CreatedAt = DateTime.UtcNow,
+            },
+        };
+
+        var detail = CreateSeededTaskDetail(sentinelDesc, msgs);
+        var repo = new FakeTaskRepo(detail);
+
+        var resultJson = await TaskTools.GetTask(repo, task_id: 42, verbose: true);
+        using var doc = JsonDocument.Parse(resultJson);
+        var root = doc.RootElement;
+
+        // Full detail: the outer key is "task" (TaskDetail serialization shape)
+        var task = root.GetProperty("task");
+        Assert.Equal(42, task.GetProperty("id").GetInt32());
+
+        // Full Description is present as a raw string (not a preview object)
+        var rawDesc = task.GetProperty("description").GetString();
+        Assert.NotNull(rawDesc);
+        Assert.Contains("SENTINEL_FULL_DESC_", rawDesc);
+
+        // Full RecentMessages with raw Content
+        var recentMsgs = root.GetProperty("recent_messages");
+        Assert.Equal(1, recentMsgs.GetArrayLength());
+        var msgContent = recentMsgs[0].GetProperty("content").GetString();
+        Assert.NotNull(msgContent);
+        Assert.Contains("SENTINEL_FULL_BODY_", msgContent);
     }
 }

@@ -15,6 +15,7 @@ public static class McpToolProfiles
     public const string WorkerValidator = "worker-validator";
     public const string WorkerDriftChecker = "worker-drift-checker";
     public const string WorkerPacketAuditor = "worker-packet-auditor";
+    public const string WorkerScopeAuditor = "worker-scope-auditor";
     public const string Curator = "curator";
     public const string Diagnostics = "diagnostics";
 }

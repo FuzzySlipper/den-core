@@ -149,7 +149,7 @@ public sealed class TaskTools
             : ConciseResponse.UpdatedTask(updated, changes);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("task")]
     [McpServerTool(Name = "get_task"), Description("Get full task details including dependencies, subtasks, and recent messages. Concise by default with bounded recent messages and descriptions; use verbose=true for full detail.")]
     public static async Task<string> GetTask(
@@ -163,7 +163,7 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(ConciseReadResponse.ShrinkTaskDetail(detail), JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("task")]
     [McpServerTool(Name = "get_task_workflow_summary"), Description("Get a compact task workflow summary for orchestrator startup/drain. Returns task status, current review state, latest packet headers (without full bodies), unresolved findings/actions, and links/message IDs. Use get_task for full detail. Use verbose=true for full record.")]
     public static async Task<string> GetTaskWorkflowSummary(
@@ -177,7 +177,7 @@ public sealed class TaskTools
         return JsonSerializer.Serialize(ConciseReadResponse.Shrink(summary), JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("task")]
     [McpServerTool(Name = "list_tasks"), Description("List tasks in a project with optional filters. Returns summaries without descriptions. Concise by default; use verbose=true for full task records.")]
     public static async Task<string> ListTasks(
@@ -261,7 +261,7 @@ public sealed class TaskTools
             : ConciseResponse.CreatedReviewRound(round);
     }
 
-    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("review")]
     [McpServerTool(Name = "list_review_rounds"), Description("List review rounds for a task in chronological order. Concise by default; use verbose=true for full round records.")]
     public static async Task<string> ListReviewRounds(
@@ -339,7 +339,7 @@ public sealed class TaskTools
             : ConciseResponse.CreatedReviewFinding(finding);
     }
 
-    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("review")]
     [McpServerTool(Name = "list_review_findings"), Description("List review findings for a task or a specific review round. Concise by default; use verbose=true for full finding records.")]
     public static async Task<string> ListReviewFindings(

@@ -10,7 +10,7 @@ namespace DenCore.Service.Tools;
 [McpServerToolType]
 public sealed class LibrarianTools
 {
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("document")]
     [McpServerTool(Name = "query_librarian"), Description(
         "Ask the librarian for context relevant to your current work. " +

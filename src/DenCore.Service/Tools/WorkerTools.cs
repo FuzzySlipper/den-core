@@ -109,7 +109,7 @@ public sealed class WorkerTools
         }
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "get_worker_run"), Description("Get a tracked Den worker run by run id or session id. Concise by default; use verbose=true for full projection including launch metadata.")]
     public static async Task<string> GetWorkerRun(
@@ -128,7 +128,7 @@ public sealed class WorkerTools
         }, verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "list_worker_runs"), Description("List tracked Den worker runs with optional filters. Concise by default; use verbose=true for full worker run projections including launch metadata.")]
     public static async Task<string> ListWorkerRuns(
@@ -161,7 +161,7 @@ public sealed class WorkerTools
         }, verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "get_worker_run_status"), Description("Get a tracked Den worker run status projection combining assignment state and latest completion-packet state. Concise by default; use verbose=true for full detail.")]
     public static async Task<string> GetWorkerRunStatus(

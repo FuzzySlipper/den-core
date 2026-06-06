@@ -24,12 +24,12 @@ public sealed class CompletionTools
 
     private static readonly HashSet<string> ValidPacketTypes = new(StringComparer.Ordinal)
     {
-        "implementation_packet", "review_findings_packet", "validation_packet", "drift_check_packet", "packet_audit_packet", "worker_failure_packet"
+        "implementation_packet", "review_findings_packet", "validation_packet", "drift_check_packet", "packet_audit_packet", "scope_audit_packet", "worker_failure_packet"
     };
 
     private static readonly Regex ShellSyntaxPattern = new(@"(\$\(|`|\$\{|\bdate\b|\burandom\b|\bxxd\b)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "post_worker_completion_packet"), Description("Post an idempotent structured Den worker completion packet and update the durable worker/session status.")]
     public static async Task<string> PostWorkerCompletionPacket(
@@ -55,6 +55,11 @@ public sealed class CompletionTools
         [Description("Optional scope accounting: acceptance criteria intentionally narrowed or deferred.")] string? scope_deferred = null,
         [Description("Optional scope accounting: follow-up tasks created with classification (polish, downstream integration, acceptance gap candidate). JSON array of {task_id,title,classification}.")] string? scope_follow_ups = null,
         [Description("Optional scope accounting: whether any follow-up is required for parent acceptance, and why parent is still closable if yes/uncertain.")] string? scope_parent_closable = null,
+        [Description("Optional scope audit verdict: scope_ok, scope_ok_with_downstream_followups, acceptance_gap_suspected, phase_split_needed, planner_decision_needed, or audit_inconclusive.")] string? audit_verdict = null,
+        [Description("Optional scope audit evidence checked, e.g. 'implementation packet, review findings, follow-ups, live API smoke'.")] string? audit_evidence_checked = null,
+        [Description("Optional scope audit recommended route, e.g. 'planner', 'runner', 'user-notification'.")] string? audit_recommended_route = null,
+        [Description("Optional scope audit: head commit that was audited.")] string? audited_head_commit = null,
+        [Description("Optional scope audit: review round id that was audited.")] int? audited_review_round_id = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var identityDiagnostics = ValidateSubmittedRunId(run_id);
@@ -91,8 +96,8 @@ public sealed class CompletionTools
             return SerializeCompletionResult(existing, "existing", isMalformed ? "malformed" : "present", verbose);
 
         var taskId = assignment.TaskId?.ToString() ?? "none";
-        var content = BuildCompletionContent(project_id, taskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, summary, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable);
-        var metadata = BuildMetadata(project_id, assignment.TaskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, role, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, dedupe_key, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable);
+        var content = BuildCompletionContent(project_id, taskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, summary, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable, audit_verdict, audit_evidence_checked, audit_recommended_route, audited_head_commit, audited_review_round_id);
+        var metadata = BuildMetadata(project_id, assignment.TaskId, run_id, normalizedRole, normalizedStatus!, normalizedPacketType, role, branch, head_commit, base_commit, tests_run, review_round_id, finding_ids, resolvedFailure, recovery_guidance, dedupe_key, isMalformed, scope_acceptance, scope_deferred, scope_follow_ups, scope_parent_closable, audit_verdict, audit_evidence_checked, audit_recommended_route, audited_head_commit, audited_review_round_id);
         var message = await messages.CreateAsync(new Message
         {
             ProjectId = project_id,
@@ -113,7 +118,7 @@ public sealed class CompletionTools
         return SerializeCompletionResult(message, "created", isMalformed ? "malformed" : "present", verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("worker")]
     [McpServerTool(Name = "get_latest_worker_completion"), Description("Get the latest structured completion packet for a worker run/task/role, or report missing_packet when none exists.")]
     public static async Task<string> GetLatestWorkerCompletion(
@@ -199,7 +204,12 @@ public sealed class CompletionTools
         string? scopeAcceptance,
         string? scopeDeferred,
         string? scopeFollowUps,
-        string? scopeParentClosable)
+        string? scopeParentClosable,
+        string? auditVerdict,
+        string? auditEvidenceChecked,
+        string? auditRecommendedRoute,
+        string? auditedHeadCommit,
+        int? auditedReviewRoundId)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"# {ToTitle(packetType)}");
@@ -242,6 +252,21 @@ public sealed class CompletionTools
         else
         {
             sb.AppendLine("- Not reported. Consider adding scope-accounting details for substantial tasks (see `prepare_coder_context_packet` output schema).");
+        }
+        if (packetType == "scope_audit_packet" || !string.IsNullOrWhiteSpace(auditVerdict) || !string.IsNullOrWhiteSpace(auditEvidenceChecked) || !string.IsNullOrWhiteSpace(auditRecommendedRoute) || !string.IsNullOrWhiteSpace(auditedHeadCommit) || auditedReviewRoundId is not null)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Scope audit");
+            if (!string.IsNullOrWhiteSpace(auditVerdict))
+                sb.AppendLine($"- Verdict: `{auditVerdict.Trim()}`");
+            if (!string.IsNullOrWhiteSpace(auditEvidenceChecked))
+                sb.AppendLine($"- Evidence checked: {auditEvidenceChecked.Trim()}");
+            if (!string.IsNullOrWhiteSpace(auditRecommendedRoute))
+                sb.AppendLine($"- Recommended route: `{auditRecommendedRoute.Trim()}`");
+            if (!string.IsNullOrWhiteSpace(auditedHeadCommit))
+                sb.AppendLine($"- Audited head commit: `{auditedHeadCommit.Trim()}`");
+            if (auditedReviewRoundId is not null)
+                sb.AppendLine($"- Audited review round: `#{auditedReviewRoundId}`");
         }
         sb.AppendLine();
         sb.AppendLine("## Repo metadata");
@@ -287,7 +312,12 @@ public sealed class CompletionTools
         string? scopeAcceptance,
         string? scopeDeferred,
         string? scopeFollowUps,
-        string? scopeParentClosable)
+        string? scopeParentClosable,
+        string? auditVerdict,
+        string? auditEvidenceChecked,
+        string? auditRecommendedRoute,
+        string? auditedHeadCommit,
+        int? auditedReviewRoundId)
     {
         var obj = new Dictionary<string, object?>
         {
@@ -316,6 +346,11 @@ public sealed class CompletionTools
             ["scope_deferred"] = NullIfWhiteSpace(scopeDeferred),
             ["scope_follow_ups"] = ParseJsonOrString(scopeFollowUps),
             ["scope_parent_closable"] = NullIfWhiteSpace(scopeParentClosable),
+            ["audit_verdict"] = NullIfWhiteSpace(auditVerdict),
+            ["audit_evidence_checked"] = NullIfWhiteSpace(auditEvidenceChecked),
+            ["audit_recommended_route"] = NullIfWhiteSpace(auditRecommendedRoute),
+            ["audited_head_commit"] = NullIfWhiteSpace(auditedHeadCommit),
+            ["audited_review_round_id"] = auditedReviewRoundId,
             ["identity_provenance"] = "server_derived_from_worker_run",
             ["identity_validation"] = "matched_worker_run_record",
             ["provided_run_or_session_id"] = runId,

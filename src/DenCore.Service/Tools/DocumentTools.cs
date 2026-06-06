@@ -40,7 +40,7 @@ public sealed class DocumentTools
             : ConciseResponse.StoredDocument(doc);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("document")]
     [McpServerTool(Name = "get_document"), Description("Get a document's full content by project or space ID and slug. Returns documents regardless of visibility (normal, hidden, archived). Concise by default with content preview; use verbose=true for full content.")]
     public static async Task<string> GetDocument(
@@ -70,7 +70,7 @@ public sealed class DocumentTools
         }, JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("document")]
     [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Excludes archived documents by default. Omit project_id to list across all projects and spaces. Concise by default; use verbose=true for full document records.")]
     public static async Task<string> ListDocuments(
@@ -90,7 +90,7 @@ public sealed class DocumentTools
         return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { documents = docs, count = docs.Count }), JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("document")]
     [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Excludes archived documents. Supports AND, OR, NOT, and \"phrase\" queries. Concise by default with snippets; use verbose=true for full results.")]
     public static async Task<string> SearchDocuments(

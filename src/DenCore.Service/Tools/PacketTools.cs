@@ -172,7 +172,29 @@ public sealed class PacketTools
         return await PrepareSpecializedWorkerPacket(tasks, messages, project_id, task_id, requested_by, "packet_auditor", "packet_auditor_context_packet", branch, base_branch, base_commit, head_commit, null, allowed_scope, notes, completion_reporting_mode, verbose).ConfigureAwait(false);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "runner", "worker-scope-auditor")]
+    [McpToolBundle("packet")]
+    [McpServerTool(Name = "prepare_scope_auditor_context_packet"), Description("Create and store a bounded Den task-thread scope-auditor context packet for auditing task completion scope against acceptance criteria, follow-ups, and live evidence.")]
+    public static async Task<string> PrepareScopeAuditorContextPacket(
+        ITaskRepository tasks,
+        IMessageRepository messages,
+        [Description("Project ID.")] string project_id,
+        [Description("Task ID.")] int task_id,
+        [Description("Agent/user creating the packet.")] string requested_by,
+        [Description("Optional implementation branch/worktree guidance.")] string? branch = null,
+        [Description("Optional base branch.")] string? base_branch = null,
+        [Description("Optional base commit.")] string? base_commit = null,
+        [Description("Optional head commit under scope audit.")] string? head_commit = null,
+        [Description("Optional review round id to audit.")] int? review_round_id = null,
+        [Description("Optional allowed scope guidance.")] string? allowed_scope = null,
+        [Description("Optional additional instructions to include in the packet.")] string? notes = null,
+        [Description("Completion reporting mode: worker_mcp_tool or artifact_reconciled. Default worker_mcp_tool.")] string completion_reporting_mode = "worker_mcp_tool",
+        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+    {
+        return await PrepareSpecializedWorkerPacket(tasks, messages, project_id, task_id, requested_by, "scope_auditor", "scope_auditor_context_packet", branch, base_branch, base_commit, head_commit, review_round_id, allowed_scope, notes, completion_reporting_mode, verbose).ConfigureAwait(false);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "get_latest_task_packet"), Description("Get the latest task-thread packet by packet metadata type/role. Returns the exact message reference for worker launch.")]
     public static async Task<string> GetLatestTaskPacket(
@@ -190,7 +212,7 @@ public sealed class PacketTools
         return SerializePacketResult(packet, MetadataString(packet, "role") ?? role ?? "worker", "found", verbose);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor", "worker-scope-auditor")]
     [McpToolBundle("packet")]
     [McpServerTool(Name = "render_worker_prompt"), Description("Render a small worker startup prompt that points at a Den packet message reference without embedding the packet body in process args.")]
     public static async Task<string> RenderWorkerPrompt(
@@ -388,6 +410,22 @@ public sealed class PacketTools
         {
             sb.AppendLine("- Check that worker packet claims are supported by Den messages, review records, and repo branch/head metadata.");
             sb.AppendLine("- Post a `packet_audit_packet` with pass/fail checks and fail-closed diagnostics for unsupported claims.");
+        }
+        else if (role == "scope_auditor")
+        {
+            sb.AppendLine("- Read task description, implementation packet, review verdict/findings, and scope-accounting details.");
+            sb.AppendLine("- Check whether follow-up tasks classified as `acceptance_gap_candidate` plausibly steal parent-task acceptance criteria.");
+            sb.AppendLine("- Inspect relevant live/API/UI evidence when the task required user/operator-visible behavior.");
+            sb.AppendLine("- Post a `scope_audit_packet` via `post_worker_completion_packet` with `packet_type=\"scope_audit_packet\"`, including:");
+            sb.AppendLine("  - `summary`: narrative audit conclusion.");
+            sb.AppendLine("  - `audit_verdict`: `scope_ok`, `scope_ok_with_downstream_followups`, `acceptance_gap_suspected`, `phase_split_needed`, `planner_decision_needed`, or `audit_inconclusive`.");
+            sb.AppendLine("  - `audit_evidence_checked`: what was reviewed (implementation packet, review findings, follow-ups, live/API/UI).");
+            sb.AppendLine("  - `audit_recommended_route`: where to route results (`planner`, `runner`, `user-notification`).");
+            sb.AppendLine("  - `audited_head_commit` and `audited_review_round_id`: what was audited.");
+            sb.AppendLine("- The scope auditor checks completion semantics (whether acceptance criteria are actually met), not code quality or product ownership.");
+            sb.AppendLine("- Report missing/inconclusive evidence honestly rather than forcing a yes/no verdict.");
+            sb.AppendLine("- The role cannot unilaterally reopen or close tasks; it routes evidence to Planner/Runner/user surfaces.");
+            sb.AppendLine("- Example (from #1956): lifecycle API foundation + empty live projection = acceptance gap, not ordinary polish.");
         }
         else
         {

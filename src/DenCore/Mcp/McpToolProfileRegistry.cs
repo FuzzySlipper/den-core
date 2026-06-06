@@ -239,6 +239,7 @@ public sealed class McpToolProfileRegistry
             "prepare_coder_context_packet", "prepare_reviewer_context_packet",
             "prepare_validator_context_packet", "prepare_drift_checker_context_packet",
             "prepare_packet_auditor_context_packet",
+            "prepare_scope_auditor_context_packet",
             "render_worker_prompt");
 
         // ---- orchestrator bundle ----
@@ -344,7 +345,8 @@ public sealed class McpToolProfileRegistry
         // runner-specific packet subset
         m.ProfileAdd(McpToolProfiles.Runner,
             "get_latest_task_packet", "render_worker_prompt",
-            "prepare_coder_context_packet", "prepare_validator_context_packet");
+            "prepare_coder_context_packet", "prepare_validator_context_packet",
+            "prepare_scope_auditor_context_packet");
 
         // ---- profile: admin-current ----
         // everything except legacy and diagnostics
@@ -449,6 +451,22 @@ public sealed class McpToolProfileRegistry
             "get_latest_task_packet",
             "prepare_packet_auditor_context_packet", "render_worker_prompt");
 
+        // ---- profile: worker-scope-auditor ----
+        // Narrow profile: reads task/review/scope accounting details and posts scope_audit_packet verdicts.
+        // Explicitly excluded: create_task, update_task, set_review_verdict, create_review_finding.
+        // The scope auditor routes evidence to Planner/Runner; it cannot unilaterally modify task state.
+        m.ProfileAdd(McpToolProfiles.WorkerScopeAuditor,
+            "get_project", "list_projects",
+            "get_space", "list_spaces",
+            "get_task", "list_tasks", "get_task_workflow_summary",
+            "get_document", "list_documents", "search_documents", "query_librarian",
+            "get_messages", "get_thread", "mark_read",
+            "list_review_rounds", "list_review_findings", "get_latest_task_packet",
+            "get_user_notifications", "mark_notifications_read",
+            "get_worker_run", "get_worker_run_status", "list_worker_runs",
+            "get_latest_worker_completion", "post_worker_completion_packet",
+            "prepare_scope_auditor_context_packet", "render_worker_prompt");
+
         // ---- profile: curator ----
         m.Profile(McpToolProfiles.Curator,
             McpToolBundles.Topics);
@@ -540,6 +558,7 @@ public sealed class McpToolProfileRegistry
             "get_latest_worker_completion", "get_latest_task_packet",
             "prepare_coder_context_packet", "prepare_reviewer_context_packet",
             "prepare_validator_context_packet", "prepare_drift_checker_context_packet", "prepare_packet_auditor_context_packet",
+            "prepare_scope_auditor_context_packet",
             "render_worker_prompt", "determine_orchestrator_next_action",
             "list_worker_runs", "get_worker_run", "get_worker_run_status",
             "cleanup_worker_run", "abort_worker_run", "rerun_worker_run");

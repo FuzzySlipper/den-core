@@ -114,7 +114,7 @@ public sealed class MessageTools
             : ConciseResponse.SentMessage(created);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first. Concise by default with content previews; use verbose=true for full message bodies.")]
     public static async Task<string> GetMessages(
@@ -135,7 +135,7 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = messages, count = messages.Count }), JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "get_thread"), Description("Get a complete message thread — the root message plus all replies in chronological order. Concise by default with content previews; use verbose=true for full message bodies.")]
     public static async Task<string> GetThread(
@@ -159,7 +159,7 @@ public sealed class MessageTools
         }, JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "mark_read"), Description("Mark messages as read for an agent.")]
     public static async Task<string> MarkRead(
@@ -173,7 +173,7 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(new { marked = count }, JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "get_user_notifications"), Description(
         "Get the canonical user notification feed. Returns notifications across projects, " +
@@ -201,7 +201,7 @@ public sealed class MessageTools
         return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = notifications, count = notifications.Count }), JsonOpts.Default);
     }
 
-    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
     [McpServerTool(Name = "mark_notifications_read"), Description(
         "Mark user notifications as read for an agent identity. Supports two modes:\n" +

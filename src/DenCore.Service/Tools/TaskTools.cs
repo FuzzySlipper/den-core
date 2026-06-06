@@ -200,7 +200,7 @@ public sealed class TaskTools
         var tasks = await repo.ListAsync(project_id, statuses, assigned_to, tagList, priority, parent_id);
         if (verbose)
             return JsonSerializer.Serialize(tasks, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = tasks, count = tasks.Count }), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.ShrinkTaskList(tasks), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -272,7 +272,7 @@ public sealed class TaskTools
         var rounds = await repo.ListByTaskAsync(task_id);
         if (verbose)
             return JsonSerializer.Serialize(rounds, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = rounds, count = rounds.Count }), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.ShrinkReviewRoundList(rounds), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -362,13 +362,13 @@ public sealed class TaskTools
             var roundFindings = await repo.ListByReviewRoundAsync(review_round_id.Value, statuses);
             if (verbose)
                 return JsonSerializer.Serialize(roundFindings, JsonOpts.Default);
-            return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = roundFindings, count = roundFindings.Count }), JsonOpts.Default);
+            return JsonSerializer.Serialize(ConciseReadResponse.ShrinkReviewFindingList(roundFindings), JsonOpts.Default);
         }
 
         var findings = await repo.ListByTaskAsync(task_id, statuses);
         if (verbose)
             return JsonSerializer.Serialize(findings, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = findings, count = findings.Count }), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.ShrinkReviewFindingList(findings), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -549,7 +549,7 @@ public sealed class TaskTools
             return JsonSerializer.Serialize(new { message = "No unblocked tasks available." }, JsonOpts.Default);
         if (verbose)
             return JsonSerializer.Serialize(next, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(next), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.ShrinkTask(next), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

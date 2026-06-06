@@ -116,7 +116,7 @@ public static class ConciseReadResponse
         };
     }
 
-    private static List<object> ShrinkMessages(System.Collections.IList messages)
+    public static List<object> ShrinkMessages(System.Collections.IList messages)
     {
         var result = new List<object>(Math.Min(messages.Count, MaxRecentMessages));
         var count = 0;
@@ -128,21 +128,21 @@ public static class ConciseReadResponse
         return result;
     }
 
-    private static object ShrinkMessage(object msg)
+    public static object ShrinkMessage(object msg)
     {
         if (msg is null) return new { };
-        var body = Prop(msg, "body")?.ToString() ?? "";
+        var body = (Prop(msg, "Content") ?? Prop(msg, "body"))?.ToString() ?? "";
         var bodyStr = body is string s && s.Length > DefaultContentPreviewChars
             ? s[..DefaultContentPreviewChars]
             : body;
 
         return new
         {
-            id = Prop(msg, "id"),
-            sender = Prop(msg, "sender"),
-            task_id = Prop(msg, "task_id"),
-            thread_id = Prop(msg, "thread_id"),
-            created_at = Prop(msg, "created_at"),
+            id = Prop(msg, "id") ?? Prop(msg, "Id"),
+            sender = Prop(msg, "sender") ?? Prop(msg, "Sender"),
+            task_id = Prop(msg, "task_id") ?? Prop(msg, "TaskId"),
+            thread_id = Prop(msg, "thread_id") ?? Prop(msg, "ThreadId"),
+            created_at = Prop(msg, "created_at") ?? Prop(msg, "CreatedAt"),
             content_preview = bodyStr,
             content_chars = body is string bs ? bs.Length : 0,
             content_truncated = body is string bs2 && bs2.Length > DefaultContentPreviewChars,
@@ -206,6 +206,98 @@ public static class ConciseReadResponse
             });
         }
         return result;
+    }
+
+    // ── Task / review-list projections ───────────────────────────────────
+
+    /// <summary>
+    /// Shrink a single task to a concise projection suitable for list and next_task surfaces.
+    /// Preserves actionable task fields plus deep_read_hint.
+    /// </summary>
+    public static object ShrinkTask(object task)
+    {
+        if (task is null) return new { };
+        return new
+        {
+            id = Prop(task, "Id"),
+            project_id = Prop(task, "ProjectId"),
+            title = Prop(task, "Title"),
+            status = Prop(task, "Status")?.ToString(),
+            priority = Prop(task, "Priority"),
+            assigned_to = Prop(task, "AssignedTo"),
+            parent_id = Prop(task, "ParentId"),
+            tags = Prop(task, "Tags"),
+            created_at = Prop(task, "CreatedAt"),
+            updated_at = Prop(task, "UpdatedAt"),
+            deep_read_hint = "Use get_task with verbose=true for full task detail including description and recent messages.",
+        };
+    }
+
+    /// <summary>
+    /// Shrink a task list to concise projections. Preserves actionable task fields on every item.
+    /// </summary>
+    public static object ShrinkTaskList(System.Collections.IList tasks)
+    {
+        var items = new List<object>(tasks.Count);
+        foreach (var t in tasks)
+            items.Add(ShrinkTask(t));
+        return new { items, count = tasks.Count };
+    }
+
+    /// <summary>
+    /// Shrink a review-round list to concise projections. Preserves branch/commit/verdict/timing fields.
+    /// </summary>
+    public static object ShrinkReviewRoundList(System.Collections.IList rounds)
+    {
+        var items = new List<object>(rounds.Count);
+        foreach (var r in rounds)
+        {
+            items.Add(new
+            {
+                id = Prop(r, "Id"),
+                task_id = Prop(r, "TaskId"),
+                round_number = Prop(r, "RoundNumber"),
+                requested_by = Prop(r, "RequestedBy"),
+                branch = Prop(r, "Branch"),
+                base_branch = Prop(r, "BaseBranch"),
+                base_commit = Prop(r, "BaseCommit"),
+                head_commit = Prop(r, "HeadCommit"),
+                last_reviewed_head_commit = Prop(r, "LastReviewedHeadCommit"),
+                verdict = Prop(r, "Verdict")?.ToString(),
+                requested_at = Prop(r, "RequestedAt"),
+                verdict_at = Prop(r, "VerdictAt"),
+                deep_read_hint = "Use list_review_rounds with verbose=true for full round records.",
+            });
+        }
+        return new { items, count = rounds.Count };
+    }
+
+    /// <summary>
+    /// Shrink a review-finding list to concise projections. Preserves category/summary/status/finding-key fields.
+    /// </summary>
+    public static object ShrinkReviewFindingList(System.Collections.IList findings)
+    {
+        var items = new List<object>(findings.Count);
+        foreach (var f in findings)
+        {
+            items.Add(new
+            {
+                id = Prop(f, "Id"),
+                finding_key = Prop(f, "FindingKey"),
+                task_id = Prop(f, "TaskId"),
+                review_round_id = Prop(f, "ReviewRoundId"),
+                review_round_number = Prop(f, "ReviewRoundNumber"),
+                finding_number = Prop(f, "FindingNumber"),
+                category = Prop(f, "Category")?.ToString(),
+                summary = Prop(f, "Summary"),
+                status = Prop(f, "Status")?.ToString(),
+                created_by = Prop(f, "CreatedBy"),
+                created_at = Prop(f, "CreatedAt"),
+                updated_at = Prop(f, "UpdatedAt"),
+                deep_read_hint = "Use list_review_findings with verbose=true for full finding records including notes and file references.",
+            });
+        }
+        return new { items, count = findings.Count };
     }
 
     private static List<object> ShrinkSearchResults(System.Collections.IList results)

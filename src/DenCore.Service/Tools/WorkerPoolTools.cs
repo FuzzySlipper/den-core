@@ -468,7 +468,10 @@ public sealed class WorkerPoolTools
             role = assignment.Role,
             project_id = assignment.ProjectId,
             task_id = assignment.TaskId,
+            created_at = assignment.CreatedAt,
+            updated_at = assignment.UpdatedAt,
             detail = verbose ? assignment : null,
+            deep_read_hint = verbose ? null : "Use get_assignment with verbose=true for full assignment details including metadata and evidence.",
         }, JsonOpts.Default);
     }
 

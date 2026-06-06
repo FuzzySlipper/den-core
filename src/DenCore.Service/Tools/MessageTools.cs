@@ -146,7 +146,17 @@ public sealed class MessageTools
         var thread = await repo.GetThreadAsync(thread_id);
         if (verbose)
             return JsonSerializer.Serialize(thread, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { root = thread, items = thread.Replies, count = thread.Replies.Count }), JsonOpts.Default);
+
+        // Manually shrink root and replies so root is bounded (not full)
+        var root = ConciseReadResponse.ShrinkMessage(thread);
+        var replies = ConciseReadResponse.ShrinkMessages(thread.Replies);
+        return JsonSerializer.Serialize(new
+        {
+            root,
+            replies,
+            count = thread.Replies.Count,
+            deep_read_hint = "Use get_thread with verbose=true for full message bodies.",
+        }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

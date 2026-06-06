@@ -151,29 +151,35 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "get_task"), Description("Get full task details including dependencies, subtasks, and recent messages.")]
+    [McpServerTool(Name = "get_task"), Description("Get full task details including dependencies, subtasks, and recent messages. Concise by default with bounded recent messages and descriptions; use verbose=true for full detail.")]
     public static async Task<string> GetTask(
         ITaskRepository repo,
-        [Description("Task ID.")] int task_id)
+        [Description("Task ID.")] int task_id,
+        [Description("If true, return full detail including full description and recent messages. Default is concise.")] bool verbose = false)
     {
         var detail = await repo.GetDetailAsync(task_id);
-        return JsonSerializer.Serialize(detail, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(detail, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(detail), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "get_task_workflow_summary"), Description("Get a compact task workflow summary for orchestrator startup/drain. Returns task status, current review state, latest packet headers (without full bodies), unresolved findings/actions, and links/message IDs. Use get_task for full detail.")]
+    [McpServerTool(Name = "get_task_workflow_summary"), Description("Get a compact task workflow summary for orchestrator startup/drain. Returns task status, current review state, latest packet headers (without full bodies), unresolved findings/actions, and links/message IDs. Use get_task for full detail. Use verbose=true for full record.")]
     public static async Task<string> GetTaskWorkflowSummary(
         ITaskRepository repo,
-        [Description("Task ID.")] int task_id)
+        [Description("Task ID.")] int task_id,
+        [Description("If true, return full record instead of concise summary.")] bool verbose = false)
     {
         var summary = await repo.GetWorkflowSummaryAsync(task_id);
-        return JsonSerializer.Serialize(summary, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(summary, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(summary), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "list_tasks"), Description("List tasks in a project with optional filters. Returns summaries without descriptions.")]
+    [McpServerTool(Name = "list_tasks"), Description("List tasks in a project with optional filters. Returns summaries without descriptions. Concise by default; use verbose=true for full task records.")]
     public static async Task<string> ListTasks(
         ITaskRepository repo,
         [Description("Project ID.")] string project_id,
@@ -184,14 +190,17 @@ public sealed class TaskTools
         [Description("Filter: tasks at this priority or higher (lower number = higher priority).")]
         int? priority = null,
         [Description("Filter by parent task ID to list subtasks. Omit for top-level tasks.")]
-        int? parent_id = null)
+        int? parent_id = null,
+        [Description("If true, return full JSON records. Default is concise.")] bool verbose = false)
     {
         var statuses = status?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(EnumExtensions.ParseTaskStatus).ToArray();
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var tasks = await repo.ListAsync(project_id, statuses, assigned_to, tagList, priority, parent_id);
-        return JsonSerializer.Serialize(tasks, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(tasks, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = tasks, count = tasks.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -254,13 +263,16 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("review")]
-    [McpServerTool(Name = "list_review_rounds"), Description("List review rounds for a task in chronological order.")]
+    [McpServerTool(Name = "list_review_rounds"), Description("List review rounds for a task in chronological order. Concise by default; use verbose=true for full round records.")]
     public static async Task<string> ListReviewRounds(
         IReviewRoundRepository repo,
-        [Description("Task ID.")] int task_id)
+        [Description("Task ID.")] int task_id,
+        [Description("If true, return full JSON records. Default is concise.")] bool verbose = false)
     {
         var rounds = await repo.ListByTaskAsync(task_id);
-        return JsonSerializer.Serialize(rounds, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(rounds, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = rounds, count = rounds.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -329,14 +341,15 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("review")]
-    [McpServerTool(Name = "list_review_findings"), Description("List review findings for a task or a specific review round.")]
+    [McpServerTool(Name = "list_review_findings"), Description("List review findings for a task or a specific review round. Concise by default; use verbose=true for full finding records.")]
     public static async Task<string> ListReviewFindings(
         IReviewFindingRepository repo,
         IReviewRoundRepository reviewRoundRepo,
         [Description("Task ID.")] int task_id,
         [Description("Optional review round ID filter.")] int? review_round_id = null,
         [Description("Optional statuses (comma-separated): open, claimed_fixed, verified_fixed, not_fixed, superseded, split_to_follow_up.")] string? status = null,
-        [Description("Optional resolved filter. True = resolved/history, false = unresolved only.")] bool? resolved = null)
+        [Description("Optional resolved filter. True = resolved/history, false = unresolved only.")] bool? resolved = null,
+        [Description("If true, return full JSON records. Default is concise.")] bool verbose = false)
     {
         var statuses = EnumExtensions.GetReviewFindingStatuses(status, resolved);
 
@@ -347,11 +360,15 @@ public sealed class TaskTools
                 throw new KeyNotFoundException($"Review round {review_round_id.Value} not found for task {task_id}");
 
             var roundFindings = await repo.ListByReviewRoundAsync(review_round_id.Value, statuses);
-            return JsonSerializer.Serialize(roundFindings, JsonOpts.Default);
+            if (verbose)
+                return JsonSerializer.Serialize(roundFindings, JsonOpts.Default);
+            return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = roundFindings, count = roundFindings.Count }), JsonOpts.Default);
         }
 
         var findings = await repo.ListByTaskAsync(task_id, statuses);
-        return JsonSerializer.Serialize(findings, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(findings, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = findings, count = findings.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "runner", "worker-reviewer")]
@@ -520,16 +537,19 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "next_task"), Description("Get the next unblocked task to work on. Checks subtasks of in-progress parents first, then top-level planned tasks. Ranks by priority, then fewer dependencies, then lower ID.")]
+    [McpServerTool(Name = "next_task"), Description("Get the next unblocked task to work on. Checks subtasks of in-progress parents first, then top-level planned tasks. Ranks by priority, then fewer dependencies, then lower ID. Concise by default; use verbose=true for full task record.")]
     public static async Task<string> NextTask(
         ITaskRepository repo,
         [Description("Project ID.")] string project_id,
-        [Description("Optionally filter to tasks assigned to this agent.")] string? assigned_to = null)
+        [Description("Optionally filter to tasks assigned to this agent.")] string? assigned_to = null,
+        [Description("If true, return full task record. Default is concise.")] bool verbose = false)
     {
         var next = await repo.GetNextTaskAsync(project_id, assigned_to);
         if (next is null)
             return JsonSerializer.Serialize(new { message = "No unblocked tasks available." }, JsonOpts.Default);
-        return JsonSerializer.Serialize(next, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(next, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(next), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

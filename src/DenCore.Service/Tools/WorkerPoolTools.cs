@@ -101,6 +101,7 @@ public sealed class WorkerPoolTools
             role = m.WorkerRole,
             status = m.Status,
             last_heartbeat = m.LastHeartbeat,
+            deep_read_hint = "Use list_pool_members with verbose=true or get_worker_pool_summary for full details.",
         });
         return JsonSerializer.Serialize(new
         {
@@ -248,6 +249,7 @@ public sealed class WorkerPoolTools
             role = a.Role,
             state = a.State,
             run = a.RunId,
+            deep_read_hint = "Use list_assignments with verbose=true or get_assignment for full details.",
         });
         return JsonSerializer.Serialize(new
         {

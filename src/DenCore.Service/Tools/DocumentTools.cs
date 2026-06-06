@@ -72,31 +72,37 @@ public sealed class DocumentTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Excludes archived documents by default. Omit project_id to list across all projects and spaces.")]
+    [McpServerTool(Name = "list_documents"), Description("List document summaries (without content). Excludes archived documents by default. Omit project_id to list across all projects and spaces. Concise by default; use verbose=true for full document records.")]
     public static async Task<string> ListDocuments(
         IDocumentRepository repo,
         [Description("Project or space ID. Omit to list across all projects and spaces.")] string? project_id = null,
         [Description("Filter by type: prd, spec, adr, convention, reference, note, memory.")] string? doc_type = null,
         [Description("Filter by tags (comma-separated). Document must have ALL specified tags.")] string? tags = null,
-        [Description("Filter by visibility: normal, hidden, archived. Omit to exclude archived documents.")] string? visibility = null)
+        [Description("Filter by visibility: normal, hidden, archived. Omit to exclude archived documents.")] string? visibility = null,
+        [Description("If true, return full JSON records. Default is concise with deep_read_hint.")] bool verbose = false)
     {
         var parsedType = doc_type is not null ? EnumExtensions.ParseDocType(doc_type) : (DocType?)null;
         var parsedVisibility = visibility is not null ? EnumExtensions.ParseDocumentVisibility(visibility) : (DocumentVisibility?)null;
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var docs = await repo.ListAsync(project_id, parsedType, tagList, parsedVisibility);
-        return JsonSerializer.Serialize(docs, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(docs, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { documents = docs, count = docs.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]
     [McpToolBundle("document")]
-    [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Excludes archived documents. Supports AND, OR, NOT, and \"phrase\" queries.")]
+    [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Excludes archived documents. Supports AND, OR, NOT, and \"phrase\" queries. Concise by default with snippets; use verbose=true for full results.")]
     public static async Task<string> SearchDocuments(
         IDocumentRepository repo,
         [Description("FTS5 search query.")] string query,
-        [Description("Scope search to one project or space.")] string? project_id = null)
+        [Description("Scope search to one project or space.")] string? project_id = null,
+        [Description("If true, return full JSON records. Default is concise with deep_read_hint.")] bool verbose = false)
     {
         var results = await repo.SearchAsync(query, project_id);
-        return JsonSerializer.Serialize(results, JsonOpts.Default);
+        if (verbose)
+            return JsonSerializer.Serialize(results, JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { results, count = results.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

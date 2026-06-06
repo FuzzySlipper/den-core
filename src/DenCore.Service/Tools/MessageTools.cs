@@ -146,7 +146,7 @@ public sealed class MessageTools
         var thread = await repo.GetThreadAsync(thread_id);
         if (verbose)
             return JsonSerializer.Serialize(thread, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = thread.Replies, count = thread.Replies.Count }), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { root = thread, items = thread.Replies, count = thread.Replies.Count }), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

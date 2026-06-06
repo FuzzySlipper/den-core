@@ -78,6 +78,10 @@ public static class ConciseReadResponse
         if (TryGetProperty(obj, "documents", out var docsObj) && docsObj is System.Collections.IList docs)
             return ReplaceProperty(obj, "documents", ShrinkDocuments(docs));
 
+        // Thread root message — shrink content
+        if (TryGetProperty(obj, "root", out var rootObj) && rootObj is not null)
+            return ReplaceProperty(obj, "root", ShrinkMessage(rootObj));
+
         // Search results
         if (TryGetProperty(obj, "results", out var resultsObj) && resultsObj is System.Collections.IList results)
             return ReplaceProperty(obj, "results", ShrinkSearchResults(results));

@@ -33,5 +33,25 @@ public static class ProjectRoutes
                 return Results.NotFound(new { error = $"Project '{id}' not found" });
             }
         });
+
+        group.MapPatch("/{id}", async (IProjectRepository repo, string id, ProjectUpdateRequest update) =>
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                return Results.BadRequest(new { error = "Project id is required" });
+
+            var existing = await repo.GetByIdAsync(id);
+            if (existing is null)
+                return Results.NotFound(new { error = $"Project '{id}' not found" });
+
+            try
+            {
+                var updated = await repo.UpdateProjectAsync(id, update);
+                return Results.Ok(updated);
+            }
+            catch (KeyNotFoundException)
+            {
+                return Results.NotFound(new { error = $"Project '{id}' not found" });
+            }
+        });
     }
 }

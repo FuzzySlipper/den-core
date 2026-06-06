@@ -53,4 +53,31 @@ public sealed class ProjectTools
         var stats = await repo.GetWithStatsAsync(project_id, agent);
         return JsonSerializer.Serialize(stats, JsonOpts.Default);
     }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
+    [McpToolBundle("core")]
+    [McpServerTool(Name = "update_project"), Description("Update mutable metadata fields for an existing project. Only fields explicitly provided (non-null) are changed; all other fields are left as-is. Safe — will not overwrite existing data with blanks.")]
+    public static async Task<string> UpdateProject(
+        IProjectRepository repo,
+        [Description("Project ID to update.")] string project_id,
+        [Description("New display name (optional).")] string? name = null,
+        [Description("New absolute root path on disk (optional). Set to empty string to clear.")] string? root_path = null,
+        [Description("Updated description (optional).")] string? description = null,
+        [Description("Updated owner (optional).")] string? owner = null,
+        [Description("Updated settings JSON (optional).")] string? settings_json = null,
+        [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
+    {
+        var update = new ProjectUpdateRequest
+        {
+            Name = name,
+            RootPath = root_path,
+            Description = description,
+            Owner = owner,
+            SettingsJson = settings_json,
+        };
+        var updated = await repo.UpdateProjectAsync(project_id, update);
+        return verbose
+            ? JsonSerializer.Serialize(updated, JsonOpts.Default)
+            : ConciseResponse.CreatedProject(updated);
+    }
 }

@@ -125,4 +125,58 @@ public class ProjectRepositoryTests : IAsyncLifetime
         var stats = await _repo.GetWithStatsAsync("msg-test", agent: "claude-code");
         Assert.Equal(1, stats.UnreadMessageCount); // only codex's message is unread
     }
+
+    [Fact]
+    public async Task UpdateProject_UpdatesRootPath()
+    {
+        await _repo.CreateAsync(new Project { Id = "update-test", Name = "Update Test" });
+        var updated = await _repo.UpdateProjectAsync("update-test", new ProjectUpdateRequest
+        {
+            RootPath = "/home/dev/update-test",
+        });
+        Assert.Equal("/home/dev/update-test", updated.RootPath);
+        Assert.Equal("Update Test", updated.Name); // unchanged
+    }
+
+    [Fact]
+    public async Task UpdateProject_UpdatesMultipleFields()
+    {
+        await _repo.CreateAsync(new Project { Id = "multi-update", Name = "Original", Description = "Old desc" });
+        var updated = await _repo.UpdateProjectAsync("multi-update", new ProjectUpdateRequest
+        {
+            Name = "New Name",
+            Description = "New description",
+            RootPath = "/new/path",
+        });
+        Assert.Equal("New Name", updated.Name);
+        Assert.Equal("New description", updated.Description);
+        Assert.Equal("/new/path", updated.RootPath);
+    }
+
+    [Fact]
+    public async Task UpdateProject_EmptyRequestIsIdempotent()
+    {
+        var created = await _repo.CreateAsync(new Project { Id = "noop-test", Name = "No-Op" });
+        var updated = await _repo.UpdateProjectAsync("noop-test", new ProjectUpdateRequest());
+        Assert.Equal(created.Name, updated.Name);
+        Assert.Equal(created.Description, updated.Description);
+    }
+
+    [Fact]
+    public async Task UpdateProject_ClearRootPath()
+    {
+        await _repo.CreateAsync(new Project { Id = "clear-root", Name = "Clear Root", RootPath = "/old/path" });
+        var updated = await _repo.UpdateProjectAsync("clear-root", new ProjectUpdateRequest
+        {
+            RootPath = "",
+        });
+        Assert.Equal("", updated.RootPath);
+    }
+
+    [Fact]
+    public async Task UpdateProject_NotFoundThrows()
+    {
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _repo.UpdateProjectAsync("nonexistent", new ProjectUpdateRequest { RootPath = "/x" }));
+    }
 }

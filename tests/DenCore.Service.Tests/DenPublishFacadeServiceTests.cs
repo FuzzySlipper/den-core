@@ -439,6 +439,7 @@ public sealed class DenPublishFacadeServiceTests
         public Task<List<Project>> ListAsync(string? kind = null, bool includeHidden = false, bool includeArchived = false) => throw new NotSupportedException();
         public Task<ProjectWithStats> GetWithStatsAsync(string id, string? agent = null) => throw new NotSupportedException();
         public Task<Project> UpdateVisibilityAsync(string id, string visibility) => throw new NotSupportedException();
+        public Task<Project> UpdateProjectAsync(string id, ProjectUpdateRequest update) => throw new NotSupportedException();
         public Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id) => Task.FromResult(new Dictionary<string, int>());
         public Task DeleteSpaceAsync(string id) => Task.CompletedTask;
     }

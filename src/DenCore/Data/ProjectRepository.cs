@@ -12,6 +12,8 @@ public interface IProjectRepository
     Task<List<Project>> ListAsync(string? kind = null, bool includeHidden = false, bool includeArchived = false);
     Task<ProjectWithStats> GetWithStatsAsync(string id, string? agent = null);
     Task<Project> UpdateVisibilityAsync(string id, string visibility);
+    /// <summary>Update mutable metadata fields for an existing project/space. Only non-null fields in the request are applied.</summary>
+    Task<Project> UpdateProjectAsync(string id, ProjectUpdateRequest update);
     Task<Dictionary<string, int>> GetDependentRecordCountsAsync(string id);
     Task DeleteSpaceAsync(string id);
 }
@@ -166,6 +168,55 @@ public sealed class ProjectRepository : IProjectRepository
             """;
         cmd.Parameters.AddWithValue("@id", id);
         cmd.Parameters.AddWithValue("@visibility", visibility);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw new KeyNotFoundException($"Project '{id}' not found");
+
+        return ReadProject(reader);
+    }
+
+    public async Task<Project> UpdateProjectAsync(string id, ProjectUpdateRequest update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        var sets = new List<string> { "updated_at = datetime('now')" };
+
+        if (!string.IsNullOrWhiteSpace(update.Name))
+        {
+            sets.Add("name = @name");
+            cmd.Parameters.AddWithValue("@name", update.Name);
+        }
+        if (update.RootPath is not null)
+        {
+            sets.Add("root_path = @rootPath");
+            cmd.Parameters.AddWithValue("@rootPath", update.RootPath);
+        }
+        if (update.Description is not null)
+        {
+            sets.Add("description = @description");
+            cmd.Parameters.AddWithValue("@description", update.Description);
+        }
+        if (update.Owner is not null)
+        {
+            sets.Add("owner = @owner");
+            cmd.Parameters.AddWithValue("@owner", update.Owner);
+        }
+        if (update.SettingsJson is not null)
+        {
+            sets.Add("settings_json = @settingsJson");
+            cmd.Parameters.AddWithValue("@settingsJson", update.SettingsJson);
+        }
+
+        cmd.CommandText = $"""
+            UPDATE projects
+            SET {string.Join(", ", sets)}
+            WHERE id = @id
+            RETURNING id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at
+            """;
+        cmd.Parameters.AddWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())

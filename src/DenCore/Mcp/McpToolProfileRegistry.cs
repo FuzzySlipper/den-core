@@ -184,7 +184,7 @@ public sealed class McpToolProfileRegistry
 
         // ---- core bundle ----
         m.Add(McpToolBundles.Core,
-            "create_project", "get_project", "list_projects",
+            "create_project", "get_project", "list_projects", "update_project",
             "create_space", "get_space", "list_spaces",
             "update_space_visibility", "archive_space",
             "list_active_agents", "list_agent_instance_bindings");

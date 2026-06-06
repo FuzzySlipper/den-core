@@ -20,3 +20,26 @@ public sealed class ProjectWithStats
     public required Dictionary<TaskStatus, int> TaskCountsByStatus { get; set; }
     public int UnreadMessageCount { get; set; }
 }
+
+/// <summary>
+/// Request body for updating an existing project/space. Only the fields
+/// that are explicitly set (non-null, or non-empty for name) will be
+/// applied; all other fields are left unchanged.
+/// </summary>
+public sealed class ProjectUpdateRequest
+{
+    /// <summary>New display name for the project (optional).</summary>
+    public string? Name { get; set; }
+
+    /// <summary>New absolute root path on disk (optional).</summary>
+    public string? RootPath { get; set; }
+
+    /// <summary>Updated description (optional).</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Updated owner (optional).</summary>
+    public string? Owner { get; set; }
+
+    /// <summary>Updated settings JSON (optional).</summary>
+    public string? SettingsJson { get; set; }
+}

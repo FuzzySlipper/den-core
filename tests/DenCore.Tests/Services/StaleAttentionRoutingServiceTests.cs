@@ -20,7 +20,7 @@ public sealed class StaleAttentionRoutingServiceTests
     // ── Severity routing ────────────────────────────────────────────────
 
     [Fact]
-    public async Task CriticalCondition_RoutesToPlanner_AndCreatesUserNotification()
+    public async Task CriticalCondition_RoutesToPlanner_SingleMessagePerSignature()
     {
         var service = CreateService();
         _bindings.AddBinding("den-core", "runner-agent", "planner");
@@ -29,14 +29,15 @@ public sealed class StaleAttentionRoutingServiceTests
         var condition = NewCondition("den-core", severity: "critical");
         var result = await service.RouteSingleAsync(condition);
 
+        // Exactly one notification per StaleSignature — no separate critical message
+        Assert.Single(_messages.Created);
         Assert.Equal(1, result.PlannerRouted);
-        Assert.Equal(1, result.UserNotified); // critical also gets user notification
+        Assert.Equal(0, result.UserNotified);
         Assert.Equal(0, result.FallbackNotified);
         Assert.Equal(0, result.InfoLogged);
 
-        var plannerMsg = _messages.Created.FirstOrDefault(m =>
-            (m.Metadata?.ToString() ?? "").Contains("stale_worker_alert"));
-        Assert.NotNull(plannerMsg);
+        var plannerMsg = _messages.Created.First();
+        Assert.Contains("stale_worker_alert", plannerMsg.Metadata?.ToString() ?? "");
         Assert.Contains("critical", plannerMsg.Content);
     }
 
@@ -45,14 +46,16 @@ public sealed class StaleAttentionRoutingServiceTests
     {
         var service = CreateService();
         _bindings.AddBinding("den-core", "runner-agent", "planner");
+        _projects.SetOwner("den-core", "patch");
 
         var condition = NewCondition("den-core", severity: "warning");
         var result = await service.RouteSingleAsync(condition);
 
         Assert.Equal(1, result.PlannerRouted);
-        Assert.Equal(0, result.UserNotified); // warning doesn't get extra critical notification
+        Assert.Equal(0, result.UserNotified);
         Assert.Equal(0, result.FallbackNotified);
         Assert.Equal(0, result.InfoLogged);
+        Assert.Single(_messages.Created);
     }
 
     [Fact]
@@ -92,6 +95,28 @@ public sealed class StaleAttentionRoutingServiceTests
         Assert.Contains("no planner reachable", fallbackMsg.Content);
     }
 
+    [Fact]
+    public async Task OwnerMissing_PlannerPresent_FallbackNotified()
+    {
+        var service = CreateService();
+        _bindings.AddBinding("den-core", "runner-agent", "planner");
+        // No owner set — owner is null/unreachable
+
+        var condition = NewCondition("den-core", severity: "warning");
+        var result = await service.RouteSingleAsync(condition);
+
+        // Routes to planner (it exists), but flags as fallback since owner unreachable
+        Assert.Equal(1, result.PlannerRouted);
+        Assert.Equal(1, result.FallbackNotified);
+        Assert.Single(_messages.Created);
+
+        var msg = _messages.Created.First();
+        var metadataJson = msg.Metadata?.ToString() ?? "";
+        Assert.Contains("stale_worker_alert", metadataJson);
+        Assert.Contains("\"owner_reachable\":false", metadataJson);
+        Assert.Contains("none", msg.Content); // owner line shows "none"
+    }
+
     // ── Owner resolution ────────────────────────────────────────────────
 
     [Fact]
@@ -107,6 +132,7 @@ public sealed class StaleAttentionRoutingServiceTests
         var msg = _messages.Created.First();
         var metadataJson = msg.Metadata?.ToString() ?? "";
         Assert.Contains("patch", metadataJson);
+        Assert.Contains("\"owner_reachable\":true", metadataJson);
         Assert.Contains("patch", msg.Content);
     }
 
@@ -117,6 +143,7 @@ public sealed class StaleAttentionRoutingServiceTests
     {
         var service = CreateService();
         _bindings.AddBinding("den-core", "runner-agent", "planner");
+        _projects.SetOwner("den-core", "patch");
 
         var result = new StaleReconciliationResult
         {
@@ -132,10 +159,35 @@ public sealed class StaleAttentionRoutingServiceTests
         var routingResult = await service.RouteAsync(result);
 
         Assert.Equal(2, routingResult.PlannerRouted); // critical + warning
-        Assert.Equal(1, routingResult.UserNotified);  // critical only
+        Assert.Equal(0, routingResult.UserNotified);   // no separate critical notification
         Assert.Equal(1, routingResult.InfoLogged);     // info only
         Assert.Equal(0, routingResult.FallbackNotified);
-        Assert.Equal(3, _messages.Created.Count); // 2 planner + 1 critical user
+        Assert.Equal(3, routingResult.TotalProcessed); // all 3 conditions counted
+        Assert.Equal(2, _messages.Created.Count); // 1 planner for critical + 1 planner for warning
+    }
+
+    [Fact]
+    public async Task RouteAsync_TotalProcessed_IncludesFallback()
+    {
+        var service = CreateService();
+        // No planner binding, no owner — all warning conditions route to fallback
+        _projects.SetOwner("den-core", "patch");
+
+        var result = new StaleReconciliationResult
+        {
+            NewConditions =
+            [
+                NewCondition("den-core", severity: "warning"),
+                NewCondition("den-core", severity: "warning"),
+            ],
+            ReconciledAt = DateTime.UtcNow.ToString("o"),
+        };
+
+        var routingResult = await service.RouteAsync(result);
+
+        Assert.Equal(0, routingResult.PlannerRouted);
+        Assert.Equal(2, routingResult.FallbackNotified);
+        Assert.Equal(2, routingResult.TotalProcessed); // fallback conditions counted
     }
 
     // ── No-project condition ────────────────────────────────────────────
@@ -166,19 +218,20 @@ public sealed class StaleAttentionRoutingServiceTests
             workerIdentity: "worker-1", severity: "critical");
         var result = await service.RouteSingleAsync(condition);
 
-        Assert.Contains(_messages.Created, m =>
-            (m.Metadata?.ToString() ?? "").Contains("stale_worker_alert"));
+        // Exactly one message per StaleSignature
+        Assert.Single(_messages.Created);
 
-        var plannerMsg = _messages.Created.First(m =>
-            (m.Metadata?.ToString() ?? "").Contains("stale_worker_alert"));
-        Assert.Equal("den-core", plannerMsg.ProjectId);
-        Assert.Equal(42, plannerMsg.TaskId);
-        Assert.Equal("den-core", plannerMsg.Sender);
-        Assert.Equal(MessageIntent.Notification, plannerMsg.Intent);
+        var msg = _messages.Created.First();
+        Assert.Equal("den-core", msg.ProjectId);
+        Assert.Equal(42, msg.TaskId);
+        Assert.Equal("den-core", msg.Sender);
+        Assert.Equal(MessageIntent.Notification, msg.Intent);
 
-        var criticalMsg = _messages.Created.First(m =>
-            (m.Metadata?.ToString() ?? "").Contains("stale_worker_critical"));
-        Assert.Equal("den-core", criticalMsg.ProjectId);
+        var metadataJson = msg.Metadata?.ToString() ?? "";
+        Assert.Contains("stale_worker_alert", metadataJson);
+        Assert.Contains("patch", metadataJson);
+        Assert.Contains("\"owner_reachable\":true", metadataJson);
+        Assert.Contains("\"severity\":\"critical\"", metadataJson);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────

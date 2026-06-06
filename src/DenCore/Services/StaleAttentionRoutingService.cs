@@ -80,12 +80,11 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
         {
             var single = await RouteSingleAsync(condition, cancellationToken);
             routingResult.PlannerRouted += single.PlannerRouted;
-            routingResult.UserNotified += single.UserNotified;
-            routingResult.InfoLogged += single.InfoLogged;
             routingResult.FallbackNotified += single.FallbackNotified;
+            routingResult.InfoLogged += single.InfoLogged;
         }
 
-        routingResult.TotalProcessed = routingResult.PlannerRouted + routingResult.UserNotified + routingResult.InfoLogged;
+        routingResult.TotalProcessed = routingResult.PlannerRouted + routingResult.InfoLogged + routingResult.FallbackNotified;
         return routingResult;
     }
 
@@ -116,7 +115,7 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
             return result;
         }
 
-        // ── Critical / Warning: route to owner/planner ──────────────
+        // ── Critical / Warning: resolve owner + planner ──────────────
         var ownerIdentity = await ResolveProjectOwnerAsync(condition.ProjectId, cancellationToken);
 
         var plannerCandidates = await _bindings.ListAsync(new AgentInstanceBindingListOptions
@@ -129,17 +128,20 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
         var plannerBinding = plannerCandidates.FirstOrDefault(b =>
             b.Role is "planner" or "conductor" or "runner");
 
+        var urgency = severity == "critical" ? "high" : "normal";
+        var ownerReachable = ownerIdentity is not null;
+
         if (plannerBinding is not null)
         {
-            // Critical: route to planner with high-urgency metadata
-            // Warning: route to planner with informational metadata
-            var urgency = severity == "critical" ? "high" : "normal";
+            // Route to planner; single message encodes both planner/routing
+            // and human/operator visibility for critical+owner-missing cases.
+            var content = BuildStaleAlertContent(condition, ownerIdentity);
             await _messages.CreateAsync(new Message
             {
                 ProjectId = condition.ProjectId,
                 TaskId = condition.TaskId,
                 Sender = "den-core",
-                Content = BuildStaleAlertContent(condition, ownerIdentity),
+                Content = content,
                 Intent = MessageIntent.Notification,
                 Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
                 {
@@ -152,22 +154,27 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
                     ["target_role"] = plannerBinding.Role,
                     ["recipient_instance_id"] = plannerBinding.InstanceId,
                     ["owner_identity"] = ownerIdentity,
+                    ["owner_reachable"] = ownerReachable,
                     ["routed_at"] = DateTime.UtcNow.ToString("o"),
                 }),
             });
 
             result.PlannerRouted = 1;
+
+            // If owner is unreachable, flag as fallback for operator visibility
+            if (!ownerReachable)
+                result.FallbackNotified = 1;
         }
         else
         {
-            // No planner binding — create user notification as fallback
-            var urgency = severity == "critical" ? "high" : "normal";
+            // No planner binding — fallback notification regardless of owner
+            var content = BuildFallbackAlertContent(condition, ownerIdentity);
             await _messages.CreateAsync(new Message
             {
                 ProjectId = condition.ProjectId,
                 TaskId = condition.TaskId,
                 Sender = "den-core",
-                Content = BuildFallbackAlertContent(condition, ownerIdentity),
+                Content = content,
                 Intent = MessageIntent.Notification,
                 Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
                 {
@@ -177,35 +184,12 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
                     ["severity"] = condition.Severity,
                     ["urgency"] = urgency,
                     ["owner_identity"] = ownerIdentity,
+                    ["owner_reachable"] = ownerReachable,
                     ["routed_at"] = DateTime.UtcNow.ToString("o"),
                 }),
             });
 
             result.FallbackNotified = 1;
-        }
-
-        if (severity == "critical")
-        {
-            // Critical also gets a direct user notification for visibility
-            await _messages.CreateAsync(new Message
-            {
-                ProjectId = condition.ProjectId,
-                TaskId = condition.TaskId,
-                Sender = "den-core",
-                Content = BuildCriticalUserAlertContent(condition, ownerIdentity),
-                Intent = MessageIntent.Notification,
-                Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
-                {
-                    ["type"] = "stale_worker_critical",
-                    ["stale_signature"] = condition.StaleSignature,
-                    ["classification"] = condition.Classification,
-                    ["severity"] = "critical",
-                    ["urgency"] = "high",
-                    ["owner_identity"] = ownerIdentity,
-                    ["routed_at"] = DateTime.UtcNow.ToString("o"),
-                }),
-            });
-            result.UserNotified = 1;
         }
 
         result.TotalProcessed = 1;
@@ -247,19 +231,6 @@ public sealed class StaleAttentionRoutingService : IStaleAttentionRoutingService
         return $"## Stale worker alert — no planner reachable for `{condition.ProjectId}`\n\n"
             + $"**Classification**: {condition.Classification}\n"
             + $"**Severity**: {condition.Severity}\n"
-            + $"**Reason**: {condition.StateReason}\n"
-            + $"**Suggested action**: {condition.SuggestedNextAction}\n"
-            + (owner is not null ? $"**Project owner**: {owner}\n\n" : "\n")
-            + $"*Deduped by signature: `{condition.StaleSignature}`*";
-    }
-
-    private static string BuildCriticalUserAlertContent(StaleWorkerCondition condition, string? owner)
-    {
-        return $"## 🚨 Critical stale worker — operator attention required\n\n"
-            + $"**Classification**: {condition.Classification}\n"
-            + $"**Project**: {condition.ProjectId}\n"
-            + (condition.TaskId is not null ? $"**Task**: #{condition.TaskId}\n" : "")
-            + $"**Worker**: {condition.WorkerIdentity ?? "unknown"}\n"
             + $"**Reason**: {condition.StateReason}\n"
             + $"**Suggested action**: {condition.SuggestedNextAction}\n"
             + (owner is not null ? $"**Project owner**: {owner}\n\n" : "\n")

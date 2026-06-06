@@ -382,6 +382,44 @@ public static class WorkerPoolRoutes
             return Results.Ok(new { projections, count = projections.Count });
         });
 
+        // ── Stale Worker Sweep ───────────────────────────────────────────
+
+        pool.MapPost("/stale/sweep", async (IWorkerPoolRepository repo, JsonElement body) =>
+        {
+            StaleSweepOptions? sweepOpts;
+            try
+            {
+                sweepOpts = JsonSerializer.Deserialize<StaleSweepOptions>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                sweepOpts = null;
+            }
+            sweepOpts ??= new StaleSweepOptions();
+            var result = await repo.SweepStaleWorkersAsync(sweepOpts);
+            return Results.Ok(result);
+        });
+
+        pool.MapGet("/stale", async (IWorkerPoolRepository repo,
+            string? projectId, int? taskId,
+            int ackThresholdMinutes = 10, int runningThresholdMinutes = 15,
+            int reviewerThresholdMinutes = 15, int orchestratorThresholdMinutes = 20,
+            int limit = 100) =>
+        {
+            var opts = new StaleSweepOptions
+            {
+                ProjectId = projectId,
+                TaskId = taskId,
+                AckStaleThresholdMinutes = Math.Max(1, ackThresholdMinutes),
+                RunningStaleThresholdMinutes = Math.Max(1, runningThresholdMinutes),
+                ReviewerStaleThresholdMinutes = Math.Max(1, reviewerThresholdMinutes),
+                OrchestratorStaleThresholdMinutes = Math.Max(1, orchestratorThresholdMinutes),
+                Limit = limit,
+            };
+            var result = await repo.SweepStaleWorkersAsync(opts);
+            return Results.Ok(result);
+        });
+
         // ── Summary ──────────────────────────────────────────────────
         pool.MapGet("/summary", async (IWorkerPoolRepository repo) =>
         {

@@ -102,6 +102,23 @@ public interface IWorkerPoolRepository
     /// </summary>
     Task<int> ReleaseStaleLeasesAsync();
 
+    // ── Stale Worker Sweep ────────────────────────────────────────────────
+    /// <summary>
+    /// Sweep all Core records to detect stale/stalled worker workflow states.
+    /// Returns a <see cref="StaleWorkerSweepResult"/> with classified conditions
+    /// and deduped stale signatures. This is a read-only diagnostic projection;
+    /// it does not mutate any state.
+    ///
+    /// Detects at least:
+    /// - stale_ack: assignment in 'ack' with no completion packet past threshold
+    /// - stale_running: assignment in 'running' with no checkpoint/completion past threshold
+    /// - missing_reviewer_completion: review round with no verdict, reviewer assignment stuck
+    /// - completion_not_terminalized: completion checkpoint exists but assignment not terminal
+    /// - orphaned_orchestrator_lease: active orchestrator lease with no child progress
+    /// - duplicate_assignment_for_run: multiple non-terminal assignments for same run
+    /// </summary>
+    Task<StaleWorkerSweepResult> SweepStaleWorkersAsync(StaleSweepOptions options);
+
     // ── Orchestrator Leases ───────────────────────────────────────────────
 
     /// <summary>
@@ -1978,6 +1995,480 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         {
             await tx.RollbackAsync();
             throw;
+        }
+    }
+
+    // ── Stale Worker Sweep ────────────────────────────────────────────────
+
+    public async Task<StaleWorkerSweepResult> SweepStaleWorkersAsync(StaleSweepOptions options)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        var conditions = new List<StaleWorkerCondition>();
+        var sweptAt = DateTime.UtcNow.ToString("o");
+        var limit = Math.Clamp(options.Limit, 1, 200);
+
+        var piFilter = !string.IsNullOrWhiteSpace(options.ProjectId);
+        var taskFilter = options.TaskId is not null;
+
+        await AddStaleAckConditionsAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddStaleRunningConditionsAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddMissingReviewerCompletionAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddCompletionNotTerminalizedAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddOrphanedOrchestratorLeaseAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddDuplicateAssignmentForRunAsync(conn, options, conditions, piFilter, taskFilter);
+
+        return new StaleWorkerSweepResult
+        {
+            StaleCount = conditions.Count,
+            Conditions = conditions
+                .OrderBy(c => c.Severity == "critical" ? 0 : c.Severity == "warning" ? 1 : 2)
+                .ThenByDescending(c => c.LastActivityAt)
+                .Take(limit)
+                .ToList(),
+            SweptAt = sweptAt,
+        };
+    }
+
+    private static async Task AddStaleAckConditionsAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "wa.state = 'ack'",
+            $"wa.created_at <= datetime('now', '-{options.AckStaleThresholdMinutes} minutes')",
+            "wc.id IS NULL"
+        };
+        AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
+
+        cmd.CommandText = $"""
+            SELECT wa.id, wa.worker_identity, wa.run_id, wa.project_id, wa.task_id,
+                   wa.role, wa.state, wa.profile_identity, wa.created_at
+            FROM worker_assignments wa
+            LEFT JOIN worker_checkpoints wc ON wc.assignment_id = wa.id AND wc.checkpoint_type IN ('completion', 'failure')
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY wa.created_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var assignmentId = reader.GetInt32(0);
+            var workerId = reader.GetString(1);
+            var runId = reader.GetString(2);
+            var projectId = reader.GetString(3);
+            var taskId = reader.IsDBNull(4) ? null : (int?)reader.GetInt32(4);
+            var role = reader.GetString(5);
+            var state = reader.GetString(6);
+            var profileId = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
+            var createdAt = reader.GetString(8);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"stale_ack:{projectId}:{runId}",
+                Classification = StaleClassificationTypes.StaleAck,
+                ProjectId = projectId,
+                TaskId = taskId,
+                RunId = runId,
+                AssignmentId = assignmentId,
+                WorkerIdentity = workerId,
+                ProfileIdentity = profileId,
+                WorkerRole = role,
+                CurrentState = state,
+                LastActivityAt = createdAt,
+                StalenessDeadline = null,
+                Age = $"assigned at {createdAt} — unacknowledged",
+                StateReason = $"Assignment #{assignmentId} for role '{role}' was leased but never acknowledged or started. "
+                    + $"Created at {createdAt}.",
+                SuggestedNextAction = $"Release or expire assignment #{assignmentId}. "
+                    + "If the worker runtime is unavailable, quarantine the worker slot.",
+                EvidenceIds = $"[{assignmentId}]",
+                Severity = "warning",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddStaleRunningConditionsAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "wa.state = 'running'",
+            $"wa.created_at <= datetime('now', '-{options.RunningStaleThresholdMinutes} minutes')",
+            "latest_wc.latest_checkpoint_at IS NULL"
+        };
+        AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
+
+        cmd.CommandText = $"""
+            SELECT wa.id, wa.worker_identity, wa.run_id, wa.project_id, wa.task_id,
+                   wa.role, wa.state, wa.profile_identity, wa.created_at
+            FROM worker_assignments wa
+            LEFT JOIN (
+                SELECT assignment_id, MAX(created_at) AS latest_checkpoint_at
+                FROM worker_checkpoints
+                GROUP BY assignment_id
+            ) latest_wc ON latest_wc.assignment_id = wa.id
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY wa.created_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var assignmentId = reader.GetInt32(0);
+            var workerId = reader.GetString(1);
+            var runId = reader.GetString(2);
+            var projectId = reader.GetString(3);
+            var taskId = reader.IsDBNull(4) ? null : (int?)reader.GetInt32(4);
+            var role = reader.GetString(5);
+            var state = reader.GetString(6);
+            var profileId = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
+            var createdAt = reader.GetString(8);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"stale_running:{projectId}:{runId}",
+                Classification = StaleClassificationTypes.StaleRunning,
+                ProjectId = projectId,
+                TaskId = taskId,
+                RunId = runId,
+                AssignmentId = assignmentId,
+                WorkerIdentity = workerId,
+                ProfileIdentity = profileId,
+                WorkerRole = role,
+                CurrentState = state,
+                LastActivityAt = createdAt,
+                StalenessDeadline = null,
+                Age = $"running since {createdAt} — no checkpoints or completion",
+                StateReason = $"Assignment #{assignmentId} is 'running' but has produced no checkpoints or completion packets. "
+                    + $"Started at {createdAt}.",
+                SuggestedNextAction = $"Investigate worker #{workerId} — it may be stalled or the runtime has lost track. "
+                    + "Expire or abort the assignment if the worker is unrecoverable.",
+                EvidenceIds = $"[{assignmentId}]",
+                Severity = "critical",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddMissingReviewerCompletionAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "rr.verdict IS NULL",
+            $"rr.requested_at <= datetime('now', '-{options.ReviewerStaleThresholdMinutes} minutes')"
+        };
+        if (piFilter)
+        {
+            where.Add("t.project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (taskFilter)
+        {
+            where.Add("rr.task_id = @taskId");
+            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+        }
+
+        cmd.CommandText = $"""
+            SELECT rr.id, rr.task_id, rr.round_number, rr.branch, rr.requested_at,
+                   t.project_id, t.title,
+                   wa_reviewer.id, wa_reviewer.run_id, wa_reviewer.state,
+                   wa_reviewer.worker_identity, wa_reviewer.profile_identity,
+                   wa_reviewer.role, wa_reviewer.created_at
+            FROM review_rounds rr
+            JOIN tasks t ON t.id = rr.task_id
+            LEFT JOIN worker_assignments wa_reviewer
+                ON wa_reviewer.task_id = rr.task_id
+                AND wa_reviewer.role = 'reviewer'
+                AND wa_reviewer.state NOT IN ('completed', 'failed', 'expired')
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY rr.requested_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var roundId = reader.GetInt32(0);
+            var taskId = reader.GetInt32(1);
+            var roundNumber = reader.GetInt32(2);
+            var branch = reader.GetString(3);
+            var requestedAt = reader.GetString(4);
+            var projectId = reader.GetString(5);
+            var title = reader.GetString(6);
+            var reviewerAssignmentId = reader.IsDBNull(7) ? null : (int?)reader.GetInt32(7);
+            var reviewerRunId = reader.IsDBNull(8) ? null : reader.GetString(8);
+            var reviewerState = reader.IsDBNull(9) ? null : reader.GetString(9);
+            var reviewerWorkerId = reader.IsDBNull(10) ? null : reader.GetString(10);
+            var reviewerProfileId = reader.IsDBNull(11) ? string.Empty : reader.GetString(11);
+            var reviewerRole = reader.IsDBNull(12) ? null : reader.GetString(12);
+            var reviewerCreatedAt = reader.IsDBNull(13) ? null : reader.GetString(13);
+
+            var evidenceIds = new List<int> { roundId };
+            var runId = reviewerRunId;
+            var assignmentId = reviewerAssignmentId;
+            var workerId = reviewerWorkerId;
+            var profileId = reviewerProfileId;
+            var workerRole = reviewerRole;
+            var currentState = reviewerState;
+            var lastActivityAt = reviewerCreatedAt ?? requestedAt;
+
+            if (reviewerAssignmentId is not null)
+                evidenceIds.Add(reviewerAssignmentId.Value);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"missing_reviewer_completion:{projectId}:{taskId}:r{roundNumber}",
+                Classification = StaleClassificationTypes.MissingReviewerCompletion,
+                ProjectId = projectId,
+                TaskId = taskId,
+                RunId = runId,
+                AssignmentId = assignmentId,
+                ReviewRoundId = roundId,
+                WorkerIdentity = workerId,
+                ProfileIdentity = profileId,
+                WorkerRole = workerRole,
+                CurrentState = currentState,
+                LastActivityAt = lastActivityAt,
+                StalenessDeadline = null,
+                Age = $"review requested at {requestedAt} — no verdict",
+                StateReason = $"Review round R{roundNumber} for task #{taskId} ({title}) on branch '{branch}' has no verdict. "
+                    + (reviewerAssignmentId is not null
+                        ? $"Reviewer assignment #{reviewerAssignmentId} is '{reviewerState}' — no completion packet received."
+                        : "No reviewer assignment found for this review round."),
+                SuggestedNextAction = reviewerAssignmentId is not null
+                    ? $"Expire reviewer assignment #{reviewerAssignmentId} and launch a fresh reviewer for round R{roundNumber}."
+                    : $"Launch a reviewer directly for review round R{roundNumber} on task #{taskId}.",
+                EvidenceIds = JsonSerializer.Serialize(evidenceIds),
+                Severity = reviewerAssignmentId is null ? "critical" : "warning",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddCompletionNotTerminalizedAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "wa.state NOT IN ('completed', 'failed', 'expired')"
+        };
+        AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
+
+        cmd.CommandText = $"""
+            SELECT wa.id, wa.worker_identity, wa.run_id, wa.project_id, wa.task_id,
+                   wa.role, wa.state, wa.profile_identity, wa.created_at,
+                   wc.id, wc.checkpoint_type, wc.created_at
+            FROM worker_assignments wa
+            JOIN worker_checkpoints wc ON wc.assignment_id = wa.id
+            WHERE {string.Join(" AND ", where)}
+              AND wc.checkpoint_type IN ('completion', 'failure')
+            ORDER BY wc.created_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var assignmentId = reader.GetInt32(0);
+            var workerId = reader.GetString(1);
+            var runId = reader.GetString(2);
+            var projectId = reader.GetString(3);
+            var taskId = reader.IsDBNull(4) ? null : (int?)reader.GetInt32(4);
+            var role = reader.GetString(5);
+            var state = reader.GetString(6);
+            var profileId = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
+            var waCreatedAt = reader.GetString(8);
+            var checkpointId = reader.GetInt32(9);
+            var checkpointType = reader.GetString(10);
+            var checkpointCreatedAt = reader.GetString(11);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"completion_not_terminalized:{projectId}:{runId}",
+                Classification = StaleClassificationTypes.CompletionNotTerminalized,
+                ProjectId = projectId,
+                TaskId = taskId,
+                RunId = runId,
+                AssignmentId = assignmentId,
+                WorkerIdentity = workerId,
+                ProfileIdentity = profileId,
+                WorkerRole = role,
+                CurrentState = state,
+                LastActivityAt = checkpointCreatedAt,
+                StalenessDeadline = null,
+                Age = $"completion packet at {checkpointCreatedAt} — assignment state is '{state}'",
+                StateReason = $"Assignment #{assignmentId} received a '{checkpointType}' checkpoint (#{checkpointId}) at {checkpointCreatedAt}, "
+                    + $"but assignment state remains '{state}' instead of a terminal state.",
+                SuggestedNextAction = $"Transition assignment #{assignmentId} to 'completed' or 'failed' to release the worker. "
+                    + "The work was reported finished but the assignment was never terminalized.",
+                EvidenceIds = $"[{assignmentId}, {checkpointId}]",
+                Severity = "warning",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddOrphanedOrchestratorLeaseAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            $"ol.state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})",
+            $"ol.created_at <= datetime('now', '-{options.OrchestratorStaleThresholdMinutes} minutes')"
+        };
+        if (piFilter)
+        {
+            where.Add("ol.project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (taskFilter)
+        {
+            where.Add("ol.task_id = @taskId");
+            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+        }
+
+        cmd.CommandText = $"""
+            SELECT ol.id, ol.lease_id, ol.project_id, ol.task_id, ol.orchestrator_identity,
+                   ol.profile_identity, ol.state, ol.objective, ol.created_at,
+                   COALESCE(child_count.child_count, 0) AS child_count
+            FROM orchestrator_leases ol
+            LEFT JOIN (
+                SELECT wa.project_id, COUNT(*) AS child_count, MAX(wa.created_at) AS latest_child_at
+                FROM worker_assignments wa
+                WHERE wa.state NOT IN ('completed', 'failed', 'expired')
+                GROUP BY wa.project_id
+            ) child_count ON child_count.project_id = ol.project_id
+            WHERE {string.Join(" AND ", where)}
+            ORDER BY ol.created_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var leaseId = reader.GetInt32(0);
+            var leaseIdStr = reader.GetString(1);
+            var projectId = reader.GetString(2);
+            var taskId = reader.IsDBNull(3) ? null : (int?)reader.GetInt32(3);
+            var orchId = reader.GetString(4);
+            var profileId = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
+            var state = reader.GetString(6);
+            var objective = reader.IsDBNull(7) ? null : reader.GetString(7);
+            var createdAt = reader.GetString(8);
+            var childCount = reader.GetInt64(9);
+
+            var severity = childCount == 0 ? "critical" : "warning";
+            var reason = childCount == 0
+                ? $"Orchestrator lease #{leaseId} ({leaseIdStr}) has been {state} since {createdAt} with no child assignment progress. "
+                    + "The orchestrator may be stalled or the project has no active work."
+                : $"Orchestrator lease #{leaseId} ({leaseIdStr}) has been {state} since {createdAt} with {childCount} active child assignments. "
+                    + "The orchestrator may need attention to finalize downstream work.";
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"orphaned_orchestrator:{projectId}:{leaseIdStr}",
+                Classification = StaleClassificationTypes.OrphanedOrchestratorLease,
+                ProjectId = projectId,
+                TaskId = taskId,
+                OrchestratorLeaseId = leaseId,
+                WorkerIdentity = orchId,
+                ProfileIdentity = profileId,
+                WorkerRole = "project_orchestrator",
+                CurrentState = state,
+                LastActivityAt = createdAt,
+                StalenessDeadline = null,
+                Age = $"{state} since {createdAt}",
+                StateReason = reason,
+                SuggestedNextAction = childCount == 0
+                    ? $"Drain or expire orchestrator lease #{leaseId}. "
+                        + "If the project still needs orchestration, reconcile and relaunch."
+                    : $"Check orchestrator lease #{leaseId} — it may need to finalize or release child assignments.",
+                EvidenceIds = $"[{leaseId}]",
+                Severity = severity,
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddDuplicateAssignmentForRunAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "wa.state NOT IN ('completed', 'failed', 'expired')"
+        };
+        AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
+
+        cmd.CommandText = $"""
+            SELECT wa.run_id, wa.project_id, COUNT(*) AS cnt,
+                   GROUP_CONCAT(wa.id) AS assignment_ids,
+                   GROUP_CONCAT(wa.worker_identity) AS worker_ids,
+                   GROUP_CONCAT(wa.state) AS states,
+                   MAX(wa.created_at) AS latest_created
+            FROM worker_assignments wa
+            WHERE {string.Join(" AND ", where)}
+            GROUP BY wa.run_id
+            HAVING COUNT(*) > 1
+            ORDER BY latest_created DESC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var runId = reader.GetString(0);
+            var projectId = reader.GetString(1);
+            var count = reader.GetInt64(2);
+            var assignmentIds = reader.GetString(3);
+            var workerIds = reader.GetString(4);
+            var states = reader.GetString(5);
+            var latestCreated = reader.GetString(6);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"duplicate_assignment:{projectId}:{runId}",
+                Classification = StaleClassificationTypes.DuplicateAssignmentForRun,
+                ProjectId = projectId,
+                RunId = runId,
+                AssignmentId = null,
+                WorkerIdentity = workerIds.Split(',')[0],
+                CurrentState = states,
+                LastActivityAt = latestCreated,
+                StalenessDeadline = null,
+                Age = $"{count} active assignments",
+                StateReason = $"Run '{runId}' has {count} non-terminal assignments holding capacity: [{assignmentIds}]. "
+                    + $"Worker identities: [{workerIds}]. States: [{states}]. Only one assignment per run should be active.",
+                SuggestedNextAction = $"Expire all but the most recent assignment for run '{runId}'. "
+                    + "These duplicate assignments are leaking pool capacity.",
+                EvidenceIds = $"[{assignmentIds}]",
+                Severity = "critical",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static void AppendStaleFilters(
+        SqliteCommand cmd, List<string> where, bool piFilter, bool taskFilter, StaleSweepOptions options)
+    {
+        if (piFilter)
+        {
+            where.Add("wa.project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (taskFilter)
+        {
+            where.Add("wa.task_id = @taskId");
+            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
         }
     }
 

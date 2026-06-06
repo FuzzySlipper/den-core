@@ -189,6 +189,8 @@ internal sealed class FakeWorkerPoolRepository : IWorkerPoolRepository
     public Task<int> SetLaneStatusAsync(string profileIdentity, string workerRole, string status) => Task.FromResult(0);
     public Task<ProfileCapacitySummary> GetProfileCapacitySummaryAsync(string profileIdentity) => throw new NotSupportedException();
     public Task<int> ReleaseStaleLeasesAsync() => Task.FromResult(0);
+    public Task<StaleWorkerSweepResult> SweepStaleWorkersAsync(StaleSweepOptions options) =>
+        Task.FromResult(new StaleWorkerSweepResult { SweptAt = DateTime.UtcNow.ToString("o") });
     public Task<OrchestratorLease> CreateOrchestratorLeaseAsync(CreateOrchestratorLeaseInput input) => throw new NotSupportedException();
     public Task<OrchestratorLease?> GetOrchestratorLeaseAsync(int id) => Task.FromResult<OrchestratorLease?>(null);
     public Task<OrchestratorLease?> GetOrchestratorLeaseByLeaseIdAsync(string leaseId) => Task.FromResult<OrchestratorLease?>(null);

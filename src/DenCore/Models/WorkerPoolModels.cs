@@ -1042,3 +1042,182 @@ public sealed class PoolResidencyProjection
     /// <summary>Agent instance id for binding linkage.</summary>
     public string? AgentInstanceId { get; set; }
 }
+
+/// <summary>
+/// A stale/stalled worker condition detected from Core records alone.
+/// Core-owned classification; Channels/Den Web consume via the stale read API.
+/// </summary>
+public sealed class StaleWorkerCondition
+{
+    /// <summary>
+    /// Dedupe signature: stale classification + project_id + evidence key (run_id / assignment_id / round_id / lease_id).
+    /// The same stale signature generates exactly one attention event until state changes.
+    /// </summary>
+    public required string StaleSignature { get; set; }
+
+    /// <summary>
+    /// Classification type from <see cref="StaleClassificationTypes"/>.
+    /// e.g. stale_ack, stale_running, missing_reviewer_completion, completion_not_terminalized,
+    /// orphaned_orchestrator_lease, duplicate_assignment_for_run.
+    /// </summary>
+    public required string Classification { get; set; }
+
+    /// <summary>Project id affected.</summary>
+    public required string ProjectId { get; set; }
+
+    /// <summary>Optional task id affected.</summary>
+    public int? TaskId { get; set; }
+
+    /// <summary>Worker run id, if applicable.</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>Assignment id, if applicable.</summary>
+    public int? AssignmentId { get; set; }
+
+    /// <summary>Review round id, if applicable.</summary>
+    public int? ReviewRoundId { get; set; }
+
+    /// <summary>Orchestrator lease id, if applicable.</summary>
+    public int? OrchestratorLeaseId { get; set; }
+
+    /// <summary>Worker identity of the affected pool member.</summary>
+    public string? WorkerIdentity { get; set; }
+
+    /// <summary>Worker profile identity.</summary>
+    public string? ProfileIdentity { get; set; }
+
+    /// <summary>Worker role.</summary>
+    public string? WorkerRole { get; set; }
+
+    /// <summary>Current assignment state.</summary>
+    public string? CurrentState { get; set; }
+
+    /// <summary>ISO 8601 timestamp of last recorded activity for this entity.</summary>
+    public string? LastActivityAt { get; set; }
+
+    /// <summary>ISO 8601 timestamp when the staleness threshold is exceeded.</summary>
+    public string? StalenessDeadline { get; set; }
+
+    /// <summary>Staleness age as a human-readable duration string, e.g. "40 minutes".</summary>
+    public string? Age { get; set; }
+
+    /// <summary>Why this entity is classified as stale (human-readable).</summary>
+    public required string StateReason { get; set; }
+
+    /// <summary>Recommended operator action.</summary>
+    public required string SuggestedNextAction { get; set; }
+
+    /// <summary>
+    /// JSON array of evidence identifiers, e.g. [394, 396] for assignment IDs.
+    /// </summary>
+    public string? EvidenceIds { get; set; }
+
+    /// <summary>
+    /// Severity level: critical, warning, info.
+    /// </summary>
+    public string Severity { get; set; } = "warning";
+
+    /// <summary>
+    /// ISO 8601 timestamp when this condition was first detected.
+    /// </summary>
+    public string? DetectedAt { get; set; }
+}
+
+/// <summary>
+/// Result from a stale worker sweep — contains the detected conditions and count.
+/// </summary>
+public sealed class StaleWorkerSweepResult
+{
+    /// <summary>Number of stale conditions detected in this sweep.</summary>
+    public int StaleCount { get; set; }
+
+    /// <summary>List of detected stale conditions, ordered by severity then staleness.</summary>
+    public List<StaleWorkerCondition> Conditions { get; set; } = [];
+
+    /// <summary>ISO 8601 timestamp when this sweep was executed.</summary>
+    public string? SweptAt { get; set; }
+}
+
+/// <summary>
+/// Options for the stale worker sweep.
+/// </summary>
+public sealed class StaleSweepOptions
+{
+    /// <summary>Optional project filter. When null/empty, sweeps all projects.</summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>Optional task filter.</summary>
+    public int? TaskId { get; set; }
+
+    /// <summary>Staleness threshold in minutes for ack/running assignments. Default 10.</summary>
+    public int AckStaleThresholdMinutes { get; set; } = 10;
+
+    /// <summary>Staleness threshold in minutes for running assignments without checkpoints. Default 15.</summary>
+    public int RunningStaleThresholdMinutes { get; set; } = 15;
+
+    /// <summary>Staleness threshold in minutes for missing reviewer completion. Default 15.</summary>
+    public int ReviewerStaleThresholdMinutes { get; set; } = 15;
+
+    /// <summary>Staleness threshold in minutes for orphaned orchestrator leases. Default 20.</summary>
+    public int OrchestratorStaleThresholdMinutes { get; set; } = 20;
+
+    /// <summary>Maximum conditions to return. Default 100, max 200.</summary>
+    public int Limit { get; set; } = 100;
+}
+
+/// <summary>
+/// Constants for stale worker classification types.
+/// </summary>
+public static class StaleClassificationTypes
+{
+    /// <summary>
+    /// Assignment in 'ack' (pre-running) state older than configured threshold.
+    /// The worker was leased but never acknowledged or started work.
+    /// Previously known as a "launch zombie" — captured here as a first-class stale type.
+    /// </summary>
+    public const string StaleAck = "stale_ack";
+
+    /// <summary>
+    /// Assignment in 'running' state older than threshold with no checkpoint or completion packet.
+    /// The worker claimed the assignment but produced no evidence of progress.
+    /// </summary>
+    public const string StaleRunning = "stale_running";
+
+    /// <summary>
+    /// Review round exists with no verdict and the reviewer assignment is stuck in ack or
+    /// running past threshold. Reviewer callback missing after review request/round creation.
+    /// </summary>
+    public const string MissingReviewerCompletion = "missing_reviewer_completion";
+
+    /// <summary>
+    /// A completion checkpoint exists for this assignment/run, but the assignment state was
+    /// never transitioned to a terminal state (completed/failed/expired).
+    /// Evidence of finished work exists but bookkeeping is inconsistent.
+    /// </summary>
+    public const string CompletionNotTerminalized = "completion_not_terminalized";
+
+    /// <summary>
+    /// Active orchestrator lease (non-terminal) with no child assignment progress
+    /// (no non-terminal task-worker assignments created or progressed) past threshold.
+    /// </summary>
+    public const string OrphanedOrchestratorLease = "orphaned_orchestrator_lease";
+
+    /// <summary>
+    /// Multiple non-terminal assignments exist for the same run_id, holding capacity.
+    /// Only one assignment per run should be active at a time.
+    /// </summary>
+    public const string DuplicateAssignmentForRun = "duplicate_assignment_for_run";
+
+    public static readonly string[] ValidClassifications =
+    [
+        StaleAck,
+        StaleRunning,
+        MissingReviewerCompletion,
+        CompletionNotTerminalized,
+        OrphanedOrchestratorLease,
+        DuplicateAssignmentForRun,
+    ];
+
+    public static bool IsValidClassification(string classification) =>
+        Array.IndexOf(ValidClassifications, classification) >= 0;
+}

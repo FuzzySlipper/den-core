@@ -2395,4 +2395,301 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.Equal(WorkerPoolStates.OrchLeaseLeased, newLease.State);
     }
 
+    // ─────────────────────────────────────────────────────────────────
+    // Stale Worker Sweep
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsStaleAck()
+    {
+        await SeedMemberAsync("sweep-ack-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-sweep-ack",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-ack-worker",
+        });
+        Assert.NotNull(assignment);
+        await BackdateAssignmentAsync(assignment!.Id, "-15 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            AckStaleThresholdMinutes = 10,
+        });
+        Assert.True(result.StaleCount >= 1);
+        Assert.Contains(result.Conditions, c => c.Classification == StaleClassificationTypes.StaleAck
+            && c.AssignmentId == assignment.Id);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_FreshAckIsNotStale()
+    {
+        await SeedMemberAsync("fresh-ack-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-fresh-ack",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "fresh-ack-worker",
+        });
+        Assert.NotNull(assignment);
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            AckStaleThresholdMinutes = 10,
+        });
+        Assert.DoesNotContain(result.Conditions, c => c.Classification == StaleClassificationTypes.StaleAck
+            && c.RunId == "run-fresh-ack");
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsStaleRunning()
+    {
+        await SeedMemberAsync("sweep-running-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-sweep-running",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-running-worker",
+        });
+        Assert.NotNull(assignment);
+        await _repo.TransitionAssignmentStateAsync(assignment!.Id, WorkerPoolStates.Running);
+        await BackdateAssignmentAsync(assignment.Id, "-20 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            RunningStaleThresholdMinutes = 15,
+        });
+        Assert.Contains(result.Conditions, c => c.Classification == StaleClassificationTypes.StaleRunning
+            && c.AssignmentId == assignment.Id);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_RunningWithCheckpointsIsNotStale()
+    {
+        await SeedMemberAsync("sweep-running-ckpt-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-sweep-ckpt",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-running-ckpt-worker",
+        });
+        Assert.NotNull(assignment);
+        await _repo.TransitionAssignmentStateAsync(assignment!.Id, WorkerPoolStates.Running);
+        await BackdateAssignmentAsync(assignment.Id, "-20 minutes");
+        await _repo.AppendCheckpointAsync(assignment.Id, "run-sweep-ckpt", "progress", "{}");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            RunningStaleThresholdMinutes = 15,
+        });
+        Assert.DoesNotContain(result.Conditions, c => c.Classification == StaleClassificationTypes.StaleRunning
+            && c.RunId == "run-sweep-ckpt");
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsCompletionNotTerminalized()
+    {
+        await SeedMemberAsync("sweep-done-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-sweep-done",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-done-worker",
+        });
+        Assert.NotNull(assignment);
+        await _repo.TransitionAssignmentStateAsync(assignment!.Id, WorkerPoolStates.Running);
+
+        // Insert a completion checkpoint directly (bypass AppendCheckpointAsync
+        // auto-transition — simulates race where checkpoint is recorded but
+        // state transition was missed)
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
+            VALUES (@assignmentId, @runId, 'completion', @payload, datetime('now'))
+            """;
+        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
+        cmd.Parameters.AddWithValue("@runId", "run-sweep-done");
+        cmd.Parameters.AddWithValue("@payload", """{"status":"completed"}""");
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions());
+        Assert.Contains(result.Conditions, c => c.Classification == StaleClassificationTypes.CompletionNotTerminalized
+            && c.RunId == "run-sweep-done");
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsDuplicateAssignments()
+    {
+        var taskId = await SeedTaskAsync();
+        await SeedMemberAsync("sweep-dup-worker");
+
+        // First assignment via normal lease
+        var a1 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            Role = "coder",
+            RunId = "run-sweep-dup",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-dup-worker",
+        });
+        Assert.NotNull(a1);
+
+        // Insert a second assignment for the same run directly (bypass HasActiveAssignmentAsync guard)
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO worker_assignments (worker_identity, run_id, project_id, task_id, role, assigned_by,
+                state, lease_id, profile_identity, acquired_at)
+            VALUES ('sweep-dup-worker', 'run-sweep-dup', 'test-proj', @taskId, 'coder', 'runner',
+                'ack', 'sweep-dup-worker:run-sweep-dup:2', '', datetime('now'))
+            """;
+        cmd.Parameters.AddWithValue("@taskId", taskId);
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions());
+        Assert.Contains(result.Conditions, c => c.Classification == StaleClassificationTypes.DuplicateAssignmentForRun
+            && c.RunId == "run-sweep-dup");
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DeduplicatesByStaleSignature()
+    {
+        await SeedMemberAsync("sweep-dedup-worker");
+        for (int i = 0; i < 3; i++)
+        {
+            var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+            {
+                ProjectId = "test-proj",
+                Role = "coder",
+                RunId = $"run-dedup-{i}",
+                AssignedBy = "runner",
+                PreferredWorkerIdentity = "sweep-dedup-worker",
+            });
+            Assert.NotNull(assignment);
+            await BackdateAssignmentAsync(assignment!.Id, "-15 minutes");
+            await _repo.SetMemberStatusAsync("sweep-dedup-worker", WorkerPoolStates.MemberAvailable);
+            await _repo.TransitionAssignmentStateAsync(assignment.Id, WorkerPoolStates.Expired);
+        }
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            AckStaleThresholdMinutes = 10,
+        });
+        var staleAcks = result.Conditions.Where(c => c.Classification == StaleClassificationTypes.StaleAck).ToList();
+        var signatures = staleAcks.Select(c => c.StaleSignature).Distinct().Count();
+        Assert.Equal(staleAcks.Count, signatures);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_ProjectFilterWorks()
+    {
+        await _projects.CreateAsync(new Project { Id = "other-proj", Name = "Other" });
+
+        await SeedMemberAsync("sweep-filter-1");
+        var a1 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-filter-1",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-filter-1",
+        });
+        Assert.NotNull(a1);
+        await BackdateAssignmentAsync(a1!.Id, "-15 minutes");
+
+        await SeedMemberAsync("sweep-filter-2");
+        var a2 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "other-proj",
+            Role = "coder",
+            RunId = "run-filter-2",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-filter-2",
+        });
+        Assert.NotNull(a2);
+        await BackdateAssignmentAsync(a2!.Id, "-15 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ProjectId = "test-proj",
+            AckStaleThresholdMinutes = 10,
+        });
+        Assert.Contains(result.Conditions, c => c.RunId == "run-filter-1");
+        Assert.DoesNotContain(result.Conditions, c => c.RunId == "run-filter-2");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Den-router regression fixtures
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task StaleSweep_DenRouterRegression_ReviewerAssignmentsStuckInAck()
+    {
+        var task2016Id = await SeedTaskAsync();
+        var task2023Id = await SeedTaskAsync();
+
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO review_rounds (task_id, round_number, requested_by, branch, base_branch, base_commit, head_commit, requested_at)
+                VALUES
+                (@t2016, 1, 'den-mcp-runner', 'task/2016', 'main', 'abc123', 'def456', datetime('now', '-45 minutes')),
+                (@t2023, 1, 'den-mcp-runner', 'task/2023', 'main', 'abc123', 'def456', datetime('now', '-45 minutes'))
+                """;
+            cmd.Parameters.AddWithValue("@t2016", task2016Id);
+            cmd.Parameters.AddWithValue("@t2023", task2023Id);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await SeedMemberAsync("pool-reviewer-01", """["reviewer"]""", "spawned-reviewer", "reviewer");
+        var reviewerAssignment2016 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            TaskId = task2016Id,
+            Role = "reviewer",
+            RunId = "piw_20260606083755_abd3c006",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "pool-reviewer-01",
+        });
+        Assert.NotNull(reviewerAssignment2016);
+        await BackdateAssignmentAsync(reviewerAssignment2016!.Id, "-45 minutes");
+
+        await SeedMemberAsync("pool-reviewer-02", """["reviewer"]""", "spawned-reviewer", "reviewer");
+        var reviewerAssignment2023 = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            TaskId = task2023Id,
+            Role = "reviewer",
+            RunId = "piw_20260606083754_2f9d24ac",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "pool-reviewer-02",
+        });
+        Assert.NotNull(reviewerAssignment2023);
+        await BackdateAssignmentAsync(reviewerAssignment2023!.Id, "-45 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ReviewerStaleThresholdMinutes = 15,
+        });
+
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.RunId == "piw_20260606083755_abd3c006");
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.RunId == "piw_20260606083754_2f9d24ac");
+    }
 }

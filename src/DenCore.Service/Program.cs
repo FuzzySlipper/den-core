@@ -127,6 +127,9 @@ builder.Services.AddSingleton<IDispatchDetectionService, DispatchDetectionServic
 // Blocked task escalation
 builder.Services.AddSingleton<IBlockedTaskEscalationService, BlockedTaskEscalationService>();
 
+// Stale worker attention routing
+builder.Services.AddSingleton<IStaleAttentionRoutingService, StaleAttentionRoutingService>();
+
 // Librarian
 builder.Services.AddSingleton<LibrarianGatherer>();
 builder.Services.AddSingleton<LibrarianService>();

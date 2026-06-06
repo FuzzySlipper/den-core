@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
+using DenCore.Services;
 
 namespace DenCore.Service.Routes;
 
@@ -422,8 +423,7 @@ public static class WorkerPoolRoutes
 
         pool.MapPost("/stale/reconcile", async (
             IWorkerPoolRepository repo,
-            IMessageRepository messages,
-            IAgentInstanceBindingRepository bindings,
+            IStaleAttentionRoutingService attentionRouter,
             JsonElement body) =>
         {
             StaleSweepOptions? sweepOpts;
@@ -439,89 +439,22 @@ public static class WorkerPoolRoutes
 
             var result = await repo.ReconcileStaleWorkerAttentionAsync(sweepOpts);
 
-            // For each new condition, attempt to notify a planner/runner binding.
-            // If no planner is reachable, create a user-facing notification message.
-            var routedEvents = 0;
-            var notificationEvents = 0;
-
-            foreach (var condition in result.NewConditions)
-            {
-                if (string.IsNullOrWhiteSpace(condition.ProjectId))
-                    continue;
-
-                var plannerCandidates = await bindings.ListAsync(new AgentInstanceBindingListOptions
-                {
-                    ProjectId = condition.ProjectId,
-                    Statuses = [AgentInstanceBindingStatus.Active, AgentInstanceBindingStatus.Degraded],
-                    Role = null, // match any planner/runner/conductor
-                });
-
-                var plannerBinding = plannerCandidates.FirstOrDefault(b =>
-                    b.Role is "planner" or "conductor" or "runner");
-
-                if (plannerBinding is not null)
-                {
-                    // Create a wake message in the task thread with routable metadata
-                    // consumed by downstream planner/runner wake paths (MessageRoutingMetadata)
-                    await messages.CreateAsync(new Message
-                    {
-                        ProjectId = condition.ProjectId,
-                        TaskId = condition.TaskId,
-                        Sender = "den-core",
-                        Content = $"## Stale worker detected — {condition.Classification}\n\n"
-                            + $"**Severity**: {condition.Severity}\n"
-                            + $"**Reason**: {condition.StateReason}\n"
-                            + $"**Suggested action**: {condition.SuggestedNextAction}\n\n"
-                            + $"*Deduped by signature: `{condition.StaleSignature}`*",
-                        Intent = MessageIntent.Notification,
-                        Metadata = JsonSerializer.SerializeToElement(new
-                        {
-                            type = "stale_worker_alert",
-                            stale_signature = condition.StaleSignature,
-                            classification = condition.Classification,
-                            severity = condition.Severity,
-                            // Routeable wake fields consumed by MessageRoutingMetadata and planner/runner wake paths
-                            recipient = plannerBinding.AgentIdentity,
-                            target_role = plannerBinding.Role,
-                            recipient_instance_id = plannerBinding.InstanceId,
-                        }),
-                    });
-                    routedEvents++;
-                }
-                else
-                {
-                    // Fallback: create a user notification for the project
-                    await messages.CreateAsync(new Message
-                    {
-                        ProjectId = condition.ProjectId,
-                        TaskId = condition.TaskId,
-                        Sender = "den-core",
-                        Content = $"## Stale worker alert — no planner reachable for `{condition.ProjectId}`\n\n"
-                            + $"**Classification**: {condition.Classification}\n"
-                            + $"**Severity**: {condition.Severity}\n"
-                            + $"**Reason**: {condition.StateReason}\n"
-                            + $"**Suggested action**: {condition.SuggestedNextAction}\n\n"
-                            + $"*Deduped by signature: `{condition.StaleSignature}`*",
-                        Intent = MessageIntent.Notification,
-                        Metadata = JsonSerializer.SerializeToElement(new
-                        {
-                            type = "stale_worker_alert_no_owner",
-                            stale_signature = condition.StaleSignature,
-                            classification = condition.Classification,
-                            severity = condition.Severity,
-                        }),
-                    });
-                    notificationEvents++;
-                }
-            }
+            // Route new stale conditions through the attention routing service
+            var routingResult = await attentionRouter.RouteAsync(result);
 
             return Results.Ok(new
             {
                 result.TotalDetected,
                 result.NewCount,
                 result.SkippedCount,
-                routed_planner_events = routedEvents,
-                no_owner_notifications = notificationEvents,
+                routing = new
+                {
+                    planner_routed = routingResult.PlannerRouted,
+                    user_notified = routingResult.UserNotified,
+                    fallback_notified = routingResult.FallbackNotified,
+                    info_logged = routingResult.InfoLogged,
+                    total_processed = routingResult.TotalProcessed,
+                },
                 result.NewConditions,
                 result.ReconciledAt,
             });

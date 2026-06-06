@@ -80,7 +80,7 @@ public sealed class CompletionTools
         }
         var normalizedStatus = NormalizeStatus(status);
         var normalizedPacketType = NormalizePacketType(packet_type);
-        var packetDiagnostics = ValidatePacketClaims(normalizedStatus, normalizedPacketType, branch, head_commit, tests_run);
+        var packetDiagnostics = ValidatePacketClaims(normalizedStatus, normalizedPacketType, branch, head_commit, tests_run, audit_verdict);
         packetDiagnostics.AddRange(roleDiagnostics);
         var isMalformed = normalizedStatus is null || normalizedPacketType is null || packetDiagnostics.Count > 0;
         normalizedStatus = isMalformed ? "malformed" : normalizedStatus;
@@ -448,7 +448,13 @@ public sealed class CompletionTools
         return diagnostics;
     }
 
-    private static List<string> ValidatePacketClaims(string? status, string? packetType, string? branch, string? headCommit, string? testsRun)
+    private static readonly HashSet<string> ValidAuditVerdicts = new(StringComparer.Ordinal)
+    {
+        "scope_ok", "scope_ok_with_downstream_followups", "acceptance_gap_suspected",
+        "phase_split_needed", "planner_decision_needed", "audit_inconclusive"
+    };
+
+    private static List<string> ValidatePacketClaims(string? status, string? packetType, string? branch, string? headCommit, string? testsRun, string? auditVerdict)
     {
         var diagnostics = new List<string>();
         if (status == "completed" && packetType == "implementation_packet")
@@ -459,6 +465,14 @@ public sealed class CompletionTools
             if (string.IsNullOrWhiteSpace(testsRun)) missing.Add("tests_run");
             if (missing.Count > 0)
                 diagnostics.Add($"Completed implementation packets are missing {string.Join(", ", missing)} metadata; report exact branch, head commit, and test/validation results.");
+        }
+        if (packetType == "scope_audit_packet")
+        {
+            var verdict = NormalizeToken(auditVerdict);
+            if (verdict is null)
+                diagnostics.Add("scope_audit_packet requires audit_verdict (one of: scope_ok, scope_ok_with_downstream_followups, acceptance_gap_suspected, phase_split_needed, planner_decision_needed, audit_inconclusive).");
+            else if (!ValidAuditVerdicts.Contains(verdict))
+                diagnostics.Add($"scope_audit_packet audit_verdict '{verdict}' is not a recognized verdict. Valid verdicts: {string.Join(", ", ValidAuditVerdicts.OrderBy(v => v))}.");
         }
         return diagnostics;
     }

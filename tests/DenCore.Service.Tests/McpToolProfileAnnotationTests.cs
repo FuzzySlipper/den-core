@@ -153,6 +153,51 @@ public class McpToolProfileAnnotationTests
         Assert.False(_registry.ToolInProfile("legacy_publish_worker_branch", McpToolProfiles.AdminCurrent));
     }
 
+    [Fact]
+    public void WorkerScopeAuditorProfile_HasReadReconcileTools_ExcludesMutation()
+    {
+        var profile = McpToolProfiles.WorkerScopeAuditor;
+
+        // Scope-auditor must have these read/reconcile tools
+        Assert.True(_registry.ToolInProfile("get_project", profile));
+        Assert.True(_registry.ToolInProfile("list_projects", profile));
+        Assert.True(_registry.ToolInProfile("get_task", profile));
+        Assert.True(_registry.ToolInProfile("list_tasks", profile));
+        Assert.True(_registry.ToolInProfile("get_task_workflow_summary", profile));
+        Assert.True(_registry.ToolInProfile("get_document", profile));
+        Assert.True(_registry.ToolInProfile("list_documents", profile));
+        Assert.True(_registry.ToolInProfile("search_documents", profile));
+        Assert.True(_registry.ToolInProfile("query_librarian", profile));
+        Assert.True(_registry.ToolInProfile("get_messages", profile));
+        Assert.True(_registry.ToolInProfile("get_thread", profile));
+        Assert.True(_registry.ToolInProfile("mark_read", profile));
+        Assert.True(_registry.ToolInProfile("list_review_rounds", profile));
+        Assert.True(_registry.ToolInProfile("list_review_findings", profile));
+        Assert.True(_registry.ToolInProfile("get_latest_task_packet", profile));
+        Assert.True(_registry.ToolInProfile("get_user_notifications", profile));
+        Assert.True(_registry.ToolInProfile("mark_notifications_read", profile));
+        Assert.True(_registry.ToolInProfile("get_worker_run", profile));
+        Assert.True(_registry.ToolInProfile("get_worker_run_status", profile));
+        Assert.True(_registry.ToolInProfile("list_worker_runs", profile));
+        Assert.True(_registry.ToolInProfile("get_latest_worker_completion", profile));
+        Assert.True(_registry.ToolInProfile("post_worker_completion_packet", profile));
+        Assert.True(_registry.ToolInProfile("prepare_scope_auditor_context_packet", profile));
+        Assert.True(_registry.ToolInProfile("render_worker_prompt", profile));
+
+        // Must NOT have task/review mutation tools
+        Assert.False(_registry.ToolInProfile("create_task", profile));
+        Assert.False(_registry.ToolInProfile("update_task", profile));
+        Assert.False(_registry.ToolInProfile("set_review_verdict", profile));
+        Assert.False(_registry.ToolInProfile("create_review_finding", profile));
+        Assert.False(_registry.ToolInProfile("send_message", profile));
+        Assert.False(_registry.ToolInProfile("request_review", profile));
+
+        // Must NOT have state-changing worker tools
+        Assert.False(_registry.ToolInProfile("register_worker_run", profile));
+        Assert.False(_registry.ToolInProfile("cleanup_worker_run", profile));
+        Assert.False(_registry.ToolInProfile("abort_worker_run", profile));
+    }
+
     private static string? GetToolName(MethodInfo method)
     {
         var attr = method.GetCustomAttributesData()

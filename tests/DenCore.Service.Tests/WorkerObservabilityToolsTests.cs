@@ -275,14 +275,183 @@ public class WorkerObservabilityToolsTests
         Assert.Contains("#1956", content);
     }
 
-    private static WorkerAssignment NewAssignment(string state, string projectId = "proj") => new()
+    // ─── Scope auditor tests ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task PostScopeAuditPacket_StoresAndRetrievesAllAuditFields()
+    {
+        var pool = new FakeWorkerPoolRepository()
+            .AddAssignment(NewAssignment(WorkerPoolStates.Running, role: "scope_auditor", runId: "run-audit-1"));
+        var messages = new CapturingMessageRepository();
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-audit-1",
+            requested_by: "scope-auditor",
+            status: "completed",
+            role: "scope_auditor",
+            packet_type: "scope_audit_packet",
+            summary: "Audited task #1245: scope_ok.",
+            branch: "task/1245-foo",
+            head_commit: "0123456789abcdef0123456789abcdef01234567",
+            tests_run: "[\"dotnet test: passed\"]",
+            audit_verdict: "scope_ok",
+            audit_evidence_checked: "implementation packet #99, review findings, follow-up #2000 (polish)",
+            audit_recommended_route: "planner",
+            audited_head_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            audited_review_round_id: 1,
+            scope_follow_ups: "[{\"task_id\":2000,\"title\":\"Polish\",\"classification\":\"polish\"}]",
+            verbose: true);
+
+        using var completionDoc = JsonDocument.Parse(completion);
+        Assert.Equal("present", completionDoc.RootElement.GetProperty("completion_state").GetString());
+
+        var content = completionDoc.RootElement.GetProperty("completion").GetProperty("content").GetString()!;
+        Assert.Contains("Scope audit", content);
+        Assert.Contains("scope_ok", content);
+        Assert.Contains("implementation packet #99", content);
+        Assert.Contains("planner", content);
+        Assert.Contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", content);
+        Assert.Contains("#1", content);
+
+        var metadata = completionDoc.RootElement.GetProperty("completion").GetProperty("metadata");
+        Assert.Equal("scope_ok", metadata.GetProperty("audit_verdict").GetString());
+        Assert.Equal("implementation packet #99, review findings, follow-up #2000 (polish)", metadata.GetProperty("audit_evidence_checked").GetString());
+        Assert.Equal("planner", metadata.GetProperty("audit_recommended_route").GetString());
+        Assert.Equal("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", metadata.GetProperty("audited_head_commit").GetString());
+        Assert.Equal(1, metadata.GetProperty("audited_review_round_id").GetInt32());
+        Assert.True(metadata.TryGetProperty("scope_follow_ups", out _));
+
+        // Retrieve via get_latest_worker_completion
+        var latest = await CompletionTools.GetLatestWorkerCompletion(messages, "proj", run_id: "run-audit-1", verbose: true);
+        using var latestDoc = JsonDocument.Parse(latest);
+        var latestMeta = latestDoc.RootElement.GetProperty("completion").GetProperty("metadata");
+        Assert.Equal("scope_ok", latestMeta.GetProperty("audit_verdict").GetString());
+        Assert.Equal("planner", latestMeta.GetProperty("audit_recommended_route").GetString());
+    }
+
+    [Fact]
+    public async Task PostScopeAuditPacket_WithoutVerdict_IsMalformed()
+    {
+        var pool = new FakeWorkerPoolRepository()
+            .AddAssignment(NewAssignment(WorkerPoolStates.Running, role: "scope_auditor", runId: "run-audit-nov"));
+        var messages = new CapturingMessageRepository();
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-audit-nov",
+            requested_by: "scope-auditor",
+            status: "completed",
+            role: "scope_auditor",
+            packet_type: "scope_audit_packet",
+            summary: "Missing verdict.",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        Assert.Equal("malformed", doc.RootElement.GetProperty("completion_state").GetString());
+        var content = doc.RootElement.GetProperty("completion").GetProperty("content").GetString()!;
+        Assert.Contains("requires audit_verdict", content);
+    }
+
+    [Fact]
+    public async Task PostScopeAuditPacket_WithInvalidVerdict_ReportsUnknownVerdict()
+    {
+        var pool = new FakeWorkerPoolRepository()
+            .AddAssignment(NewAssignment(WorkerPoolStates.Running, role: "scope_auditor", runId: "run-audit-badv"));
+        var messages = new CapturingMessageRepository();
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-audit-badv",
+            requested_by: "scope-auditor",
+            status: "completed",
+            role: "scope_auditor",
+            packet_type: "scope_audit_packet",
+            summary: "Bad verdict.",
+            audit_verdict: "not_a_real_verdict",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        Assert.Equal("malformed", doc.RootElement.GetProperty("completion_state").GetString());
+        var content = doc.RootElement.GetProperty("completion").GetProperty("content").GetString()!;
+        Assert.Contains("not_a_real_verdict", content);
+        Assert.Contains("recognized verdict", content);
+    }
+
+    [Fact]
+    public async Task PostScopeAuditPacket_AcceptanceGapSuspected_StoresCorrectly()
+    {
+        var pool = new FakeWorkerPoolRepository()
+            .AddAssignment(NewAssignment(WorkerPoolStates.Running, role: "scope_auditor", runId: "run-audit-gap"));
+        var messages = new CapturingMessageRepository();
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-audit-gap",
+            requested_by: "scope-auditor",
+            status: "completed",
+            role: "scope_auditor",
+            packet_type: "scope_audit_packet",
+            summary: "Audited #1956-style task: lifecycle API foundation exists but live projection is empty.",
+            audit_verdict: "acceptance_gap_suspected",
+            audit_evidence_checked: "implementation packet, review findings, live /api/agent-work/current returns empty",
+            audit_recommended_route: "runner",
+            audited_head_commit: "1cf884ab6f614933ae4497aeb340f44b5eda15d0",
+            audited_review_round_id: 1075,
+            scope_follow_ups: "[{\"task_id\":1972,\"title\":\"Use producer deadlines in current projection\",\"classification\":\"acceptance_gap_candidate\"}]",
+            scope_parent_closable: "No — follow-up #1972 is required for parent-task acceptance",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        Assert.Equal("present", doc.RootElement.GetProperty("completion_state").GetString());
+
+        var metadata = doc.RootElement.GetProperty("completion").GetProperty("metadata");
+        Assert.Equal("acceptance_gap_suspected", metadata.GetProperty("audit_verdict").GetString());
+        Assert.Equal("runner", metadata.GetProperty("audit_recommended_route").GetString());
+        Assert.Equal("1cf884ab6f614933ae4497aeb340f44b5eda15d0", metadata.GetProperty("audited_head_commit").GetString());
+        Assert.Equal(1075, metadata.GetProperty("audited_review_round_id").GetInt32());
+    }
+
+    [Fact]
+    public async Task PrepareScopeAuditorContextPacket_ContainsExpectedInstructions()
+    {
+        var tasks = new PacketToolsScopeFakeTaskRepository();
+        tasks.SetupTask(1, "test-proj");
+        var messages = new PacketToolsScopeFakeMessageRepository();
+
+        var result = await PacketTools.PrepareScopeAuditorContextPacket(
+            tasks, messages, "test-proj", 1, "test-user",
+            completion_reporting_mode: "worker_mcp_tool", verbose: true);
+
+        using var doc = JsonDocument.Parse(result);
+        var content = doc.RootElement.GetProperty("packet").GetProperty("content").GetString()!;
+        Assert.Contains("scope_auditor", content);
+        Assert.Contains("completion semantics", content);
+        Assert.Contains("acceptance_gap_candidate", content);
+        Assert.Contains("unilaterally reopen or close tasks", content);
+        Assert.Contains("#1956", content);
+        Assert.Contains("audit_verdict", content);
+        Assert.Contains("scope_ok", content);
+        Assert.Contains("audit_inconclusive", content);
+        Assert.Contains("code quality or product ownership", content);
+
+        var metadata = doc.RootElement.GetProperty("packet").GetProperty("metadata");
+        Assert.Equal("scope_auditor_context_packet", metadata.GetProperty("type").GetString());
+        Assert.Equal("scope_auditor", metadata.GetProperty("role").GetString());
+    }
+
+    private static WorkerAssignment NewAssignment(string state, string projectId = "proj", string role = "coder", string runId = "run-1") => new()
     {
         Id = 1,
         WorkerIdentity = "worker-1",
-        RunId = "run-1",
+        RunId = runId,
         ProjectId = projectId,
         TaskId = 1245,
-        Role = "coder",
+        Role = role,
         AssignedBy = "runner",
         State = state,
         ProfileIdentity = "den-worker",

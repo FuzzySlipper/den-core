@@ -160,7 +160,7 @@ public sealed class TaskTools
         var detail = await repo.GetDetailAsync(task_id);
         if (verbose)
             return JsonSerializer.Serialize(detail, JsonOpts.Default);
-        return JsonSerializer.Serialize(ConciseReadResponse.Shrink(detail), JsonOpts.Default);
+        return JsonSerializer.Serialize(ConciseReadResponse.ShrinkTaskDetail(detail), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-validator", "worker-drift-checker", "worker-packet-auditor")]

@@ -431,4 +431,285 @@ public class McpConciseReadResponseTests
         var item = doc.RootElement.GetProperty("items")[0];
         Assert.False(item.TryGetProperty("notes", out _));
     }
+
+    // ── ShrinkTaskDetail (get_task concise path) ────────────────────────
+
+    [Fact]
+    public void ShrinkTaskDetail_BoundsDescriptionToContentPreview()
+    {
+        var longDesc = new string('D', 1200);
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 1, ProjectId = "den-mcp", Title = "Long-desc task",
+                Status = TaskStatus.InProgress, Priority = 2,
+                Description = longDesc,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>(),
+            RecentMessages = new List<Message>(),
+            ReviewRounds = new List<ReviewRound>(),
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        var root = doc.RootElement;
+
+        // Description is NOT a raw string — it's a preview object
+        Assert.Equal(JsonValueKind.Object, root.GetProperty("description").ValueKind);
+        var desc = root.GetProperty("description");
+        Assert.True(desc.GetProperty("content_truncated").GetBoolean());
+        Assert.Equal(longDesc.Length, desc.GetProperty("content_chars").GetInt32());
+        var preview = desc.GetProperty("content_preview").GetString();
+        Assert.NotNull(preview);
+        Assert.True(preview.Length <= 500);
+
+        // Full description text should NOT be accessible
+        Assert.False(root.TryGetProperty("Description", out _));
+    }
+
+    [Fact]
+    public void ShrinkTaskDetail_NoDescription_ReturnsNullDescription()
+    {
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 2, ProjectId = "p", Title = "No desc",
+                Status = TaskStatus.Planned,
+                Description = null,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>(),
+            RecentMessages = new List<Message>(),
+            ReviewRounds = new List<ReviewRound>(),
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("description").ValueKind);
+    }
+
+    [Fact]
+    public void ShrinkTaskDetail_BoundsRecentMessages()
+    {
+        var msgs = new List<Message>();
+        for (int i = 0; i < 10; i++)
+        {
+            msgs.Add(new Message
+            {
+                Id = i + 100, ProjectId = "p", Sender = "agent",
+                Content = $"Long message body {i}: " + new string('x', 800),
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
+
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 3, ProjectId = "p", Title = "T",
+                Status = TaskStatus.InProgress,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>(),
+            RecentMessages = msgs,
+            ReviewRounds = new List<ReviewRound>(),
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        var recentMessages = doc.RootElement.GetProperty("recent_messages");
+        Assert.True(recentMessages.GetArrayLength() <= 5);
+
+        foreach (var msg in recentMessages.EnumerateArray())
+        {
+            // Each message should have content_preview, not raw Content
+            Assert.True(msg.TryGetProperty("content_preview", out _));
+            Assert.True(msg.GetProperty("content_truncated").GetBoolean());
+        }
+    }
+
+    [Fact]
+    public void ShrinkTaskDetail_IncludesDependenciesAndSubtasks()
+    {
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 4, ProjectId = "p", Title = "Parent",
+                Status = TaskStatus.InProgress,
+            },
+            Dependencies = new List<TaskDependencyInfo>
+            {
+                new() { TaskId = 10, Title = "Blocking task", Status = TaskStatus.InProgress },
+                new() { TaskId = 11, Title = "Other dep", Status = TaskStatus.Done },
+            },
+            Subtasks = new List<TaskSummary>
+            {
+                new() { Id = 20, Title = "Sub A", Status = TaskStatus.InProgress, Priority = 1, ProjectId = "p" },
+                new() { Id = 21, Title = "Sub B", Status = TaskStatus.Planned, Priority = 2, ProjectId = "p" },
+            },
+            RecentMessages = new List<Message>(),
+            ReviewRounds = new List<ReviewRound>(),
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        var deps = doc.RootElement.GetProperty("dependencies");
+        Assert.Equal(2, deps.GetArrayLength());
+        Assert.Equal(10, deps[0].GetProperty("task_id").GetInt32());
+        Assert.Equal("Blocking task", deps[0].GetProperty("title").GetString());
+
+        var subs = doc.RootElement.GetProperty("subtasks");
+        Assert.Equal(2, subs.GetArrayLength());
+        Assert.Equal(20, subs[0].GetProperty("id").GetInt32());
+        Assert.Equal("Sub A", subs[0].GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public void ShrinkTaskDetail_IncludesReviewWorkflowCounts()
+    {
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 5, ProjectId = "p", Title = "T",
+                Status = TaskStatus.Review,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>(),
+            RecentMessages = new List<Message>(),
+            ReviewRounds = new List<ReviewRound>
+            {
+                new()
+                {
+                    Id = 1, TaskId = 5, RoundNumber = 1,
+                    RequestedBy = "runner", Branch = "b", BaseBranch = "main",
+                    BaseCommit = "abc", HeadCommit = "def",
+                    Verdict = ReviewVerdict.ChangesRequested,
+                    RequestedAt = DateTime.UtcNow,
+                },
+            },
+            OpenReviewFindings = new List<ReviewFinding>
+            {
+                new()
+                {
+                    Id = 1, FindingKey = "F-1", TaskId = 5,
+                    ReviewRoundId = 1, ReviewRoundNumber = 1, FindingNumber = 1,
+                    CreatedBy = "v", Category = ReviewFindingCategory.AcceptanceGap,
+                    Summary = "Gap", Status = ReviewFindingStatus.Open,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                },
+                new()
+                {
+                    Id = 2, FindingKey = "F-2", TaskId = 5,
+                    ReviewRoundId = 1, ReviewRoundNumber = 1, FindingNumber = 2,
+                    CreatedBy = "v", Category = ReviewFindingCategory.TestWeakness,
+                    Summary = "Weak", Status = ReviewFindingStatus.Open,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                },
+            },
+            ResolvedReviewFindings = new List<ReviewFinding>
+            {
+                new()
+                {
+                    Id = 3, FindingKey = "F-3", TaskId = 5,
+                    ReviewRoundId = 1, ReviewRoundNumber = 1, FindingNumber = 3,
+                    CreatedBy = "v", Category = ReviewFindingCategory.BlockingBug,
+                    Summary = "Bug", Status = ReviewFindingStatus.VerifiedFixed,
+                    CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                },
+            },
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                ReviewRoundCount = 1,
+                CurrentVerdict = ReviewVerdict.ChangesRequested,
+                UnresolvedFindingCount = 2,
+                ResolvedFindingCount = 1,
+                AddressedFindingCount = 0,
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        Assert.Equal(2, doc.RootElement.GetProperty("open_review_findings_count").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("resolved_review_findings_count").GetInt32());
+
+        var rw = doc.RootElement.GetProperty("review_workflow");
+        Assert.Equal(1, rw.GetProperty("review_round_count").GetInt32());
+        Assert.Equal("ChangesRequested", rw.GetProperty("current_verdict").GetString());
+        Assert.Equal(2, rw.GetProperty("unresolved_finding_count").GetInt32());
+
+        var rounds = doc.RootElement.GetProperty("review_rounds");
+        Assert.Equal(1, rounds.GetArrayLength());
+        Assert.Equal("ChangesRequested", rounds[0].GetProperty("verdict").GetString());
+    }
+
+    [Fact]
+    public void ShrinkTaskDetail_HasDeepReadHint()
+    {
+        var detail = new TaskDetail
+        {
+            Task = new ProjectTask
+            {
+                Id = 6, ProjectId = "p", Title = "T",
+                Status = TaskStatus.Planned,
+            },
+            Dependencies = new List<TaskDependencyInfo>(),
+            Subtasks = new List<TaskSummary>(),
+            RecentMessages = new List<Message>(),
+            ReviewRounds = new List<ReviewRound>(),
+            OpenReviewFindings = new List<ReviewFinding>(),
+            ResolvedReviewFindings = new List<ReviewFinding>(),
+            ReviewWorkflow = new ReviewWorkflowSummary
+            {
+                Timeline = new List<ReviewTimelineEntry>(),
+            },
+        };
+
+        var result = ConciseReadResponse.ShrinkTaskDetail(detail);
+        var json = JsonSerializer.Serialize(result, JsonOpts);
+        using var doc = JsonDocument.Parse(json);
+
+        var hint = doc.RootElement.GetProperty("deep_read_hint").GetString();
+        Assert.NotNull(hint);
+        Assert.Contains("verbose=true", hint);
+    }
 }

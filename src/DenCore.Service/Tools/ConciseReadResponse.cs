@@ -245,6 +245,85 @@ public static class ConciseReadResponse
     }
 
     /// <summary>
+    /// Explicit bounded projection for TaskDetail returned by get_task.
+    /// Stops full Description and full RecentMessages from leaking through
+    /// the generic Shrink path which rebuilds the wrapper but copies the
+    /// Task sub-object unchanged.
+    /// </summary>
+    public static object ShrinkTaskDetail(DenCore.Models.TaskDetail detail)
+    {
+        var taskObj = detail.Task;
+        var desc = taskObj.Description;
+        object? descProjection = null;
+        if (!string.IsNullOrEmpty(desc))
+        {
+            var truncated = desc.Length > DefaultContentPreviewChars;
+            descProjection = new
+            {
+                content_preview = truncated ? desc[..DefaultContentPreviewChars] : desc,
+                content_chars = desc.Length,
+                content_truncated = truncated,
+            };
+        }
+
+        return new
+        {
+            id = taskObj.Id,
+            project_id = taskObj.ProjectId,
+            title = taskObj.Title,
+            status = taskObj.Status.ToString(),
+            priority = taskObj.Priority,
+            assigned_to = taskObj.AssignedTo,
+            parent_id = taskObj.ParentId,
+            tags = taskObj.Tags,
+            created_at = taskObj.CreatedAt,
+            updated_at = taskObj.UpdatedAt,
+            description = descProjection,
+
+            dependencies = detail.Dependencies.Select(d => new
+            {
+                task_id = d.TaskId,
+                title = d.Title,
+                status = d.Status.ToString(),
+            }),
+
+            subtasks = detail.Subtasks.Select(s => new
+            {
+                id = s.Id,
+                title = s.Title,
+                status = s.Status.ToString(),
+                priority = s.Priority,
+            }),
+
+            recent_messages = ShrinkMessages(detail.RecentMessages),
+
+            review_rounds = detail.ReviewRounds.Select(r => new
+            {
+                id = r.Id,
+                round_number = r.RoundNumber,
+                branch = r.Branch,
+                head_commit = r.HeadCommit,
+                verdict = r.Verdict?.ToString(),
+                requested_at = r.RequestedAt,
+            }),
+
+            open_review_findings_count = detail.OpenReviewFindings.Count,
+            resolved_review_findings_count = detail.ResolvedReviewFindings.Count,
+
+            review_workflow = new
+            {
+                review_round_count = detail.ReviewWorkflow.ReviewRoundCount,
+                current_verdict = detail.ReviewWorkflow.CurrentVerdict?.ToString(),
+                unresolved_finding_count = detail.ReviewWorkflow.UnresolvedFindingCount,
+                resolved_finding_count = detail.ReviewWorkflow.ResolvedFindingCount,
+                addressed_finding_count = detail.ReviewWorkflow.AddressedFindingCount,
+            },
+
+            deep_read_hint = "Use get_task with verbose=true for full task detail including full description and full message bodies.",
+        };
+    }
+
+    /// <summary>
     /// Shrink a review-round list to concise projections. Preserves branch/commit/verdict/timing fields.
     /// </summary>
     public static object ShrinkReviewRoundList(System.Collections.IList rounds)

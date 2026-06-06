@@ -2421,6 +2421,15 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.True(result.StaleCount >= 1);
         Assert.Contains(result.Conditions, c => c.Classification == StaleClassificationTypes.StaleAck
             && c.AssignmentId == assignment.Id);
+        var staleAck = result.Conditions.First(c => c.Classification == StaleClassificationTypes.StaleAck
+            && c.AssignmentId == assignment.Id);
+        Assert.NotNull(staleAck.StalenessDeadline);
+        Assert.NotNull(staleAck.LastActivityAt);
+        Assert.True(DateTime.TryParse(staleAck.StalenessDeadline, out var deadline));
+        Assert.True(DateTime.TryParse(staleAck.LastActivityAt, out var lastActivity));
+        Assert.True(deadline > lastActivity, $"Expected deadline {staleAck.StalenessDeadline} > lastActivity {staleAck.LastActivityAt}");
+        Assert.NotNull(staleAck.Age);
+        Assert.Contains("minute", staleAck.Age, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -2628,6 +2637,116 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         });
         Assert.Contains(result.Conditions, c => c.RunId == "run-filter-1");
         Assert.DoesNotContain(result.Conditions, c => c.RunId == "run-filter-2");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Orphaned orchestrator lease detection
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsOrphanedOrchestratorLease_NoChildren()
+    {
+        // Seed a member for the FK reference
+        await SeedMemberAsync("orch-sweep-nochild", """["planning"]""", "pooled-orchestrator", "project_orchestrator");
+
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO orchestrator_leases (lease_id, lease_kind, scope_type, project_id,
+                lease_owner, orchestrator_identity, profile_identity, state, created_at)
+            VALUES ('orch-nochild:1', 'project_orchestrator', 'project', 'test-proj',
+                'runner', 'orch-sweep-nochild', 'pooled-orchestrator', 'active',
+                datetime('now', '-30 minutes'))
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            OrchestratorStaleThresholdMinutes = 20,
+        });
+
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
+            && c.WorkerIdentity == "orch-sweep-nochild");
+        var orphaned = result.Conditions.First(c =>
+            c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
+            && c.WorkerIdentity == "orch-sweep-nochild");
+        Assert.Equal("critical", orphaned.Severity);
+        Assert.NotNull(orphaned.StalenessDeadline);
+        Assert.NotNull(orphaned.Age);
+        Assert.Contains("minute", orphaned.Age, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DetectsOrphanedOrchestratorLease_WithChildren()
+    {
+        // Seed a member for the FK reference
+        await SeedMemberAsync("orch-sweep-child", """["planning"]""", "pooled-orchestrator", "project_orchestrator");
+
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        // Create the orchestrator lease backdated
+        await using var cmdLease = conn.CreateCommand();
+        cmdLease.CommandText = """
+            INSERT INTO orchestrator_leases (lease_id, lease_kind, scope_type, project_id,
+                lease_owner, orchestrator_identity, profile_identity, state, created_at)
+            VALUES ('orch-child:1', 'project_orchestrator', 'project', 'test-proj',
+                'runner', 'orch-sweep-child', 'pooled-orchestrator', 'active',
+                datetime('now', '-30 minutes'))
+            """;
+        await cmdLease.ExecuteNonQueryAsync();
+
+        // Create a child assignment (non-terminal) for the same project
+        var taskId = await SeedTaskAsync();
+        await SeedMemberAsync("child-worker");
+        await using var cmdAssign = conn.CreateCommand();
+        cmdAssign.CommandText = """
+            INSERT INTO worker_assignments (worker_identity, run_id, project_id, task_id, role, assigned_by,
+                state, lease_id, profile_identity, acquired_at, created_at)
+            VALUES ('child-worker', 'run-child-1', 'test-proj', @taskId, 'coder', 'runner',
+                'running', 'child-worker:run-child-1:1', '', datetime('now'),
+                datetime('now', '-25 minutes'))
+            """;
+        cmdAssign.Parameters.AddWithValue("@taskId", taskId);
+        await cmdAssign.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            OrchestratorStaleThresholdMinutes = 20,
+        });
+
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
+            && c.WorkerIdentity == "orch-sweep-child");
+        var orphaned = result.Conditions.First(c =>
+            c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
+            && c.WorkerIdentity == "orch-sweep-child");
+        Assert.Equal("warning", orphaned.Severity);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_FreshOrchestratorLeaseIsNotStale()
+    {
+        await SeedMemberAsync("orch-fresh", """["planning"]""", "pooled-orchestrator", "project_orchestrator");
+
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO orchestrator_leases (lease_id, lease_kind, scope_type, project_id,
+                lease_owner, orchestrator_identity, profile_identity, state, created_at)
+            VALUES ('orch-fresh:1', 'project_orchestrator', 'project', 'test-proj',
+                'runner', 'orch-fresh', 'pooled-orchestrator', 'active',
+                datetime('now'))
+            """;
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            OrchestratorStaleThresholdMinutes = 20,
+        });
+
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
+            && c.WorkerIdentity == "orch-fresh");
     }
 
     // ─────────────────────────────────────────────────────────────────

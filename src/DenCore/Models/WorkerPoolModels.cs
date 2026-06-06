@@ -1161,6 +1161,12 @@ public sealed class StaleSweepOptions
     /// <summary>Staleness threshold in minutes for orphaned orchestrator leases. Default 20.</summary>
     public int OrchestratorStaleThresholdMinutes { get; set; } = 20;
 
+    /// <summary>Staleness threshold in minutes for completion packets whose assignment never terminalized. Default 5.</summary>
+    public int CompletionTerminalizedStaleThresholdMinutes { get; set; } = 5;
+
+    /// <summary>Staleness threshold in minutes for duplicate assignments holding capacity. Default 5.</summary>
+    public int DuplicateAssignmentStaleThresholdMinutes { get; set; } = 5;
+
     /// <summary>Maximum conditions to return. Default 100, max 200.</summary>
     public int Limit { get; set; } = 100;
 }

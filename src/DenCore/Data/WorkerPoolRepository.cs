@@ -1998,6 +1998,39 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         }
     }
 
+    // ── Staleness metadata helpers ───────────────────────────────────────
+
+    /// <summary>
+    /// Compute an ISO 8601 staleness deadline from the last-activity timestamp and a threshold in minutes.
+    /// </summary>
+    private static string ComputeStalenessDeadline(string? lastActivityAt, int thresholdMinutes)
+    {
+        if (!string.IsNullOrWhiteSpace(lastActivityAt) && DateTime.TryParse(lastActivityAt, out var activityTime))
+        {
+            return activityTime.AddMinutes(thresholdMinutes).ToString("o");
+        }
+        return DateTime.UtcNow.ToString("o");
+    }
+
+    /// <summary>
+    /// Compute a human-readable age string from an ISO 8601 or SQLite datetime timestamp.
+    /// </summary>
+    private static string ComputeAge(string? activityAt)
+    {
+        if (!string.IsNullOrWhiteSpace(activityAt) && DateTime.TryParse(activityAt, out var activityTime))
+        {
+            var age = DateTime.UtcNow - activityTime.ToUniversalTime();
+            if (age.TotalMinutes < 1) return "less than a minute";
+            if (age.TotalMinutes < 2) return "about 1 minute";
+            if (age.TotalMinutes < 60) return $"about {(int)age.TotalMinutes} minutes";
+            if (age.TotalHours < 2) return "about 1 hour";
+            if (age.TotalHours < 24) return $"about {(int)age.TotalHours} hours";
+            if (age.TotalDays < 2) return "about 1 day";
+            return $"about {(int)age.TotalDays} days";
+        }
+        return "unknown";
+    }
+
     // ── Stale Worker Sweep ────────────────────────────────────────────────
 
     public async Task<StaleWorkerSweepResult> SweepStaleWorkersAsync(StaleSweepOptions options)
@@ -2077,8 +2110,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerRole = role,
                 CurrentState = state,
                 LastActivityAt = createdAt,
-                StalenessDeadline = null,
-                Age = $"assigned at {createdAt} — unacknowledged",
+                StalenessDeadline = ComputeStalenessDeadline(createdAt, options.AckStaleThresholdMinutes),
+                Age = ComputeAge(createdAt),
                 StateReason = $"Assignment #{assignmentId} for role '{role}' was leased but never acknowledged or started. "
                     + $"Created at {createdAt}.",
                 SuggestedNextAction = $"Release or expire assignment #{assignmentId}. "
@@ -2142,8 +2175,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerRole = role,
                 CurrentState = state,
                 LastActivityAt = createdAt,
-                StalenessDeadline = null,
-                Age = $"running since {createdAt} — no checkpoints or completion",
+                StalenessDeadline = ComputeStalenessDeadline(createdAt, options.RunningStaleThresholdMinutes),
+                Age = ComputeAge(createdAt),
                 StateReason = $"Assignment #{assignmentId} is 'running' but has produced no checkpoints or completion packets. "
                     + $"Started at {createdAt}.",
                 SuggestedNextAction = $"Investigate worker #{workerId} — it may be stalled or the runtime has lost track. "
@@ -2236,8 +2269,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerRole = workerRole,
                 CurrentState = currentState,
                 LastActivityAt = lastActivityAt,
-                StalenessDeadline = null,
-                Age = $"review requested at {requestedAt} — no verdict",
+                StalenessDeadline = ComputeStalenessDeadline(lastActivityAt, options.ReviewerStaleThresholdMinutes),
+                Age = ComputeAge(lastActivityAt),
                 StateReason = $"Review round R{roundNumber} for task #{taskId} ({title}) on branch '{branch}' has no verdict. "
                     + (reviewerAssignmentId is not null
                         ? $"Reviewer assignment #{reviewerAssignmentId} is '{reviewerState}' — no completion packet received."
@@ -2303,8 +2336,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerRole = role,
                 CurrentState = state,
                 LastActivityAt = checkpointCreatedAt,
-                StalenessDeadline = null,
-                Age = $"completion packet at {checkpointCreatedAt} — assignment state is '{state}'",
+                StalenessDeadline = ComputeStalenessDeadline(checkpointCreatedAt, options.CompletionTerminalizedStaleThresholdMinutes),
+                Age = ComputeAge(checkpointCreatedAt),
                 StateReason = $"Assignment #{assignmentId} received a '{checkpointType}' checkpoint (#{checkpointId}) at {checkpointCreatedAt}, "
                     + $"but assignment state remains '{state}' instead of a terminal state.",
                 SuggestedNextAction = $"Transition assignment #{assignmentId} to 'completed' or 'failed' to release the worker. "
@@ -2385,8 +2418,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerRole = "project_orchestrator",
                 CurrentState = state,
                 LastActivityAt = createdAt,
-                StalenessDeadline = null,
-                Age = $"{state} since {createdAt}",
+                StalenessDeadline = ComputeStalenessDeadline(createdAt, options.OrchestratorStaleThresholdMinutes),
+                Age = ComputeAge(createdAt),
                 StateReason = reason,
                 SuggestedNextAction = childCount == 0
                     ? $"Drain or expire orchestrator lease #{leaseId}. "
@@ -2444,8 +2477,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WorkerIdentity = workerIds.Split(',')[0],
                 CurrentState = states,
                 LastActivityAt = latestCreated,
-                StalenessDeadline = null,
-                Age = $"{count} active assignments",
+                StalenessDeadline = ComputeStalenessDeadline(latestCreated, options.DuplicateAssignmentStaleThresholdMinutes),
+                Age = ComputeAge(latestCreated),
                 StateReason = $"Run '{runId}' has {count} non-terminal assignments holding capacity: [{assignmentIds}]. "
                     + $"Worker identities: [{workerIds}]. States: [{states}]. Only one assignment per run should be active.",
                 SuggestedNextAction = $"Expire all but the most recent assignment for run '{runId}'. "

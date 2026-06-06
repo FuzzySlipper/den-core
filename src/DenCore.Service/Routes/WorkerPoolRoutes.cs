@@ -420,6 +420,109 @@ public static class WorkerPoolRoutes
             return Results.Ok(result);
         });
 
+        pool.MapPost("/stale/reconcile", async (
+            IWorkerPoolRepository repo,
+            IMessageRepository messages,
+            IAgentInstanceBindingRepository bindings,
+            JsonElement body) =>
+        {
+            StaleSweepOptions? sweepOpts;
+            try
+            {
+                sweepOpts = JsonSerializer.Deserialize<StaleSweepOptions>(body.GetRawText(), JsonOpts.Default);
+            }
+            catch (JsonException)
+            {
+                sweepOpts = null;
+            }
+            sweepOpts ??= new StaleSweepOptions();
+
+            var result = await repo.ReconcileStaleWorkerAttentionAsync(sweepOpts);
+
+            // For each new condition, attempt to notify a planner/runner binding.
+            // If no planner is reachable, create a user-facing notification message.
+            var routedEvents = 0;
+            var notificationEvents = 0;
+
+            foreach (var condition in result.NewConditions)
+            {
+                if (string.IsNullOrWhiteSpace(condition.ProjectId))
+                    continue;
+
+                var plannerCandidates = await bindings.ListAsync(new AgentInstanceBindingListOptions
+                {
+                    ProjectId = condition.ProjectId,
+                    Statuses = [AgentInstanceBindingStatus.Active, AgentInstanceBindingStatus.Degraded],
+                    Role = null, // match any planner/runner/conductor
+                });
+
+                var plannerBinding = plannerCandidates.FirstOrDefault(b =>
+                    b.Role is "planner" or "conductor" or "runner");
+
+                if (plannerBinding is not null)
+                {
+                    // Create a wake message in the task thread
+                    await messages.CreateAsync(new Message
+                    {
+                        ProjectId = condition.ProjectId,
+                        TaskId = condition.TaskId,
+                        Sender = "den-core",
+                        Content = $"## Stale worker detected — {condition.Classification}\n\n"
+                            + $"**Severity**: {condition.Severity}\n"
+                            + $"**Reason**: {condition.StateReason}\n"
+                            + $"**Suggested action**: {condition.SuggestedNextAction}\n\n"
+                            + $"*Deduped by signature: `{condition.StaleSignature}`*",
+                        Intent = MessageIntent.Notification,
+                        Metadata = JsonSerializer.SerializeToElement(new
+                        {
+                            type = "stale_worker_alert",
+                            stale_signature = condition.StaleSignature,
+                            classification = condition.Classification,
+                            severity = condition.Severity,
+                            planner_target_role = plannerBinding.Role,
+                        }),
+                    });
+                    routedEvents++;
+                }
+                else
+                {
+                    // Fallback: create a user notification for the project
+                    await messages.CreateAsync(new Message
+                    {
+                        ProjectId = condition.ProjectId,
+                        TaskId = condition.TaskId,
+                        Sender = "den-core",
+                        Content = $"## Stale worker alert — no planner reachable for `{condition.ProjectId}`\n\n"
+                            + $"**Classification**: {condition.Classification}\n"
+                            + $"**Severity**: {condition.Severity}\n"
+                            + $"**Reason**: {condition.StateReason}\n"
+                            + $"**Suggested action**: {condition.SuggestedNextAction}\n\n"
+                            + $"*Deduped by signature: `{condition.StaleSignature}`*",
+                        Intent = MessageIntent.Notification,
+                        Metadata = JsonSerializer.SerializeToElement(new
+                        {
+                            type = "stale_worker_alert_no_owner",
+                            stale_signature = condition.StaleSignature,
+                            classification = condition.Classification,
+                            severity = condition.Severity,
+                        }),
+                    });
+                    notificationEvents++;
+                }
+            }
+
+            return Results.Ok(new
+            {
+                result.TotalDetected,
+                result.NewCount,
+                result.SkippedCount,
+                routed_planner_events = routedEvents,
+                no_owner_notifications = notificationEvents,
+                result.NewConditions,
+                result.ReconciledAt,
+            });
+        });
+
         // ── Summary ──────────────────────────────────────────────────
         pool.MapGet("/summary", async (IWorkerPoolRepository repo) =>
         {

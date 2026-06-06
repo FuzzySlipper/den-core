@@ -119,6 +119,13 @@ public interface IWorkerPoolRepository
     /// </summary>
     Task<StaleWorkerSweepResult> SweepStaleWorkersAsync(StaleSweepOptions options);
 
+    /// <summary>
+    /// Sweep for stale workers AND reconcile attention events — persists deduped
+    /// stale events so each StaleSignature is only emitted once. Returns only
+    /// new conditions not seen in previous reconciliation runs.
+    /// </summary>
+    Task<StaleReconciliationResult> ReconcileStaleWorkerAttentionAsync(StaleSweepOptions options);
+
     // ── Orchestrator Leases ───────────────────────────────────────────────
 
     /// <summary>
@@ -2049,6 +2056,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         await AddCompletionNotTerminalizedAsync(conn, options, conditions, piFilter, taskFilter);
         await AddOrphanedOrchestratorLeaseAsync(conn, options, conditions, piFilter, taskFilter);
         await AddDuplicateAssignmentForRunAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddDirectAgentClaimedNoTerminalAsync(conn, options, conditions, piFilter, taskFilter);
 
         return new StaleWorkerSweepResult
         {
@@ -2059,6 +2067,80 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 .Take(limit)
                 .ToList(),
             SweptAt = sweptAt,
+        };
+    }
+
+    public async Task<StaleReconciliationResult> ReconcileStaleWorkerAttentionAsync(StaleSweepOptions options)
+    {
+        var sweepResult = await SweepStaleWorkersAsync(options);
+        var reconciledAt = DateTime.UtcNow.ToString("o");
+
+        var newConditions = new List<StaleWorkerCondition>();
+        var skippedSignatures = new List<string>();
+
+        await using var conn = await _db.CreateConnectionAsync();
+
+        foreach (var condition in sweepResult.Conditions)
+        {
+            // Check if this StaleSignature has already been reconciled
+            await using var checkCmd = conn.CreateCommand();
+            checkCmd.CommandText = """
+                SELECT COUNT(*) FROM agent_stream_entries
+                WHERE event_type = 'stale_worker_detected'
+                  AND dedup_key = @dedupKey
+                """;
+            checkCmd.Parameters.AddWithValue("@dedupKey", condition.StaleSignature);
+            var existingCount = (long)(await checkCmd.ExecuteScalarAsync())!;
+
+            if (existingCount > 0)
+            {
+                skippedSignatures.Add(condition.StaleSignature);
+                continue;
+            }
+
+            // Persist the deduped event as a Core-owned stream entry
+            await using var insertCmd = conn.CreateCommand();
+            insertCmd.CommandText = """
+                INSERT INTO agent_stream_entries (
+                    stream_kind, event_type, project_id, task_id,
+                    sender, recipient_agent, recipient_role,
+                    delivery_mode, body, metadata, dedup_key
+                )
+                VALUES (
+                    'ops', 'stale_worker_detected', @projectId, @taskId,
+                    'den-core', @recipientAgent, @recipientRole,
+                    'record_only', @body, @metadata, @dedupKey
+                )
+                """;
+            insertCmd.Parameters.AddWithValue("@projectId", (object?)condition.ProjectId ?? DBNull.Value);
+            insertCmd.Parameters.AddWithValue("@taskId", (object?)condition.TaskId ?? DBNull.Value);
+            insertCmd.Parameters.AddWithValue("@recipientAgent", (object?)condition.WorkerIdentity ?? DBNull.Value);
+            insertCmd.Parameters.AddWithValue("@recipientRole", (object?)condition.WorkerRole ?? DBNull.Value);
+            insertCmd.Parameters.AddWithValue("@body", condition.StateReason ?? string.Empty);
+            insertCmd.Parameters.AddWithValue("@metadata", JsonSerializer.Serialize(new
+            {
+                classification = condition.Classification,
+                severity = condition.Severity,
+                suggested_next_action = condition.SuggestedNextAction,
+                evidence_ids = condition.EvidenceIds,
+                run_id = condition.RunId,
+                assignment_id = condition.AssignmentId,
+                review_round_id = condition.ReviewRoundId,
+            }));
+            insertCmd.Parameters.AddWithValue("@dedupKey", condition.StaleSignature);
+            await insertCmd.ExecuteNonQueryAsync();
+
+            newConditions.Add(condition);
+        }
+
+        return new StaleReconciliationResult
+        {
+            TotalDetected = sweepResult.Conditions.Count,
+            NewCount = newConditions.Count,
+            SkippedCount = skippedSignatures.Count,
+            NewConditions = newConditions,
+            SkippedSignatures = skippedSignatures,
+            ReconciledAt = reconciledAt,
         };
     }
 
@@ -2132,7 +2214,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         {
             "wa.state = 'running'",
             $"wa.created_at <= datetime('now', '-{options.RunningStaleThresholdMinutes} minutes')",
-            "latest_wc.latest_checkpoint_at IS NULL"
+            $"(latest_wc.latest_checkpoint_at IS NULL OR latest_wc.latest_checkpoint_at <= datetime('now', '-{options.RunningStaleThresholdMinutes} minutes'))"
         };
         AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
 
@@ -2485,6 +2567,76 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     + "These duplicate assignments are leaking pool capacity.",
                 EvidenceIds = $"[{assignmentIds}]",
                 Severity = "critical",
+                DetectedAt = DateTime.UtcNow.ToString("o"),
+            });
+        }
+    }
+
+    private static async Task AddDirectAgentClaimedNoTerminalAsync(
+        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        bool piFilter, bool taskFilter)
+    {
+        // Detect dispatch entries that were claimed/answered (approved) but no terminal
+        // worker assignment exists — the agent acknowledged the work but never completed it.
+        await using var cmd = conn.CreateCommand();
+        var where = new List<string>
+        {
+            "de.status = 'approved'",
+            $"de.created_at <= datetime('now', '-{options.DirectAgentStaleThresholdMinutes} minutes')"
+        };
+        if (piFilter)
+        {
+            where.Add("de.project_id = @projectId");
+            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+        }
+        if (taskFilter)
+        {
+            where.Add("de.task_id = @taskId");
+            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+        }
+
+        cmd.CommandText = $"""
+            SELECT de.id, de.project_id, de.task_id, de.target_agent, de.summary, de.created_at
+            FROM dispatch_entries de
+            LEFT JOIN worker_assignments wa
+                ON wa.project_id = de.project_id
+                AND wa.task_id = de.task_id
+                AND wa.state IN ('completed', 'failed')
+            WHERE {string.Join(" AND ", where)}
+              AND wa.id IS NULL
+            ORDER BY de.created_at ASC
+            """;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var dispatchId = reader.GetInt32(0);
+            var projectId = reader.GetString(1);
+            var dispatchTaskId = reader.IsDBNull(2) ? null : (int?)reader.GetInt32(2);
+            var targetAgent = reader.GetString(3);
+            var summary = reader.IsDBNull(4) ? null : reader.GetString(4);
+            var createdAt = reader.GetString(5);
+
+            conditions.Add(new StaleWorkerCondition
+            {
+                StaleSignature = $"direct_agent_claimed_no_terminal:{projectId}:{dispatchId}",
+                Classification = StaleClassificationTypes.DirectAgentClaimedNoTerminal,
+                ProjectId = projectId,
+                TaskId = dispatchTaskId,
+                WorkerIdentity = targetAgent,
+                WorkerRole = "direct_agent_recipient",
+                CurrentState = "approved",
+                LastActivityAt = createdAt,
+                StalenessDeadline = ComputeStalenessDeadline(createdAt, options.DirectAgentStaleThresholdMinutes),
+                Age = ComputeAge(createdAt),
+                StateReason = $"Dispatch #{dispatchId} to '{targetAgent}' was approved/claimed at {createdAt} "
+                    + $"but no terminal worker assignment exists for project '{projectId}'"
+                    + (dispatchTaskId is not null ? $", task #{dispatchTaskId}" : "")
+                    + ". The agent may have acknowledged the delivery but never completed the work.",
+                SuggestedNextAction = $"Expire dispatch #{dispatchId} and re-dispatch if the work is still needed. "
+                    + "Investigate whether the target agent runtime is reachable.",
+                EvidenceIds = $"[{dispatchId}]",
+                Severity = "warning",
                 DetectedAt = DateTime.UtcNow.ToString("o"),
             });
         }

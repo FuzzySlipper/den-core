@@ -1139,6 +1139,31 @@ public sealed class StaleWorkerSweepResult
 }
 
 /// <summary>
+/// Result from a stale worker reconciliation — sweep + dedupe + persist.
+/// Only returns new (not-previously-seen) stale conditions.
+/// </summary>
+public sealed class StaleReconciliationResult
+{
+    /// <summary>Total number of stale conditions detected in the sweep (before dedupe).</summary>
+    public int TotalDetected { get; set; }
+
+    /// <summary>Number of new (not-previously-reconciled) stale conditions.</summary>
+    public int NewCount { get; set; }
+
+    /// <summary>Number of previously-seen conditions that were skipped (deduped).</summary>
+    public int SkippedCount { get; set; }
+
+    /// <summary>New stale conditions that have not been seen before.</summary>
+    public List<StaleWorkerCondition> NewConditions { get; set; } = [];
+
+    /// <summary>List of previously-seen StaleSignatures that were skipped.</summary>
+    public List<string> SkippedSignatures { get; set; } = [];
+
+    /// <summary>ISO 8601 timestamp when this reconciliation was executed.</summary>
+    public string? ReconciledAt { get; set; }
+}
+
+/// <summary>
 /// Options for the stale worker sweep.
 /// </summary>
 public sealed class StaleSweepOptions
@@ -1166,6 +1191,9 @@ public sealed class StaleSweepOptions
 
     /// <summary>Staleness threshold in minutes for duplicate assignments holding capacity. Default 5.</summary>
     public int DuplicateAssignmentStaleThresholdMinutes { get; set; } = 5;
+
+    /// <summary>Staleness threshold in minutes for direct-agent deliveries claimed but never terminalized. Default 15.</summary>
+    public int DirectAgentStaleThresholdMinutes { get; set; } = 15;
 
     /// <summary>Maximum conditions to return. Default 100, max 200.</summary>
     public int Limit { get; set; } = 100;
@@ -1214,6 +1242,13 @@ public static class StaleClassificationTypes
     /// </summary>
     public const string DuplicateAssignmentForRun = "duplicate_assignment_for_run";
 
+    /// <summary>
+    /// A direct-agent delivery (dispatch entry) was claimed/answered but no terminal
+    /// worker assignment bookkeeping exists for the target task/project.
+    /// The agent acknowledged the work but never completed or terminalized it.
+    /// </summary>
+    public const string DirectAgentClaimedNoTerminal = "direct_agent_claimed_no_terminal";
+
     public static readonly string[] ValidClassifications =
     [
         StaleAck,
@@ -1222,6 +1257,7 @@ public static class StaleClassificationTypes
         CompletionNotTerminalized,
         OrphanedOrchestratorLease,
         DuplicateAssignmentForRun,
+        DirectAgentClaimedNoTerminal,
     ];
 
     public static bool IsValidClassification(string classification) =>

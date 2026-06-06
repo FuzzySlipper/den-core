@@ -2504,6 +2504,88 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SweepStaleWorkers_RunningWithOldCheckpointIsStale()
+    {
+        // Running assignment backdated 20min, checkpoint also 20min old.
+        // Latest activity is 20min old > 15min threshold → should be stale.
+        await SeedMemberAsync("sweep-old-ckpt-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-old-ckpt",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-old-ckpt-worker",
+        });
+        Assert.NotNull(assignment);
+        await _repo.TransitionAssignmentStateAsync(assignment!.Id, WorkerPoolStates.Running);
+        await BackdateAssignmentAsync(assignment.Id, "-20 minutes");
+
+        // Insert an old checkpoint directly so we can control its timestamp
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
+            VALUES (@assignmentId, @runId, 'progress', @payload, datetime('now', '-20 minutes'))
+            """;
+        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
+        cmd.Parameters.AddWithValue("@runId", "run-old-ckpt");
+        cmd.Parameters.AddWithValue("@payload", """{"status":"in_progress"}""");
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            RunningStaleThresholdMinutes = 15,
+        });
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.StaleRunning
+            && c.RunId == "run-old-ckpt");
+        var stale = result.Conditions.First(c =>
+            c.Classification == StaleClassificationTypes.StaleRunning
+            && c.RunId == "run-old-ckpt");
+        Assert.NotNull(stale.StalenessDeadline);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_RunningWithRecentCheckpointIsNotStale()
+    {
+        // Running assignment backdated 20min, but recent checkpoint 2min ago.
+        // Latest activity is 2min old < 15min threshold → not stale.
+        await SeedMemberAsync("sweep-recent-ckpt-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-recent-ckpt",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "sweep-recent-ckpt-worker",
+        });
+        Assert.NotNull(assignment);
+        await _repo.TransitionAssignmentStateAsync(assignment!.Id, WorkerPoolStates.Running);
+        await BackdateAssignmentAsync(assignment.Id, "-20 minutes");
+
+        // Insert a recent checkpoint
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
+            VALUES (@assignmentId, @runId, 'progress', @payload, datetime('now', '-2 minutes'))
+            """;
+        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
+        cmd.Parameters.AddWithValue("@runId", "run-recent-ckpt");
+        cmd.Parameters.AddWithValue("@payload", """{"status":"in_progress"}""");
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            RunningStaleThresholdMinutes = 15,
+        });
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.StaleRunning
+            && c.RunId == "run-recent-ckpt");
+    }
+
+    [Fact]
     public async Task SweepStaleWorkers_DetectsCompletionNotTerminalized()
     {
         await SeedMemberAsync("sweep-done-worker");
@@ -2573,6 +2655,79 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SweepStaleWorkers_DetectsDirectAgentClaimedNoTerminal()
+    {
+        var taskId = await SeedTaskAsync();
+
+        // Insert an approved dispatch entry backdated 20 minutes (claimed/answered
+        // but never produced a terminal worker assignment)
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO dispatch_entries (project_id, target_agent, status, trigger_type, trigger_id,
+                task_id, summary, dedup_key, expires_at, created_at)
+            VALUES ('test-proj', 'pool-coder-01', 'approved', 'message', 1,
+                @taskId, 'Review', 'dedup-direct-agent-1',
+                datetime('now', '+24 hours'), datetime('now', '-20 minutes'))
+            """;
+        cmd.Parameters.AddWithValue("@taskId", taskId);
+        await cmd.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            DirectAgentStaleThresholdMinutes = 15,
+        });
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.DirectAgentClaimedNoTerminal
+            && c.ProjectId == "test-proj");
+        var stale = result.Conditions.First(c =>
+            c.Classification == StaleClassificationTypes.DirectAgentClaimedNoTerminal
+            && c.ProjectId == "test-proj");
+        Assert.NotNull(stale.StalenessDeadline);
+        Assert.Equal("warning", stale.Severity);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DirectAgentClaimedIsNotStale_WhenTerminalAssignmentExists()
+    {
+        var taskId = await SeedTaskAsync();
+
+        // Insert an approved dispatch entry backdated 20 minutes
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO dispatch_entries (project_id, target_agent, status, trigger_type, trigger_id,
+                task_id, summary, dedup_key, expires_at, created_at)
+            VALUES ('test-proj', 'pool-coder-01', 'approved', 'message', 1,
+                @taskId, 'Review', 'dedup-direct-agent-2',
+                datetime('now', '+24 hours'), datetime('now', '-20 minutes'))
+            """;
+        cmd.Parameters.AddWithValue("@taskId", taskId);
+        await cmd.ExecuteNonQueryAsync();
+
+        // Create a terminal worker assignment for the same task
+        await SeedMemberAsync("terminal-worker");
+        await using var cmd2 = conn.CreateCommand();
+        cmd2.CommandText = """
+            INSERT INTO worker_assignments (worker_identity, run_id, project_id, task_id, role, assigned_by,
+                state, lease_id, profile_identity, acquired_at, created_at)
+            VALUES ('terminal-worker', 'run-terminal', 'test-proj', @taskId, 'coder', 'runner',
+                'completed', 'terminal-worker:run-terminal:1', '', datetime('now'),
+                datetime('now', '-15 minutes'))
+            """;
+        cmd2.Parameters.AddWithValue("@taskId", taskId);
+        await cmd2.ExecuteNonQueryAsync();
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            DirectAgentStaleThresholdMinutes = 15,
+        });
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.DirectAgentClaimedNoTerminal
+            && c.ProjectId == "test-proj");
+    }
+
+    [Fact]
     public async Task SweepStaleWorkers_DeduplicatesByStaleSignature()
     {
         await SeedMemberAsync("sweep-dedup-worker");
@@ -2599,6 +2754,37 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         var staleAcks = result.Conditions.Where(c => c.Classification == StaleClassificationTypes.StaleAck).ToList();
         var signatures = staleAcks.Select(c => c.StaleSignature).Distinct().Count();
         Assert.Equal(staleAcks.Count, signatures);
+    }
+
+    [Fact]
+    public async Task ReconcileStaleWorkers_DedupesByStaleSignature()
+    {
+        // First reconciliation: creates stale events
+        await SeedMemberAsync("reconcile-worker");
+        var assignment = await _repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = "test-proj",
+            Role = "coder",
+            RunId = "run-reconcile",
+            AssignedBy = "runner",
+            PreferredWorkerIdentity = "reconcile-worker",
+        });
+        Assert.NotNull(assignment);
+        await BackdateAssignmentAsync(assignment!.Id, "-15 minutes");
+
+        var opts = new StaleSweepOptions { AckStaleThresholdMinutes = 10 };
+
+        var result1 = await _repo.ReconcileStaleWorkerAttentionAsync(opts);
+        Assert.True(result1.NewCount >= 1, "First reconcile should find new stale conditions");
+        Assert.True(result1.SkippedCount == 0, "First reconcile should skip nothing");
+        Assert.Contains(result1.NewConditions, c => c.Classification == StaleClassificationTypes.StaleAck);
+
+        // Second reconciliation: same stale conditions should be deduped
+        var result2 = await _repo.ReconcileStaleWorkerAttentionAsync(opts);
+        Assert.True(result2.NewCount == 0, "Second reconcile should find no new conditions");
+        Assert.True(result2.SkippedCount >= result1.NewCount,
+            $"Expected skipped >= {result1.NewCount}, got {result2.SkippedCount}");
+        Assert.Contains(result2.SkippedSignatures, s => s.StartsWith("stale_ack:test-proj:"));
     }
 
     [Fact]

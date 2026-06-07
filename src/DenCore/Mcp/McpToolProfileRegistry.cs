@@ -244,7 +244,7 @@ public sealed class McpToolProfileRegistry
 
         // ---- orchestrator bundle ----
         m.Add(McpToolBundles.Orchestrator,
-            "determine_orchestrator_next_action");
+            "determine_orchestrator_next_action", "retry_cap_report");
 
         // ---- topics bundle ----
         m.Add(McpToolBundles.Topics,

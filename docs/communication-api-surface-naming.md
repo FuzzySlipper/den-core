@@ -13,10 +13,10 @@ Den APIs intentionally expose several different communication surfaces. The word
 | Agent ops/attention item | Core | `agent_stream_entry` | agent-stream note/question/nudge | `POST /api/agent-stream` / MCP `send_agent_stream_message` | Optional, via delivery mode/bindings |
 | Structured workflow artifact | Core | `worker_completion_packet`, `review_request`, `review_findings_packet`, `validation_packet` | worker/review packet tools | Review/worker packet APIs and MCP tools | Workflow-state dependent |
 | Visible channel transcript post | Channels | `channel_message` | `PostChannelMessageRequest` | `POST /api/channels/{channelId}/messages` | Subject to channel membership wake policy |
-| Direct agent wakeable channel request | Channels | `direct_agent_event` / `direct_agent_message` | source kind `wake_event` in the backing channel message; retired Gateway-shaped alias `POST /api/gateway/direct-agent-messages` | `POST /api/direct-agent-events` | Yes: target-member wake primitive |
+| Direct agent wakeable channel request | Channels | `direct_agent_event` / `direct_agent_message` | source kind `wake_event` in the backing channel message; retired Gateway-shaped aliases `POST /api/gateway/direct-agent-messages` and `GET /api/gateway/events` | `POST /api/direct-agent-events`; readback/list via `GET /api/direct-agent-events` and `GET /api/direct-agent-events/{eventId}` | Yes: target-member wake primitive |
 | Retired Gateway delivery control record | Historical Gateway seam | `delivery_request` / `delivery_attempt` | historical delivery/wake records only | Archived Gateway evidence and compatibility readback where retained | Not a green-path producer |
 | Final visible delivery reply | Channels | `gateway_delivery_final_message` | `sourceKind=gateway_delivery`, `dedupeKey=gateway-delivery:{id}:final`; retired Gateway-shaped alias `POST /api/gateway/system-messages` | A normal `channel_message` with terminal delivery metadata | No additional wake for peer-agent fanout; it terminalizes a delivery |
-| Interim delivery progress | Channels | `delivery_activity_event` / `channel_activity_event` | `channel_activity_events` table; retired Gateway-shaped alias `POST /api/gateway/channel-activity-events` | `POST /api/channels/{channelId}/activity-events` | No; explicitly non-waking and non-terminal |
+| Interim delivery progress | Channels | `delivery_activity_event` / `channel_activity_event` | `channel_activity_events` table; retired Gateway-shaped alias `POST /api/gateway/channel-activity-events` | Canonical scoped route `POST /api/channels/{channelId}/activity-events`; supported resolver route `POST /api/channel-activity-events` | No; explicitly non-waking and non-terminal |
 | Legacy dispatch archive | Core/MCP compatibility | `legacy_dispatch_*` | old dispatch route/tool names only in archives | read-only archive/debug where retained | No new workflow use |
 
 ## Scenario-to-API examples
@@ -79,7 +79,7 @@ Do not use this as the only durable task handoff when the content is task state;
 
 ### Wake a specific agent
 
-Use the Channels-owned direct-agent event surface. The backing row is still a channel message with `sourceKind=wake_event`, but the public contract name is `direct_agent_event` / `direct_agent_message` because it targets a member and is wakeable. Do not document `/api/gateway/direct-agent-messages` as the green path; it is a retired Gateway-shaped compatibility alias retained only as historical/migration evidence where still present.
+Use the Channels-owned direct-agent event surface. The backing row is still a channel message with `sourceKind=wake_event`, but the public contract name is `direct_agent_event` / `direct_agent_message` because it targets a member and is wakeable. Use `POST /api/direct-agent-events` to create events, `GET /api/direct-agent-events` to list/subscription-read events, and `GET /api/direct-agent-events/{eventId}` for single-event readback. Do not document `/api/gateway/direct-agent-messages` or `/api/gateway/events` as green paths; both are retired Gateway-shaped compatibility aliases retained only as historical/migration evidence where still present.
 
 ```http
 POST /api/direct-agent-events
@@ -95,7 +95,7 @@ Content-Type: application/json
 
 ### Append delivery progress
 
-Use Channels activity events. These are observability records, not transcript messages and not final replies. Do not use the retired Gateway-shaped `/api/gateway/channel-activity-events` alias in new examples.
+Use Channels activity events. These are observability records, not transcript messages and not final replies. Prefer the channel-scoped canonical route `POST /api/channels/{channelId}/activity-events`; the resolver route `POST /api/channel-activity-events` is also supported when the caller supplies enough project/channel context for Channels to resolve the target. Do not use the retired Gateway-shaped `/api/gateway/channel-activity-events` alias in new examples.
 
 ```http
 POST /api/channels/3/activity-events
@@ -137,8 +137,8 @@ Content-Type: application/json
 
 - Core MCP `send_message` and REST `SendMessageRequest` remain compatibility names for durable Core project/task messages. Renaming them would be a broader client migration; descriptions and examples carry the surface qualifier instead.
 - Channels `PostChannelMessageRequest` is already surface-qualified enough because it is in the Channels namespace and route.
-- Channels `direct_agent_event` / `direct_agent_message` is the wakeable target-agent contract name. The green-path route is `POST /api/direct-agent-events`; `/api/gateway/direct-agent-messages` is a retired Gateway-shaped alias/tombstone and must not be used as new guidance.
+- Channels `direct_agent_event` / `direct_agent_message` is the wakeable target-agent contract name. The green-path creation route is `POST /api/direct-agent-events`; readback/list routes are `GET /api/direct-agent-events` and `GET /api/direct-agent-events/{eventId}`. `/api/gateway/direct-agent-messages` and `/api/gateway/events` are retired Gateway-shaped aliases/tombstones and must not be used as new guidance.
 - Gateway-shaped `system-messages` is a retired historical route name. Docs should describe its final-reply artifact as `gateway_delivery_final_message` when `sourceKind=gateway_delivery`/`dedupeKey=gateway-delivery:{id}:final` are present.
-- `channel_activity_event` / `delivery_activity_event` is the canonical non-waking progress vocabulary. The green-path route is `POST /api/channels/{channelId}/activity-events`; the retired `/api/gateway/channel-activity-events` spelling should appear only in migration/tombstone context. Progress must never use `gateway-delivery:{id}:final`.
+- `channel_activity_event` / `delivery_activity_event` is the canonical non-waking progress vocabulary. The preferred green-path route is `POST /api/channels/{channelId}/activity-events`; the supported resolver route is `POST /api/channel-activity-events`. The retired `/api/gateway/channel-activity-events` spelling should appear only in migration/tombstone context. Progress must never use `gateway-delivery:{id}:final`.
 - Retired `/api/gateway/events` and `/api/gateway/test-wakes` references are historical/tombstone aliases for Channels-owned direct-agent/event readback and controlled wake-test recording. New public examples should use Channels-owned routes or explicitly label Gateway-shaped names as retired.
 - Legacy dispatch and Pi/publisher MCP tools are quarantined under `legacy_*` in the live Core MCP schema after #1610; do not use them in new contract examples.

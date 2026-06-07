@@ -101,6 +101,46 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         return (workerId, lease.Id, runId);
     }
 
+    private async Task<ProjectTask> CreateInProgressTaskAsync(string title)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var tasks = scope.ServiceProvider.GetRequiredService<ITaskRepository>();
+        return await tasks.CreateAsync(new ProjectTask
+        {
+            ProjectId = _projectId,
+            Title = title,
+            Status = DenCore.Models.TaskStatus.InProgress,
+            Description = "Task description"
+        });
+    }
+
+    private async Task CreateWorkerFailurePacketAsync(int taskId, string role, string? failureCategory = null)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var messages = scope.ServiceProvider.GetRequiredService<IMessageRepository>();
+        var metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["type"] = "worker_failure_packet",
+            ["packet_kind"] = "worker_failure_packet",
+            ["role"] = role,
+            ["project_id"] = _projectId,
+            ["task_id"] = taskId,
+            ["run_id"] = $"run-failure-{role}-{Guid.NewGuid():N}",
+            ["status"] = "failed",
+            ["failure_category"] = failureCategory,
+        }, JsonOpts);
+
+        await messages.CreateAsync(new Message
+        {
+            ProjectId = _projectId,
+            TaskId = taskId,
+            Sender = role,
+            Intent = MessageIntent.StatusUpdate,
+            Content = "# worker_failure_packet",
+            Metadata = metadata
+        });
+    }
+
     [Fact]
     public async Task DetermineOrchestratorNextAction_DoneTask_HoldsWithoutWorkerLaunch()
     {
@@ -130,6 +170,105 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         Assert.Equal("hold", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
         Assert.Equal("terminal_or_blocked_task", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
         Assert.True(doc.RootElement.GetProperty("fail_closed").GetBoolean());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_DefaultRetryCap_AllowsFourthAttemptAfterThreeFailures()
+    {
+        var task = await CreateInProgressTaskAsync("Default cap allows fourth coder attempt");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+
+        using var scope = _factory.Services.CreateScope();
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            scope.ServiceProvider.GetRequiredService<ITaskRepository>(),
+            scope.ServiceProvider.GetRequiredService<IMessageRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>(),
+            _projectId,
+            task.Id,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        Assert.Equal("launch_coder", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("missing_implementation", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(3, doc.RootElement.GetProperty("attempts").GetProperty("coder").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_InfrastructureFailures_DoNotConsumeRetryBudget()
+    {
+        var task = await CreateInProgressTaskAsync("Infrastructure failures do not spend coder attempts");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder", failureCategory: "infrastructure");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder", failureCategory: "no_capacity");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder", failureCategory: "auth_expired");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder", failureCategory: "channel_membership_missing");
+
+        using var scope = _factory.Services.CreateScope();
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            scope.ServiceProvider.GetRequiredService<ITaskRepository>(),
+            scope.ServiceProvider.GetRequiredService<IMessageRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>(),
+            _projectId,
+            task.Id,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        Assert.Equal("launch_coder", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("missing_implementation", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(0, doc.RootElement.GetProperty("attempts").GetProperty("coder").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_DefaultRetryCap_EscalatesAfterFourFailures()
+    {
+        var task = await CreateInProgressTaskAsync("Default cap escalates at fourth coder failure");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+
+        using var scope = _factory.Services.CreateScope();
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            scope.ServiceProvider.GetRequiredService<ITaskRepository>(),
+            scope.ServiceProvider.GetRequiredService<IMessageRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>(),
+            _projectId,
+            task.Id,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        Assert.Equal("escalate", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("missing_implementation_retry_cap", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(4, doc.RootElement.GetProperty("attempts").GetProperty("coder").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_ExplicitRetryCapThree_PreservesOldEscalationBoundary()
+    {
+        var task = await CreateInProgressTaskAsync("Explicit cap three remains honored");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+        await CreateWorkerFailurePacketAsync(task.Id, "coder");
+
+        using var scope = _factory.Services.CreateScope();
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            scope.ServiceProvider.GetRequiredService<ITaskRepository>(),
+            scope.ServiceProvider.GetRequiredService<IMessageRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>(),
+            _projectId,
+            task.Id,
+            max_attempts: 3,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(resultJson);
+        Assert.Equal("escalate", doc.RootElement.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("missing_implementation_retry_cap", doc.RootElement.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(3, doc.RootElement.GetProperty("attempts").GetProperty("coder").GetInt32());
     }
 
     // ── Member CRUD via REST ───────────────────────────────────────────

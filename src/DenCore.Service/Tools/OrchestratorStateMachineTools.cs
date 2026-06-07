@@ -28,7 +28,7 @@ public sealed class OrchestratorStateMachineTools
         IReviewFindingRepository reviewFindings,
         [Description("Project ID.")] string project_id,
         [Description("Task ID.")] int task_id,
-        [Description("Maximum coder/reviewer retry attempts before escalation. Default 3.")] int max_attempts = 3,
+        [Description("Maximum per-role worker retry attempts before escalation. Default 4.")] int max_attempts = 4,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
         var detail = await tasks.GetDetailAsync(task_id).ConfigureAwait(false);
@@ -222,8 +222,34 @@ public sealed class OrchestratorStateMachineTools
         return messages.Count(m => IsWorkerAttempt(m) && string.Equals(MetadataString(m, "role"), role, StringComparison.Ordinal));
     }
 
-    private static bool IsWorkerAttempt(Message message) =>
-        IsCompletion(message) || string.Equals(MetadataString(message, "type"), "worker_failure_packet", StringComparison.Ordinal);
+    private static bool IsWorkerAttempt(Message message)
+    {
+        if (IsNonRetryBudgetFailure(message))
+            return false;
+
+        return IsCompletion(message)
+            || string.Equals(MetadataString(message, "type"), "worker_failure_packet", StringComparison.Ordinal);
+    }
+
+    private static bool IsNonRetryBudgetFailure(Message message)
+    {
+        var category = NormalizeMetadataToken(MetadataString(message, "failure_category"));
+        if (string.IsNullOrWhiteSpace(category))
+            return false;
+
+        return category.Contains("infrastructure", StringComparison.Ordinal)
+            || category.Contains("capacity", StringComparison.Ordinal)
+            || category.Contains("claim", StringComparison.Ordinal)
+            || category.Contains("auth", StringComparison.Ordinal)
+            || category.Contains("credential", StringComparison.Ordinal)
+            || category.Contains("routing", StringComparison.Ordinal)
+            || category.Contains("route", StringComparison.Ordinal)
+            || category.Contains("membership", StringComparison.Ordinal)
+            || category.Contains("provider", StringComparison.Ordinal)
+            || category.Contains("config", StringComparison.Ordinal)
+            || category.Contains("spawn", StringComparison.Ordinal)
+            || category.Contains("synthetic", StringComparison.Ordinal);
+    }
 
     private static bool CompletionSucceeded(Message packet) =>
         string.Equals(MetadataString(packet, "status"), "completed", StringComparison.Ordinal)
@@ -294,6 +320,9 @@ public sealed class OrchestratorStateMachineTools
         }
         return null;
     }
+
+    private static string? NormalizeMetadataToken(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant().Replace('-', '_');
 
     private static int? MetadataInt(Message message, string key)
     {

@@ -1,25 +1,25 @@
 # Retry-Cap Calibration Policy
 
-*Core-owned guidance for evidence-driven cap tuning. Updated per task #2074.*
+*Core-owned guidance for evidence-driven cap tuning. Updated per task #2074 and #2078.*
 
 ## Default cap
 
-The global retry cap is **3 attempts per role** in `determine_orchestrator_next_action`.
+The global retry cap is **4 attempts per role** in `determine_orchestrator_next_action` (raised from 3 in #2078).
 When a role's attempts reach `max_attempts`, the orchestrator escalates rather than launching another worker.
 
-## When to raise the cap (3 → 4)
+## When to raise the cap (4 → 5)
 
-Raise the global cap from 3 to 4 if the `retry_cap_report` shows **all** of:
+Raise the global cap from 4 to 5 if the `retry_cap_report` shows **all** of:
 
-1. A material share of cap-hit tasks (≥30% of evaluated tasks in a representative window) complete successfully after a Planner-authorized 4th retry.
+1. A material share of cap-hit tasks (≥30% of evaluated tasks in a representative window) complete successfully after a Planner-authorized 5th retry.
 2. Planner authorization is routine rubber-stamping — the extra retry is narrow and scoped to the specific gap.
-3. 4th-attempt failures are rare and their failure categories are the same as the preceding 3rd-attempt failures (not new scope creep).
+3. 5th-attempt failures are rare and their failure categories are the same as the preceding 4th-attempt failures (not new scope creep).
 
-**Example:** `den-hermes-bridge #2071` hit the 3-attempt cap, Planner authorized one narrow retry, and the 4th attempt produced completed implementation/validation/drift/packet-audit packets.
+**Example:** `den-hermes-bridge #2071` hit the 3-attempt cap (pre-#2078), Planner authorized one narrow retry, and the 4th attempt produced completed implementation/validation/drift/packet-audit packets.
 
-## When to keep the cap at 3
+## When to keep the cap at 4
 
-Keep the cap at 3 if:
+Keep the cap at 4 if:
 
 1. Cap-hit tasks that get an extra retry still fail frequently.
 2. Extra retries widen scope (new gaps discovered rather than fixing existing ones).
@@ -34,7 +34,7 @@ Blockers from deployment unavailability, auth failures, routing problems, or mem
 
 ```json
 // MCP tool call
-retry_cap_report(project_id="den-core", since="2026-06-01", max_attempts=3)
+retry_cap_report(project_id="den-core", since="2026-06-01", max_attempts=4)
 ```
 
 Key fields in output:
@@ -42,7 +42,9 @@ Key fields in output:
 - `completed_after_extra_retry` — cap-hit tasks that Planner authorized and succeeded
 - `blocked_at_cap` — cap-hit tasks with no Planner authorization
 - `blocked_after_extra_retry` — cap-hit tasks that still failed after extra retry
-- `caliberation_guidance` — evidence-driven recommendation
+- `in_progress` — cap-hit tasks still in progress after Planner authorization
+- `cancelled` — cap-hit tasks that were cancelled
+- `calibration_guidance` — evidence-driven recommendation
 
 ## Per-project caps (future)
 

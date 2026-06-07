@@ -53,7 +53,7 @@ public sealed class RetryCapCalibrationTools
     public static async Task<string> RetryCapReport(
         ITaskRepository tasks,
         IMessageRepository messages,
-        [Description("Project ID. Use '_all' for cross-project report.")] string project_id,
+        [Description("Project ID.")] string project_id,
         [Description("ISO datetime — only tasks with messages after this time.")] string? since = null,
         [Description("Configured retry cap for calibration (default 3). Used as baseline for cap-hit detection.")] int max_attempts = 3,
         [Description("If true, include terminal tasks (done, cancelled) in addition to active ones.")] bool include_terminal = false,
@@ -63,23 +63,11 @@ public sealed class RetryCapCalibrationTools
         var sinceDate = since is not null ? DateTime.Parse(since) : (DateTime?)null;
 
         // Gather candidate task IDs — filter by project and status
-        List<int> candidateTaskIds;
-        if (string.Equals(project_id, "_all", StringComparison.OrdinalIgnoreCase))
-        {
-            // Cross-project: list tasks across all registered projects
-            // We use the standard project listing and then query each
-            candidateTaskIds = [];
-        }
-        else
-        {
-            var taskSummaries = await tasks.ListAsync(project_id,
-                statuses: include_terminal ? null : [TaskStatus.Planned, TaskStatus.InProgress, TaskStatus.Review, TaskStatus.Blocked]);
-            candidateTaskIds = taskSummaries.Select(t => t.Id).ToList();
-        }
+        var taskSummaries = await tasks.ListAsync(project_id,
+            statuses: include_terminal ? null : [TaskStatus.Planned, TaskStatus.InProgress, TaskStatus.Review, TaskStatus.Blocked]);
+        var candidateTaskIds = taskSummaries.Select(t => t.Id).ToList();
 
-        // If _all, we need to query all projects — but ITaskRepository doesn't have cross-project listing.
-        // For now, non-_all project_id is the primary path; _all is a future extension.
-        if (candidateTaskIds.Count == 0 && project_id != "_all")
+        if (candidateTaskIds.Count == 0)
         {
             var emptyResult = new
             {
@@ -161,6 +149,10 @@ public sealed class RetryCapCalibrationTools
             if (capHits.Count == 0)
                 continue;
 
+            // Get latest task status
+            var taskDetail = await tasks.GetDetailAsync(taskId);
+            var taskStatus = taskDetail.Task.Status.ToDbValue();
+
             // Determine overall outcome
             string outcome;
             if (plannerAuthorized)
@@ -170,11 +162,21 @@ public sealed class RetryCapCalibrationTools
                     kvp.Value > effectiveMax &&
                     latestByRole.TryGetValue(kvp.Key, out var latest) &&
                     latest.status == "completed");
-                outcome = postAuthSuccess ? "completed_after_extra_retry" : "blocked_after_extra_retry";
+                if (postAuthSuccess)
+                    outcome = "completed_after_extra_retry";
+                else if (taskStatus == "cancelled")
+                    outcome = "cancelled";
+                else if (taskStatus == "in_progress" || taskStatus == "review" || taskStatus == "planned")
+                    outcome = "in_progress";
+                else
+                    outcome = "blocked_after_extra_retry";
             }
             else
             {
-                outcome = "blocked_at_retry_cap";
+                if (taskStatus == "cancelled")
+                    outcome = "cancelled";
+                else
+                    outcome = "blocked_at_retry_cap";
             }
 
             // Find latest blocker category across all cap-hit roles
@@ -183,9 +185,6 @@ public sealed class RetryCapCalibrationTools
                 .Where(c => c is not null)
                 .Distinct()
                 .ToList();
-
-            // Get latest task status
-            var taskDetail = await tasks.GetDetailAsync(taskId);
 
             reportItems.Add(new
             {
@@ -216,6 +215,8 @@ public sealed class RetryCapCalibrationTools
         var completedAfterRetry = reportItems.Count(i => ((string)((dynamic)i).outcome) == "completed_after_extra_retry");
         var blockedAtCap = reportItems.Count(i => ((string)((dynamic)i).outcome) == "blocked_at_retry_cap");
         var blockedAfterRetry = reportItems.Count(i => ((string)((dynamic)i).outcome) == "blocked_after_extra_retry");
+        var inProgress = reportItems.Count(i => ((string)((dynamic)i).outcome) == "in_progress");
+        var cancelled = reportItems.Count(i => ((string)((dynamic)i).outcome) == "cancelled");
 
         string guidance;
         if (totalTasks == 0)
@@ -223,7 +224,7 @@ public sealed class RetryCapCalibrationTools
             guidance = "No retry-cap pressure detected in the current window. The default cap of " +
                        $"{effectiveMax} appears adequate, but this may reflect low task volume rather than correct calibration.";
         }
-        else if (completedAfterRetry > 0 && blockedAfterRetry == 0)
+        else if (completedAfterRetry > 0 && blockedAfterRetry == 0 && inProgress == 0)
         {
             guidance = $"{completedAfterRetry}/{totalTasks} cap-hit tasks completed after a Planner-authorized extra retry. " +
                        "If Planner intervention is routinely rubber-stamping, consider raising the default cap from " +
@@ -235,10 +236,16 @@ public sealed class RetryCapCalibrationTools
                        $"The default cap of {effectiveMax} appears reasonable — tasks that reach the cap genuinely need Planner attention. " +
                        "Do not raise the default cap; consider splitting or re-scoping cap-hit tasks instead.";
         }
+        else if (cancelled > 0 && completedAfterRetry == 0)
+        {
+            guidance = $"{cancelled}/{totalTasks} cap-hit tasks were cancelled after reaching the retry cap. " +
+                       $"The default cap of {effectiveMax} appears reasonable — these tasks typically required re-scoping rather than more retries.";
+        }
         else
         {
             guidance = $"{totalTasks} tasks hit retry cap ({completedAfterRetry} resolved after extra retry, " +
-                       $"{blockedAfterRetry} still blocked after extra retry, {blockedAtCap} blocked at cap). " +
+                       $"{blockedAfterRetry} still blocked after extra retry, {blockedAtCap} blocked at cap, " +
+                       $"{inProgress} in progress). " +
                        "Mixed signal — consider per-role or per-project cap tuning rather than a global change.";
         }
 
@@ -261,7 +268,8 @@ public sealed class RetryCapCalibrationTools
         var result = new
         {
             summary = $"Retry-cap report for '{project_id}': {totalTasks} task(s) hit retry cap " +
-                      $"({completedAfterRetry} resolved, {blockedAtCap} blocked at cap, {blockedAfterRetry} blocked after extra retry)",
+                      $"({completedAfterRetry} resolved, {blockedAtCap} blocked at cap, {blockedAfterRetry} blocked after extra retry, " +
+                      $"{inProgress} in progress, {cancelled} cancelled)",
             project_id,
             max_attempts = effectiveMax,
             since,
@@ -270,7 +278,9 @@ public sealed class RetryCapCalibrationTools
             completed_after_extra_retry = completedAfterRetry,
             blocked_at_cap = blockedAtCap,
             blocked_after_extra_retry = blockedAfterRetry,
-            caliberation_guidance = guidance,
+            in_progress = inProgress,
+            cancelled,
+            calibration_guidance = guidance,
             items = verbose ? reportItems : reportItems.Take(20).ToList(),
             non_cap_blocker_categories = nonCapBlockers,
         };
@@ -286,10 +296,7 @@ public sealed class RetryCapCalibrationTools
         || string.Equals(MetadataString(message, "schema"), "den_worker_completion", StringComparison.Ordinal);
 
     private static bool IsPlannerAuthorization(Message message) =>
-        string.Equals(MetadataString(message, "type"), "planner_retry_authorization", StringComparison.Ordinal)
-        || (message.Content?.Contains("authorized", StringComparison.OrdinalIgnoreCase) == true
-            && message.Content?.Contains("retry", StringComparison.OrdinalIgnoreCase) == true
-            && message.Sender?.StartsWith("den-mcp-planner", StringComparison.OrdinalIgnoreCase) == true);
+        string.Equals(MetadataString(message, "type"), "planner_retry_authorization", StringComparison.Ordinal);
 
     private static string? PacketRoleFromType(string? packetType) =>
         packetType is not null && PacketTypeToRole.TryGetValue(packetType, out var role) ? role : null;

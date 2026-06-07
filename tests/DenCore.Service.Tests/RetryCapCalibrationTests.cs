@@ -146,6 +146,97 @@ public class RetryCapCalibrationTests
     }
 
     // -----------------------------------------------------------------------
+    // Fixture 5: cap hit, planner authorized, task still in_progress
+    // -----------------------------------------------------------------------
+    [Fact]
+    public async Task CapHit_PlannerAuthorized_StillInProgress_ReportsInProgress()
+    {
+        var tasks = MakeTaskRepo("den-core", (2041, "in_progress"));
+        var messages = MakeMessageRepo("den-core");
+
+        // 3 coder attempts + 3 validator failures → cap hit
+        messages.AddCompletion(2041, "coder", "implementation_packet", "completed", "r1", "h1");
+        messages.AddCompletion(2041, "validator", "validation_packet", "failed", "v1", null, "test_failure");
+        messages.AddCompletion(2041, "coder", "implementation_packet", "completed", "r2", "h2");
+        messages.AddCompletion(2041, "validator", "validation_packet", "failed", "v2", null, "test_failure");
+        messages.AddCompletion(2041, "coder", "implementation_packet", "completed", "r3", "h3");
+        messages.AddCompletion(2041, "validator", "validation_packet", "failed", "v3", null, "test_failure");
+        // Planner authorizes extra retry (structured metadata)
+        messages.AddPlannerAuth(2041, "den-mcp-planner", "Planner authorized extra retry for #2041");
+        // But no 4th coder has completed yet — still in_progress
+
+        var json = await RetryCapCalibrationTools.RetryCapReport(
+            tasks, messages, "den-core", max_attempts: 3);
+
+        var root = Parse(json);
+        Assert.Equal(1, root.GetProperty("tasks_hitting_cap").GetInt32());
+        Assert.Equal("in_progress",
+            root.GetProperty("items")[0].GetProperty("outcome").GetString());
+        Assert.True(root.GetProperty("items")[0].GetProperty("planner_authorized").GetBoolean());
+        Assert.Equal(1, root.GetProperty("in_progress").GetInt32());
+        Assert.Equal(0, root.GetProperty("completed_after_extra_retry").GetInt32());
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture 6: cap hit, task cancelled
+    // -----------------------------------------------------------------------
+    [Fact]
+    public async Task CapHit_TaskCancelled_ReportsCancelled()
+    {
+        var tasks = MakeTaskRepo("den-core", (2042, "cancelled"));
+        var messages = MakeMessageRepo("den-core");
+
+        // 3 coder attempts → cap hit, no planner authorization, task cancelled
+        messages.AddCompletion(2042, "coder", "implementation_packet", "completed", "r1", "h1");
+        messages.AddCompletion(2042, "validator", "validation_packet", "failed", "v1", null, "test_failure");
+        messages.AddCompletion(2042, "coder", "implementation_packet", "completed", "r2", "h2");
+        messages.AddCompletion(2042, "validator", "validation_packet", "failed", "v2", null, "test_failure");
+        messages.AddCompletion(2042, "coder", "implementation_packet", "completed", "r3", "h3");
+        messages.AddCompletion(2042, "validator", "validation_packet", "failed", "v3", null, "test_failure");
+
+        var json = await RetryCapCalibrationTools.RetryCapReport(
+            tasks, messages, "den-core", max_attempts: 3, include_terminal: true);
+
+        var root = Parse(json);
+        Assert.Equal(1, root.GetProperty("tasks_hitting_cap").GetInt32());
+        Assert.Equal("cancelled",
+            root.GetProperty("items")[0].GetProperty("outcome").GetString());
+        Assert.False(root.GetProperty("items")[0].GetProperty("planner_authorized").GetBoolean());
+        Assert.Equal(1, root.GetProperty("cancelled").GetInt32());
+        Assert.Equal(0, root.GetProperty("completed_after_extra_retry").GetInt32());
+    }
+
+    // -----------------------------------------------------------------------
+    // Fixture 7: cap hit, planner authorized, task cancelled after extra retry
+    // -----------------------------------------------------------------------
+    [Fact]
+    public async Task CapHit_PlannerAuthorized_CancelledAfterRetry_ReportsCancelled()
+    {
+        var tasks = MakeTaskRepo("den-core", (2043, "cancelled"));
+        var messages = MakeMessageRepo("den-core");
+
+        // 3 coder + 3 validator → cap hit
+        messages.AddCompletion(2043, "coder", "implementation_packet", "completed", "r1", "h1");
+        messages.AddCompletion(2043, "validator", "validation_packet", "failed", "v1", null, "test_failure");
+        messages.AddCompletion(2043, "coder", "implementation_packet", "completed", "r2", "h2");
+        messages.AddCompletion(2043, "validator", "validation_packet", "failed", "v2", null, "test_failure");
+        messages.AddCompletion(2043, "coder", "implementation_packet", "completed", "r3", "h3");
+        messages.AddCompletion(2043, "validator", "validation_packet", "failed", "v3", null, "test_failure");
+        // Planner authorizes, but task was cancelled rather than retried
+        messages.AddPlannerAuth(2043, "den-mcp-planner", "Planner authorized extra retry for #2043");
+
+        var json = await RetryCapCalibrationTools.RetryCapReport(
+            tasks, messages, "den-core", max_attempts: 3, include_terminal: true);
+
+        var root = Parse(json);
+        Assert.Equal(1, root.GetProperty("tasks_hitting_cap").GetInt32());
+        Assert.Equal("cancelled",
+            root.GetProperty("items")[0].GetProperty("outcome").GetString());
+        Assert.True(root.GetProperty("items")[0].GetProperty("planner_authorized").GetBoolean());
+        Assert.Equal(1, root.GetProperty("cancelled").GetInt32());
+    }
+
+    // -----------------------------------------------------------------------
     // Edge cases
     // -----------------------------------------------------------------------
 
@@ -330,7 +421,7 @@ public class RetryCapCalibrationTests
                 Content = content,
                 Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object>
                 {
-                    ["type"] = "status_update",
+                    ["type"] = "planner_retry_authorization",
                 }),
                 CreatedAt = DateTime.UtcNow,
             });

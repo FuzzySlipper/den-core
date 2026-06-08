@@ -45,6 +45,22 @@ public static class MessageRoutes
             }
         });
 
+        group.MapGet("/wait", async (IMessageRepository repo, string projectId,
+            string? unreadFor, int? timeoutMs, int? limit, int? cursor) =>
+        {
+            if (string.IsNullOrWhiteSpace(unreadFor))
+                return Results.BadRequest(new { error = "unreadFor is required" });
+
+            var result = await repo.WaitForMessagesAsync(
+                projectId,
+                unreadFor,
+                timeoutMs ?? 30000,
+                limit ?? 20,
+                cursor);
+
+            return Results.Ok(ToWaitForMessagesResponse(result));
+        });
+
         group.MapGet("/{messageId:int}", async (IMessageRepository repo, string projectId, int messageId) =>
         {
             var message = await repo.GetByIdAsync(messageId);
@@ -172,6 +188,29 @@ public static class MessageRoutes
 
             return Results.BadRequest(new { error = "Must provide either notification_ids or mark_all with scope" });
         });
+    }
+
+    private static object ToWaitForMessagesResponse(WaitForMessagesResult result)
+    {
+        if (result.TimedOut)
+        {
+            return new
+            {
+                status = "timeout",
+                waited_ms = result.WaitedMs,
+                messages = Array.Empty<WaitForMessagesItem>(),
+                message = "No new unread messages arrived within the wait window.",
+                guidance = "Stop polling — there is no new work. Wait for external wake (Den Desktop notification, Channels event, or human input) before checking again."
+            };
+        }
+
+        return new
+        {
+            status = "messages",
+            waited_ms = result.WaitedMs,
+            messages = result.Messages,
+            count = result.Messages.Count
+        };
     }
 
     private static JsonElement? NormalizeMetadata(JsonElement? metadata)

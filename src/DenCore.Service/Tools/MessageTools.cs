@@ -116,7 +116,7 @@ public sealed class MessageTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
     [McpToolBundle("messaging")]
-    [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first. Concise by default with content previews; use verbose=true for full message bodies.")]
+    [McpServerTool(Name = "get_messages"), Description("Get messages in a project, with optional filters. Returns newest first. Concise by default with content previews; use verbose=true for full message bodies. For waiting on unread work, use wait_for_messages instead; do not tight-loop get_messages after an empty unread result.")]
     public static async Task<string> GetMessages(
         IMessageRepository repo,
         [Description("Project ID.")] string project_id,
@@ -133,6 +133,43 @@ public sealed class MessageTools
         if (verbose)
             return JsonSerializer.Serialize(messages, JsonOpts.Default);
         return JsonSerializer.Serialize(ConciseReadResponse.Shrink(new { items = messages, count = messages.Count }), JsonOpts.Default);
+    }
+
+    [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]
+    [McpToolBundle("messaging")]
+    [McpServerTool(Name = "wait_for_messages"), Description(
+        "Wait for new unread messages in a project with a bounded timeout. " +
+        "Use this instead of polling get_messages in a tight loop. " +
+        "Returns compact new message headers (ID, sender, content preview) or a timeout receipt. " +
+        "Timeout capped at 60 seconds, polls every 500ms. " +
+        "After an empty result (timeout), stop — there is no new work.")]
+    public static async Task<string> WaitForMessages(
+        IMessageRepository repo,
+        [Description("Project ID.")] string project_id,
+        [Description("Agent identity — only unread messages for this agent.")] string unread_for,
+        [Description("Max wait time in milliseconds (500–60000, default 30000).")] int timeout_ms = 30000,
+        [Description("Max messages to return. Default 20, max 100.")] int limit = 20,
+        [Description("Cursor message ID — skip messages with ID ≤ this value (for deduplication across waits).")] int? cursor = null)
+    {
+        var result = await repo.WaitForMessagesAsync(project_id, unread_for, timeout_ms, limit, cursor);
+        if (result.TimedOut)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                status = "timeout",
+                waited_ms = result.WaitedMs,
+                messages = Array.Empty<WaitForMessagesItem>(),
+                message = "No new unread messages arrived within the wait window.",
+                guidance = "Stop polling — there is no new work. Wait for external wake (Den Desktop notification, Channels event, or human input) before checking again.",
+            }, JsonOpts.Default);
+        }
+        return JsonSerializer.Serialize(new
+        {
+            status = "messages",
+            waited_ms = result.WaitedMs,
+            messages = result.Messages,
+            count = result.Messages.Count,
+        }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer", "worker-scope-auditor")]

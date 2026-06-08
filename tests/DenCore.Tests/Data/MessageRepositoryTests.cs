@@ -242,4 +242,115 @@ public class MessageRepositoryTests : IAsyncLifetime
 
         Assert.Contains("conflicts", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task WaitForMessages_TimesOutWhenNoMessagesArrive()
+    {
+        // RED: WaitForMessagesAsync with short timeout on empty project
+        var result = await _repo.WaitForMessagesAsync("proj", unreadFor: "agent", timeoutMs: 500);
+        Assert.True(result.TimedOut);
+        Assert.Empty(result.Messages);
+        Assert.True(result.WaitedMs >= 400); // close to 500ms
+    }
+
+    [Fact]
+    public async Task WaitForMessages_ReturnsMessagesThatArriveBeforeTimeout()
+    {
+        var waitTask = _repo.WaitForMessagesAsync("proj", unreadFor: "claude-code", timeoutMs: 1000);
+
+        await Task.Delay(250);
+        var msg = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "codex", Content = "Hello from codex!" });
+
+        var result = await waitTask;
+        Assert.False(result.TimedOut);
+        var item = Assert.Single(result.Messages);
+        Assert.Equal(msg.Id, item.Id);
+        Assert.Equal("codex", item.Sender);
+        Assert.Contains("Hello", item.ContentPreview, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WaitForMessages_RespectsReadState()
+    {
+        var msg = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "codex", Content = "Unread msg" });
+        await _repo.MarkReadAsync("claude-code", [msg.Id]);
+
+        var result = await _repo.WaitForMessagesAsync("proj", unreadFor: "claude-code", timeoutMs: 500);
+        Assert.True(result.TimedOut);
+    }
+
+    [Fact]
+    public async Task WaitForMessages_RespectsLimit()
+    {
+        var msg1 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "alice", Content = "Msg A" });
+        var msg2 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "bob", Content = "Msg B" });
+        var msg3 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "carol", Content = "Msg C" });
+
+        var result = await _repo.WaitForMessagesAsync("proj", unreadFor: "agent", timeoutMs: 5000, limit: 2);
+        Assert.False(result.TimedOut);
+        Assert.True(result.Messages.Count <= 2);
+    }
+
+    [Fact]
+    public async Task WaitForMessages_ReturnsCompactHeadersNotFullDump()
+    {
+        await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "codex", Content = new string('x', 2000) });
+        var result = await _repo.WaitForMessagesAsync("proj", unreadFor: "agent", timeoutMs: 5000);
+        Assert.False(result.TimedOut);
+        var item = Assert.Single(result.Messages);
+        Assert.True(item.ContentPreview.Length <= 500); // compact preview, not full dump
+        Assert.True(item.Id > 0);
+        Assert.False(string.IsNullOrEmpty(item.Sender));
+        Assert.False(string.IsNullOrEmpty(item.CreatedAt));
+    }
+
+    [Fact]
+    public async Task WaitForMessages_CursorSkipsAlreadySeen()
+    {
+        var msg1 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "alice", Content = "First" });
+        // First wait returns msg1
+        var r1 = await _repo.WaitForMessagesAsync("proj", unreadFor: "agent", timeoutMs: 5000);
+        Assert.False(r1.TimedOut);
+        Assert.Contains(r1.Messages, m => m.Id == msg1.Id);
+
+        // Second wait with cursor = msg1.Id should not return msg1 again
+        var msg2 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "bob", Content = "Second" });
+        var r2 = await _repo.WaitForMessagesAsync("proj", unreadFor: "agent", timeoutMs: 5000, cursorMessageId: msg1.Id);
+        Assert.False(r2.TimedOut);
+        Assert.DoesNotContain(r2.Messages, m => m.Id == msg1.Id);
+        Assert.Contains(r2.Messages, m => m.Id == msg2.Id);
+    }
+
+    [Fact]
+    public async Task WaitForMessages_AppliesCursorBeforeLimitWithDeterministicOrder()
+    {
+        var msg1 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "alice", Content = "First" });
+        var msg2 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "bob", Content = "Second" });
+        var msg3 = await _repo.CreateAsync(new Message { ProjectId = "proj", Sender = "carol", Content = "Third" });
+        await ForceSameCreatedAtAsync(msg1.Id, msg2.Id, msg3.Id);
+
+        var result = await _repo.WaitForMessagesAsync(
+            "proj",
+            unreadFor: "agent",
+            timeoutMs: 500,
+            limit: 1,
+            cursorMessageId: msg1.Id);
+
+        Assert.False(result.TimedOut);
+        var item = Assert.Single(result.Messages);
+        Assert.Equal(msg3.Id, item.Id);
+    }
+
+    private async Task ForceSameCreatedAtAsync(params int[] messageIds)
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        foreach (var id in messageIds)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE messages SET created_at = @createdAt WHERE id = @id";
+            cmd.Parameters.AddWithValue("@createdAt", "2026-06-08 12:00:00");
+            cmd.Parameters.AddWithValue("@id", id);
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
 }

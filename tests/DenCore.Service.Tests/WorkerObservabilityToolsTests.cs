@@ -592,6 +592,7 @@ public class WorkerObservabilityToolsTests
             => throw new NotSupportedException();
         public Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds) => throw new NotSupportedException();
         public Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null) => throw new NotSupportedException();
+        public Task<WaitForMessagesResult> WaitForMessagesAsync(string projectId, string unreadFor, int timeoutMs = 30000, int limit = 20, int? cursorMessageId = null) => throw new NotSupportedException();
     }
 
     private sealed class PacketToolsScopeFakeMessageRepository : IMessageRepository
@@ -623,6 +624,7 @@ public class WorkerObservabilityToolsTests
             => Task.FromResult(new List<NotificationFeedItem>());
         public Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds) => Task.FromResult(notificationIds?.Length ?? 0);
         public Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null) => Task.FromResult(0);
+        public Task<WaitForMessagesResult> WaitForMessagesAsync(string projectId, string unreadFor, int timeoutMs = 30000, int limit = 20, int? cursorMessageId = null) => throw new NotSupportedException();
     }
 
     private sealed class PacketToolsScopeFakeTaskRepository : ITaskRepository

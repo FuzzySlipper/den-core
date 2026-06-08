@@ -178,3 +178,26 @@ public static class MessageIntentCompatibility
     }
 
 }
+
+/// <summary>
+/// Compact result from WaitForMessagesAsync — new message IDs/headers
+/// or a terse timeout/no-messages receipt. Not a full thread dump.
+/// </summary>
+public sealed record WaitForMessagesResult
+{
+    /// <summary>True when messages were found before timeout.</summary>
+    public bool TimedOut { get; init; }
+    /// <summary>How long the wait actually lasted (ms).</summary>
+    public int WaitedMs { get; init; }
+    /// <summary>New messages that arrived (compact: IDs, senders, content previews).</summary>
+    public List<WaitForMessagesItem> Messages { get; init; } = [];
+}
+/// <summary>Compact projection of a message for wait_for_messages results.</summary>
+public sealed record WaitForMessagesItem
+{
+    public int Id { get; init; }
+    public string Sender { get; init; } = "";
+    public int? TaskId { get; init; }
+    public string ContentPreview { get; init; } = "";
+    public string CreatedAt { get; init; } = "";
+}

@@ -26,6 +26,8 @@ public interface IMessageRepository
         int offset = 0);
     Task<int> MarkNotificationsReadAsync(string agent, int[]? notificationIds);
     Task<int> MarkAllNotificationsReadAsync(string agent, string projectId, int? taskId = null);
+    Task<WaitForMessagesResult> WaitForMessagesAsync(string projectId, string unreadFor,
+        int timeoutMs = 30000, int limit = 20, int? cursorMessageId = null);
 }
 
 public sealed class MessageRepository : IMessageRepository
@@ -410,6 +412,89 @@ public sealed class MessageRepository : IMessageRepository
             cmd.Parameters.AddWithValue("@taskId", taskId.Value);
 
         return await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<WaitForMessagesResult> WaitForMessagesAsync(string projectId, string unreadFor,
+        int timeoutMs = 30000, int limit = 20, int? cursorMessageId = null)
+    {
+        const int maxTimeout = 60_000;
+        const int minTimeout = 500;
+        const int pollIntervalMs = 500;
+
+        timeoutMs = Math.Clamp(timeoutMs, minTimeout, maxTimeout);
+        limit = Math.Clamp(limit, 1, 100);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var lastHighWaterMark = cursorMessageId ?? 0;
+
+        while (true)
+        {
+            var messages = await GetUnreadMessagesAfterCursorAsync(projectId, unreadFor, limit, lastHighWaterMark);
+            var newMessages = messages
+                .Select(m => new WaitForMessagesItem
+                {
+                    Id = m.Id,
+                    Sender = m.Sender,
+                    TaskId = m.TaskId,
+                    ContentPreview = m.Content is { Length: > 500 } c ? c[..500] : m.Content ?? "",
+                    CreatedAt = m.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                })
+                .ToList();
+
+            if (newMessages.Count > 0)
+            {
+                sw.Stop();
+                return new WaitForMessagesResult
+                {
+                    TimedOut = false,
+                    WaitedMs = (int)sw.ElapsedMilliseconds,
+                    Messages = newMessages,
+                };
+            }
+
+            var remainingMs = timeoutMs - sw.ElapsedMilliseconds;
+            if (remainingMs <= 0)
+                break;
+
+            await Task.Delay((int)Math.Min(pollIntervalMs, remainingMs));
+        }
+
+        sw.Stop();
+        return new WaitForMessagesResult
+        {
+            TimedOut = true,
+            WaitedMs = (int)sw.ElapsedMilliseconds,
+            Messages = [],
+        };
+    }
+
+    private async Task<List<Message>> GetUnreadMessagesAfterCursorAsync(string projectId, string unreadFor, int limit, int cursorMessageId)
+    {
+        await using var conn = await _db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT m.id, m.project_id, m.task_id, m.thread_id, m.sender, m.content, m.intent, m.metadata, m.created_at
+            FROM messages m
+            WHERE m.project_id = @projectId
+              AND m.id > @cursorMessageId
+              AND NOT EXISTS (
+                  SELECT 1 FROM message_reads mr
+                  WHERE mr.message_id = m.id AND mr.agent = @unreadFor
+              )
+              AND m.sender != @unreadFor
+            ORDER BY m.created_at DESC, m.id DESC
+            LIMIT @limit
+            """;
+        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.Parameters.AddWithValue("@cursorMessageId", cursorMessageId);
+        cmd.Parameters.AddWithValue("@unreadFor", unreadFor);
+        cmd.Parameters.AddWithValue("@limit", limit);
+
+        var messages = new List<Message>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            messages.Add(ReadMessage(reader));
+        return messages;
     }
 
     private static Message ReadMessage(SqliteDataReader reader, int offset = 0)

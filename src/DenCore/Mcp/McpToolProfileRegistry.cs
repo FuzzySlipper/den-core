@@ -204,7 +204,7 @@ public sealed class McpToolProfileRegistry
 
         // ---- messaging bundle ----
         m.Add(McpToolBundles.Messaging,
-            "send_message", "get_messages", "get_thread", "mark_read", "send_user_notification",
+            "send_message", "get_messages", "wait_for_messages", "get_thread", "mark_read", "send_user_notification",
             "get_user_notifications", "mark_notifications_read");
 
         // ---- document bundle ----
@@ -460,7 +460,7 @@ public sealed class McpToolProfileRegistry
             "get_space", "list_spaces",
             "get_task", "list_tasks", "get_task_workflow_summary",
             "get_document", "list_documents", "search_documents", "query_librarian",
-            "get_messages", "get_thread", "mark_read",
+            "get_messages", "wait_for_messages", "get_thread", "mark_read",
             "list_review_rounds", "list_review_findings", "get_latest_task_packet",
             "get_user_notifications", "mark_notifications_read",
             "get_worker_run", "get_worker_run_status", "list_worker_runs",
@@ -535,7 +535,7 @@ public sealed class McpToolProfileRegistry
             "list_spaces", "get_space",
             "list_tasks", "get_task", "get_task_workflow_summary", "next_task",
             "list_documents", "get_document", "search_documents", "query_librarian",
-            "get_messages", "get_thread",
+            "get_messages", "wait_for_messages", "get_thread",
             "list_review_rounds", "list_review_findings",
             "get_agent_guidance", "list_agent_guidance_entries",
             "list_blackboard_entries", "get_blackboard_entry");

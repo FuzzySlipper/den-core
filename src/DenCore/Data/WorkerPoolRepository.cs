@@ -428,7 +428,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             """;
         cmd.Parameters.AddWithValue("@workerIdentity", input.PreferredWorkerIdentity!);
         cmd.Parameters.AddWithValue("@runId", input.RunId);
-        cmd.Parameters.AddWithValue("@projectId", input.ProjectId);
+        cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@role", input.Role);
         cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
@@ -1396,7 +1396,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       profile_identity, worker_role, required_capabilities, preferred_worker_identity,
                       reason_code, candidate_details, diagnostic_message, created_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", input.ProjectId);
+        cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@role", input.Role);
         cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
@@ -1529,7 +1529,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         AgentInstanceId = worker.AgentInstanceId,
         ChannelId = worker.ChannelId,
         RunId = reader.GetString(2),
-        ProjectId = reader.GetString(3),
+        ProjectId = reader.IsDBNull(3) ? null : reader.GetString(3),
         TaskId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
         Role = reader.GetString(5),
         AssignedBy = reader.GetString(6),
@@ -2848,7 +2848,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             cmd.Parameters.AddWithValue("@leaseId", leaseId);
             cmd.Parameters.AddWithValue("@leaseKind", WorkerPoolStates.LeaseKindProjectOrchestrator);
             cmd.Parameters.AddWithValue("@scopeType", input.ScopeType);
-            cmd.Parameters.AddWithValue("@projectId", input.ProjectId);
+            cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@channelId", (object?)input.ChannelId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@workstreamHandle", (object?)input.WorkstreamHandle ?? DBNull.Value);

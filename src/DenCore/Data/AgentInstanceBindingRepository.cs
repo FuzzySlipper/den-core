@@ -239,7 +239,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
     private static void AddParameters(SqliteCommand cmd, AgentInstanceBinding binding)
     {
         cmd.Parameters.AddWithValue("@instanceId", binding.InstanceId);
-        cmd.Parameters.AddWithValue("@projectId", binding.ProjectId);
+        cmd.Parameters.AddWithValue("@projectId", (object?)binding.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@agentIdentity", binding.AgentIdentity);
         cmd.Parameters.AddWithValue("@agentFamily", binding.AgentFamily);
         cmd.Parameters.AddWithValue("@role", (object?)binding.Role ?? DBNull.Value);
@@ -252,7 +252,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
     private static AgentInstanceBinding ReadBinding(SqliteDataReader reader) => new()
     {
         InstanceId = reader.GetString(0),
-        ProjectId = reader.GetString(1),
+        ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
         AgentIdentity = reader.GetString(2),
         AgentFamily = reader.GetString(3),
         Role = reader.IsDBNull(4) ? null : reader.GetString(4),

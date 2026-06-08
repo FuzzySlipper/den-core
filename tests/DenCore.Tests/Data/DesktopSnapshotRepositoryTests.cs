@@ -577,20 +577,20 @@ public class DesktopSnapshotRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task SessionEvent_RejectsMissingRequiredFields()
     {
-        // Missing project id
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
-            _sessionEvents.AppendAsync(new DesktopSessionEvent
-            {
-                ProjectId = "",
-                SessionId = "pty-7",
-                SourceInstanceId = "desktop-a",
-                EventType = "created",
-                ObservedAt = _now
-            }));
-        Assert.Contains("Project id", ex.Message);
+        // ProjectId is no longer required (nullable infrastructure table, task #1931).
+        // Verify that events with null/empty ProjectId are accepted.
+        var withNullProject = await _sessionEvents.AppendAsync(new DesktopSessionEvent
+        {
+            ProjectId = null,
+            SessionId = "pty-global",
+            SourceInstanceId = "desktop-a",
+            EventType = "created",
+            ObservedAt = _now
+        });
+        Assert.Null(withNullProject.ProjectId);
 
-        // Missing session id
-        ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        // Missing session id — still required
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             _sessionEvents.AppendAsync(new DesktopSessionEvent
             {
                 ProjectId = "proj",

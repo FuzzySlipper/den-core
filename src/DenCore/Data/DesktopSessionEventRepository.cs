@@ -145,7 +145,7 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
     private static DesktopSessionEvent ReadEvent(SqliteDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
-        ProjectId = reader.GetString(1),
+        ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
         TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
         WorkspaceId = reader.IsDBNull(3) ? null : reader.GetString(3),
         SourceInstanceId = reader.GetString(4),
@@ -160,8 +160,6 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
 
     private static void ValidateEvent(DesktopSessionEvent evt)
     {
-        if (string.IsNullOrWhiteSpace(evt.ProjectId))
-            throw new ArgumentException("Project id is required.", nameof(evt));
         if (string.IsNullOrWhiteSpace(evt.SourceInstanceId))
             throw new ArgumentException("Source instance id is required.", nameof(evt));
         if (string.IsNullOrWhiteSpace(evt.SessionId))

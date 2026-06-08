@@ -74,7 +74,7 @@ public sealed class DirectDeliveryBindingSnapshot
     public required string AgentInstanceId { get; set; }
 
     /// <summary>Project id this binding is scoped to.</summary>
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
 
     /// <summary>Generic adapter/runtime family identifier.</summary>
     public required string AgentFamily { get; set; }

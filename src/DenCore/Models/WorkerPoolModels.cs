@@ -517,7 +517,7 @@ public sealed class WorkerCheckpointListOptions
 /// </summary>
 public sealed record LeaseWorkerInput
 {
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public required string Role { get; set; }
     public required string AssignedBy { get; set; }
@@ -929,7 +929,7 @@ public sealed class OrchestratorLease
 /// </summary>
 public sealed record CreateOrchestratorLeaseInput
 {
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public string ScopeType { get; set; } = WorkerPoolStates.ScopeProject;
     public string? ChannelId { get; set; }
     public int? TaskId { get; set; }

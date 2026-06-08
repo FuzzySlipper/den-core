@@ -5,7 +5,7 @@ namespace DenCore.Models;
 public sealed class AgentInstanceBinding
 {
     public required string InstanceId { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public required string AgentIdentity { get; set; }
     public required string AgentFamily { get; set; }
     public string? Role { get; set; }

@@ -5,7 +5,7 @@ namespace DenCore.Models;
 public sealed class DispatchEntry
 {
     public int Id { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public required string TargetAgent { get; set; }
     public DispatchStatus Status { get; set; } = DispatchStatus.Pending;
     public DispatchTriggerType TriggerType { get; set; }

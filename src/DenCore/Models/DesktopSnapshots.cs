@@ -15,7 +15,7 @@ public enum DesktopSnapshotState
 public sealed class DesktopGitSnapshot
 {
     public long Id { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public required string RootPath { get; set; }
@@ -54,7 +54,7 @@ public sealed class DesktopGitSnapshotListOptions
 
 public sealed class DesktopGitSnapshotLatestResult
 {
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public string? RootPath { get; set; }
@@ -67,7 +67,7 @@ public sealed class DesktopGitSnapshotLatestResult
 
 public sealed class DesktopDiffSnapshotLatestResult
 {
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public string? RootPath { get; set; }
@@ -82,7 +82,7 @@ public sealed class DesktopDiffSnapshotLatestResult
 public sealed class DesktopDiffSnapshot
 {
     public long Id { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public required string RootPath { get; set; }
@@ -107,7 +107,7 @@ public sealed class DesktopDiffSnapshot
 public sealed class DesktopSessionSnapshot
 {
     public long Id { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public required string SessionId { get; set; }
@@ -214,7 +214,7 @@ public enum SessionEventType
 public sealed class DesktopSessionEvent
 {
     public long Id { get; set; }
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public string? WorkspaceId { get; set; }
     public required string SourceInstanceId { get; set; }

@@ -26,7 +26,7 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
         cmd.CommandText = """
             INSERT INTO agent_sessions (agent, project_id, session_id, status, checked_in_at, last_heartbeat, metadata)
             VALUES (@agent, @projectId, @sessionId, 'active', datetime('now'), datetime('now'), @metadata)
-            ON CONFLICT(agent, project_id) DO UPDATE SET
+            ON CONFLICT(agent) DO UPDATE SET
                 session_id = COALESCE(@sessionId, agent_sessions.session_id),
                 status = 'active',
                 checked_in_at = datetime('now'),
@@ -130,7 +130,7 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
     private static AgentSession ReadSession(SqliteDataReader reader) => new()
     {
         Agent = reader.GetString(0),
-        ProjectId = reader.GetString(1),
+        ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
         SessionId = reader.IsDBNull(2) ? null : reader.GetString(2),
         Status = EnumExtensions.ParseAgentSessionStatus(reader.GetString(3)),
         CheckedInAt = DateTime.Parse(reader.GetString(4)),

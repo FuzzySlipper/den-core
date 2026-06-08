@@ -190,7 +190,7 @@ public sealed class WorkerAssignment
     /// </summary>
     public string ProfileIdentity { get; set; } = string.Empty;
 
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
     public int? TaskId { get; set; }
     public required string Role { get; set; }
 
@@ -795,7 +795,7 @@ public sealed class OrchestratorLease
     /// <summary>
     /// Project id this orchestrator is leased to.
     /// </summary>
-    public required string ProjectId { get; set; }
+    public string? ProjectId { get; set; }
 
     /// <summary>
     /// Optional channel id for channel-scoped leases.

@@ -219,7 +219,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
             ORDER BY observed_at DESC, updated_at DESC, id DESC
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@projectId", snapshotKey.ProjectId.Trim());
+        cmd.Parameters.AddWithValue("@projectId", (object?)snapshotKey.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@diffKey", BuildDiffKey(snapshotKey));
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadDiffSnapshot(reader, staleAfter) : null;
@@ -371,7 +371,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
 
     private void AddGitParameters(SqliteCommand cmd, DesktopGitSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", snapshot.ProjectId.Trim());
+        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
         cmd.Parameters.AddWithValue("@rootPath", snapshot.RootPath.Trim());
@@ -396,7 +396,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
 
     private void AddDiffParameters(SqliteCommand cmd, DesktopDiffSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", snapshot.ProjectId.Trim());
+        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
         cmd.Parameters.AddWithValue("@rootPath", snapshot.RootPath.Trim());
@@ -419,7 +419,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
 
     private void AddSessionParameters(SqliteCommand cmd, DesktopSessionSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", snapshot.ProjectId.Trim());
+        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
         cmd.Parameters.AddWithValue("@sessionId", snapshot.SessionId.Trim());
@@ -457,7 +457,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         return new DesktopGitSnapshot
         {
             Id = reader.GetInt64(0),
-            ProjectId = reader.GetString(1),
+            ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
             TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
             WorkspaceId = reader.IsDBNull(3) ? null : reader.GetString(3),
             RootPath = reader.GetString(4),
@@ -488,7 +488,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         return new DesktopDiffSnapshot
         {
             Id = reader.GetInt64(0),
-            ProjectId = reader.GetString(1),
+            ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
             TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
             WorkspaceId = reader.IsDBNull(3) ? null : reader.GetString(3),
             RootPath = reader.GetString(4),
@@ -517,7 +517,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         return new DesktopSessionSnapshot
         {
             Id = reader.GetInt64(0),
-            ProjectId = reader.GetString(1),
+            ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
             TaskId = reader.IsDBNull(2) ? null : reader.GetInt32(2),
             WorkspaceId = reader.IsDBNull(3) ? null : reader.GetString(3),
             SessionId = reader.GetString(4),

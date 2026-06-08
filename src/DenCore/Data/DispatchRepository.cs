@@ -255,7 +255,7 @@ public sealed class DispatchRepository : IDispatchRepository
         return new DispatchEntry
         {
             Id = reader.GetInt32(0),
-            ProjectId = reader.GetString(1),
+            ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
             TargetAgent = reader.GetString(2),
             Status = EnumExtensions.ParseDispatchStatus(reader.GetString(3)),
             TriggerType = EnumExtensions.ParseDispatchTriggerType(reader.GetString(4)),

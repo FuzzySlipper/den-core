@@ -336,7 +336,7 @@ public class NotificationWiringTests : IAsyncLifetime
         public Task StartListeningAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed record DispatchNotificationRecord(string ProjectId, string TargetAgent, string Summary);
+    private sealed record DispatchNotificationRecord(string? ProjectId, string TargetAgent, string Summary);
     private sealed record AgentStatusRecord(string ProjectId, string Agent, string Status, int? TaskId);
 
     private sealed class NoOpLlmClient : ILlmClient

@@ -129,7 +129,7 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
 
     private void AddParameters(SqliteCommand cmd, DesktopSessionEvent evt, DateTime now)
     {
-        cmd.Parameters.AddWithValue("@projectId", evt.ProjectId.Trim());
+        cmd.Parameters.AddWithValue("@projectId", (object?)evt.ProjectId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@taskId", (object?)evt.TaskId ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(evt.WorkspaceId));
         cmd.Parameters.AddWithValue("@sourceInstanceId", evt.SourceInstanceId.Trim());

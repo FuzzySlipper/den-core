@@ -252,14 +252,14 @@ public sealed class DatabaseInitializer
         ------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS agent_sessions (
             agent           TEXT NOT NULL,
-            project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id      TEXT REFERENCES projects(id) ON DELETE SET NULL,
             session_id      TEXT,
             status          TEXT NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active', 'inactive')),
             checked_in_at   TEXT NOT NULL DEFAULT (datetime('now')),
             last_heartbeat  TEXT NOT NULL DEFAULT (datetime('now')),
             metadata        TEXT,
-            PRIMARY KEY (agent, project_id)
+            PRIMARY KEY (agent)
         );
 
         CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_status
@@ -270,7 +270,7 @@ public sealed class DatabaseInitializer
         ------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS agent_instance_bindings (
             instance_id      TEXT PRIMARY KEY,
-            project_id       TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id       TEXT REFERENCES projects(id) ON DELETE SET NULL,
             agent_identity   TEXT NOT NULL,
             agent_family     TEXT NOT NULL,
             role             TEXT,
@@ -392,7 +392,7 @@ public sealed class DatabaseInitializer
         ------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS dispatch_entries (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id      TEXT REFERENCES projects(id) ON DELETE SET NULL,
             target_agent    TEXT NOT NULL,
             status          TEXT NOT NULL DEFAULT 'pending'
                             CHECK (status IN (
@@ -683,7 +683,7 @@ public sealed class DatabaseInitializer
         ------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS desktop_git_snapshots (
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
             task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
             workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
             root_path             TEXT NOT NULL,
@@ -728,7 +728,7 @@ public sealed class DatabaseInitializer
 
         CREATE TABLE IF NOT EXISTS desktop_diff_snapshots (
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
             task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
             workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
             root_path             TEXT NOT NULL,
@@ -757,7 +757,7 @@ public sealed class DatabaseInitializer
 
         CREATE TABLE IF NOT EXISTS desktop_session_snapshots (
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
             task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
             workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
             session_id            TEXT NOT NULL,
@@ -802,7 +802,7 @@ public sealed class DatabaseInitializer
         ------------------------------------------------------------
         CREATE TABLE IF NOT EXISTS desktop_session_events (
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
             task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
             workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
             source_instance_id    TEXT NOT NULL,
@@ -1555,7 +1555,7 @@ public sealed class DatabaseInitializer
         tableCmd.CommandText = """
             CREATE TABLE IF NOT EXISTS desktop_git_snapshots (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
                 root_path             TEXT NOT NULL,
@@ -1589,7 +1589,7 @@ public sealed class DatabaseInitializer
 
             CREATE TABLE IF NOT EXISTS desktop_diff_snapshots (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
                 root_path             TEXT NOT NULL,
@@ -1613,7 +1613,7 @@ public sealed class DatabaseInitializer
 
             CREATE TABLE IF NOT EXISTS desktop_session_snapshots (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
                 session_id            TEXT NOT NULL,
@@ -1683,7 +1683,7 @@ public sealed class DatabaseInitializer
         eventsTableCmd.CommandText = """
             CREATE TABLE IF NOT EXISTS desktop_session_events (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
                 source_instance_id    TEXT NOT NULL,
@@ -1764,7 +1764,7 @@ public sealed class DatabaseInitializer
 
             CREATE TABLE desktop_session_events (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id            TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                project_id            TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id               INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 workspace_id          TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL,
                 source_instance_id    TEXT NOT NULL,
@@ -2524,7 +2524,7 @@ public sealed class DatabaseInitializer
                 worker_identity      TEXT NOT NULL
                                      REFERENCES worker_pool_members(worker_identity),
                 run_id               TEXT NOT NULL,
-                project_id           TEXT NOT NULL REFERENCES projects(id),
+                project_id           TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 task_id              INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
                 role                 TEXT NOT NULL,
                 assigned_by          TEXT NOT NULL,
@@ -2688,7 +2688,7 @@ public sealed class DatabaseInitializer
                                           CHECK (lease_kind IN ('task_worker', 'project_orchestrator')),
                 scope_type                TEXT NOT NULL DEFAULT 'project'
                                           CHECK (scope_type IN ('project', 'channel', 'task', 'workstream')),
-                project_id                TEXT NOT NULL REFERENCES projects(id),
+                project_id                TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 channel_id                TEXT,
                 task_id                   INTEGER,
                 workstream_handle         TEXT,
@@ -2876,7 +2876,7 @@ public sealed class DatabaseInitializer
                                           CHECK (lease_kind IN ('task_worker', 'project_orchestrator')),
                 scope_type                TEXT NOT NULL DEFAULT 'project'
                                           CHECK (scope_type IN ('project', 'channel', 'task', 'workstream')),
-                project_id                TEXT NOT NULL REFERENCES projects(id),
+                project_id                TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 channel_id                TEXT,
                 task_id                   INTEGER,
                 workstream_handle         TEXT,

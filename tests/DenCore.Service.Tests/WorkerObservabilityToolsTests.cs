@@ -254,6 +254,100 @@ public class WorkerObservabilityToolsTests
         Assert.Contains("prepare_coder_context_packet", content);
     }
 
+
+
+    [Fact]
+    public async Task PostImplementationPacket_RiskyScope_CreatesScopeAuditTrigger()
+    {
+        var pool = new FakeWorkerPoolRepository();
+        var messages = new CapturingMessageRepository();
+        await WorkerTools.RegisterWorkerRun(pool, "proj", 1245, "runner", "coder", run_id: "run-trigger-1", verbose: true);
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-trigger-1",
+            requested_by: "coder",
+            status: "completed",
+            role: "coder",
+            packet_type: "implementation_packet",
+            summary: "Implemented an observability projection foundation with follow-up tasks recorded.",
+            branch: "task/1245-foo",
+            head_commit: "0123456789abcdef0123456789abcdef01234567",
+            tests_run: "[\"dotnet test: passed\"]",
+            scope_follow_ups: "[{\"task_id\":2000,\"title\":\"Use live current-work producers\",\"classification\":\"acceptance_gap_candidate\"}]",
+            scope_parent_closable: "Uncertain — follow-up may be required for parent acceptance.",
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        var sourceMessageId = doc.RootElement.GetProperty("completion").GetProperty("message_id").GetInt32();
+        var stored = await messages.GetMessagesAsync("proj", taskId: 1245, limit: 10);
+        var trigger = Assert.Single(stored, IsScopeAuditTrigger);
+        Assert.Equal(sourceMessageId, trigger.Metadata!.Value.GetProperty("source_completion_message_id").GetInt32());
+        Assert.Equal("acceptance_gap_candidate", trigger.Metadata!.Value.GetProperty("trigger_reason").GetString());
+        Assert.Equal("scope_auditor", trigger.Metadata!.Value.GetProperty("target_role").GetString());
+        Assert.Contains("Scope audit trigger", trigger.Content);
+    }
+
+    [Fact]
+    public async Task PostImplementationPacket_SimpleLocalizedScope_DoesNotCreateScopeAuditTrigger()
+    {
+        var pool = new FakeWorkerPoolRepository();
+        var messages = new CapturingMessageRepository();
+        await WorkerTools.RegisterWorkerRun(pool, "proj", 1245, "runner", "coder", run_id: "run-trigger-skip", verbose: true);
+
+        await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-trigger-skip",
+            requested_by: "coder",
+            status: "completed",
+            role: "coder",
+            packet_type: "implementation_packet",
+            summary: "Simple localized-patch typo fix.",
+            branch: "task/1245-foo",
+            head_commit: "0123456789abcdef0123456789abcdef01234567",
+            tests_run: "[\"dotnet test: passed\"]",
+            scope_parent_closable: "Yes — tiny localized patch, no parent acceptance follow-up.",
+            verbose: true);
+
+        var stored = await messages.GetMessagesAsync("proj", taskId: 1245, limit: 10);
+        Assert.DoesNotContain(stored, IsScopeAuditTrigger);
+    }
+
+    [Fact]
+    public async Task PostScopeAuditPacket_AcceptanceGapSuspected_RoutesPlannerNotification()
+    {
+        var pool = new FakeWorkerPoolRepository()
+            .AddAssignment(NewAssignment(WorkerPoolStates.Running, role: "scope_auditor", runId: "run-audit-route"));
+        var messages = new CapturingMessageRepository();
+
+        var completion = await CompletionTools.PostWorkerCompletionPacket(
+            pool, messages,
+            project_id: "proj",
+            run_id: "run-audit-route",
+            requested_by: "scope-auditor",
+            status: "completed",
+            role: "scope_auditor",
+            packet_type: "scope_audit_packet",
+            summary: "Audited task #1245: acceptance gap suspected.",
+            audit_verdict: "acceptance_gap_suspected",
+            audit_evidence_checked: "implementation packet, review findings, live projection smoke",
+            audit_recommended_route: "planner",
+            audited_head_commit: "0123456789abcdef0123456789abcdef01234567",
+            audited_review_round_id: 12,
+            verbose: true);
+
+        using var doc = JsonDocument.Parse(completion);
+        var sourceMessageId = doc.RootElement.GetProperty("completion").GetProperty("message_id").GetInt32();
+        var stored = await messages.GetMessagesAsync("proj", taskId: 1245, limit: 10);
+        var route = Assert.Single(stored, IsScopeAuditPlannerRoute);
+        Assert.Equal(sourceMessageId, route.Metadata!.Value.GetProperty("source_completion_message_id").GetInt32());
+        Assert.Equal("planner", route.Metadata!.Value.GetProperty("recipient_role").GetString());
+        Assert.True(route.Metadata!.Value.GetProperty("fallback_notification").GetBoolean());
+        Assert.Contains("Planner decision", route.Content);
+    }
+
     [Fact]
     public async Task PrepareCoderContextPacket_IncludesScopeAccountingInstructions()
     {
@@ -442,6 +536,19 @@ public class WorkerObservabilityToolsTests
         var metadata = doc.RootElement.GetProperty("packet").GetProperty("metadata");
         Assert.Equal("scope_auditor_context_packet", metadata.GetProperty("type").GetString());
         Assert.Equal("scope_auditor", metadata.GetProperty("role").GetString());
+    }
+
+    private static bool IsScopeAuditTrigger(Message message) =>
+        MetadataString(message, "type") == "scope_audit_trigger";
+
+    private static bool IsScopeAuditPlannerRoute(Message message) =>
+        MetadataString(message, "type") == "scope_audit_planner_route";
+
+    private static string? MetadataString(Message message, string key)
+    {
+        if (message.Metadata is JsonElement meta && meta.ValueKind == JsonValueKind.Object && meta.TryGetProperty(key, out var prop))
+            return prop.ValueKind == JsonValueKind.String ? prop.GetString() : prop.GetRawText();
+        return null;
     }
 
     private static WorkerAssignment NewAssignment(string state, string projectId = "proj", string role = "coder", string runId = "run-1") => new()

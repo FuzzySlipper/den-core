@@ -115,6 +115,31 @@ public sealed class CompletionTools
             : $"worker completion packet #{message.Id}: {normalizedStatus}{(resolvedFailure is null ? string.Empty : $" ({resolvedFailure})")}";
         await pool.TransitionAssignmentStateAsync(assignment.Id, terminalState, stateReason).ConfigureAwait(false);
 
+        if (!isMalformed)
+        {
+            await MaybeCreateScopeAuditAutomationMessagesAsync(
+                messages,
+                message,
+                project_id,
+                assignment.TaskId,
+                normalizedRole,
+                normalizedStatus!,
+                normalizedPacketType,
+                summary,
+                branch,
+                head_commit,
+                review_round_id,
+                scope_acceptance,
+                scope_deferred,
+                scope_follow_ups,
+                scope_parent_closable,
+                audit_verdict,
+                audit_evidence_checked,
+                audit_recommended_route,
+                audited_head_commit,
+                audited_review_round_id).ConfigureAwait(false);
+        }
+
         return SerializeCompletionResult(message, "created", isMalformed ? "malformed" : "present", verbose);
     }
 
@@ -144,6 +169,215 @@ public sealed class CompletionTools
         var state = MetadataBool(found, "malformed") ? "malformed" : "present";
         return SerializeCompletionResult(found, "found", state, verbose);
     }
+
+    private static async Task MaybeCreateScopeAuditAutomationMessagesAsync(
+        IMessageRepository messages,
+        Message sourceCompletion,
+        string projectId,
+        int? taskId,
+        string role,
+        string status,
+        string packetType,
+        string summary,
+        string? branch,
+        string? headCommit,
+        int? reviewRoundId,
+        string? scopeAcceptance,
+        string? scopeDeferred,
+        string? scopeFollowUps,
+        string? scopeParentClosable,
+        string? auditVerdict,
+        string? auditEvidenceChecked,
+        string? auditRecommendedRoute,
+        string? auditedHeadCommit,
+        int? auditedReviewRoundId)
+    {
+        if (taskId is null)
+            return;
+
+        if (ShouldTriggerPostCompletionScopeAudit(packetType, status, role, summary, scopeAcceptance, scopeDeferred, scopeFollowUps, scopeParentClosable))
+        {
+            var reason = ScopeAuditTriggerReason(summary, scopeAcceptance, scopeDeferred, scopeFollowUps, scopeParentClosable);
+            await messages.CreateAsync(new Message
+            {
+                ProjectId = projectId,
+                TaskId = taskId,
+                Sender = "den-core",
+                Content = BuildScopeAuditTriggerContent(taskId.Value, sourceCompletion.Id, reason, branch, headCommit, reviewRoundId),
+                Intent = MessageIntent.Handoff,
+                Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+                {
+                    ["type"] = "scope_audit_trigger",
+                    ["packet_kind"] = "scope_audit_trigger",
+                    ["schema"] = "den_scope_audit_trigger",
+                    ["schema_version"] = 1,
+                    ["source_completion_message_id"] = sourceCompletion.Id,
+                    ["source_packet_type"] = packetType,
+                    ["source_role"] = role,
+                    ["source_status"] = status,
+                    ["trigger_reason"] = reason,
+                    ["target_role"] = "scope_auditor",
+                    ["branch"] = NullIfWhiteSpace(branch),
+                    ["head_commit"] = NullIfWhiteSpace(headCommit),
+                    ["review_round_id"] = reviewRoundId,
+                    ["scope_follow_ups"] = ParseJsonOrString(scopeFollowUps),
+                    ["scope_parent_closable"] = NullIfWhiteSpace(scopeParentClosable),
+                    ["created_at"] = DateTime.UtcNow.ToString("o"),
+                }, JsonOptions),
+            }).ConfigureAwait(false);
+        }
+
+        var normalizedAuditVerdict = NormalizeToken(auditVerdict);
+        if (packetType == "scope_audit_packet" && ShouldRouteScopeAuditToPlanner(normalizedAuditVerdict, auditRecommendedRoute))
+        {
+            await messages.CreateAsync(new Message
+            {
+                ProjectId = projectId,
+                TaskId = taskId,
+                Sender = "den-core",
+                Content = BuildScopeAuditPlannerRouteContent(taskId.Value, sourceCompletion.Id, normalizedAuditVerdict!, auditEvidenceChecked, auditRecommendedRoute, auditedHeadCommit, auditedReviewRoundId),
+                Intent = MessageIntent.Notification,
+                Metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+                {
+                    ["type"] = "scope_audit_planner_route",
+                    ["packet_kind"] = "scope_audit_planner_route",
+                    ["schema"] = "den_scope_audit_planner_route",
+                    ["schema_version"] = 1,
+                    ["source_completion_message_id"] = sourceCompletion.Id,
+                    ["audit_verdict"] = normalizedAuditVerdict,
+                    ["audit_recommended_route"] = NullIfWhiteSpace(auditRecommendedRoute),
+                    ["audit_evidence_checked"] = NullIfWhiteSpace(auditEvidenceChecked),
+                    ["audited_head_commit"] = NullIfWhiteSpace(auditedHeadCommit),
+                    ["audited_review_round_id"] = auditedReviewRoundId,
+                    ["recipient_role"] = "planner",
+                    ["fallback_notification"] = true,
+                    ["created_at"] = DateTime.UtcNow.ToString("o"),
+                }, JsonOptions),
+            }).ConfigureAwait(false);
+        }
+    }
+
+    private static bool ShouldTriggerPostCompletionScopeAudit(
+        string packetType,
+        string status,
+        string role,
+        string summary,
+        string? scopeAcceptance,
+        string? scopeDeferred,
+        string? scopeFollowUps,
+        string? scopeParentClosable)
+    {
+        if (status != "completed" || packetType != "implementation_packet")
+            return false;
+        if (role is "validator" or "reviewer" or "packet_auditor" or "drift_checker" or "scope_auditor")
+            return false;
+
+        var combined = string.Join(' ', summary, scopeAcceptance, scopeDeferred, scopeFollowUps, scopeParentClosable).ToLowerInvariant();
+        if (ContainsAny(combined, "localized-patch", "localized_patch", "tiny", "docs-only", "docs_only")
+            && !ContainsAny(combined, "acceptance_gap_candidate", "acceptance gap", "planner requested", "patch requested"))
+            return false;
+
+        return ContainsAny(combined,
+            "acceptance_gap_candidate",
+            "acceptance gap",
+            "architecture-boundary",
+            "architecture boundary",
+            "coherent-refactor",
+            "coherent refactor",
+            "migration",
+            "observability",
+            "projection",
+            "worker-pool",
+            "worker pool",
+            "direct-agent",
+            "direct agent",
+            "agent-work",
+            "agent work",
+            "api",
+            "ui",
+            "foundation",
+            "contract",
+            "current-work",
+            "current work",
+            "visibility",
+            "cockpit",
+            "follow-up tasks recorded",
+            "multiple follow-ups",
+            "operator-visible",
+            "live/operator-visible");
+    }
+
+    private static bool ShouldRouteScopeAuditToPlanner(string? auditVerdict, string? auditRecommendedRoute)
+    {
+        if (auditVerdict is null)
+            return false;
+        if (auditVerdict is "acceptance_gap_suspected" or "phase_split_needed" or "planner_decision_needed")
+            return true;
+        return string.Equals(NormalizeToken(auditRecommendedRoute), "planner", StringComparison.Ordinal);
+    }
+
+    private static string ScopeAuditTriggerReason(
+        string summary,
+        string? scopeAcceptance,
+        string? scopeDeferred,
+        string? scopeFollowUps,
+        string? scopeParentClosable)
+    {
+        var combined = string.Join(' ', summary, scopeAcceptance, scopeDeferred, scopeFollowUps, scopeParentClosable).ToLowerInvariant();
+        if (combined.Contains("acceptance_gap_candidate", StringComparison.Ordinal) || combined.Contains("acceptance gap", StringComparison.Ordinal))
+            return "acceptance_gap_candidate";
+        if (ContainsAny(combined, "operator-visible", "live/operator-visible", "visibility", "cockpit", "current-work", "current work", "projection", "observability"))
+            return "operator_visible_projection_or_observability";
+        if (ContainsAny(combined, "architecture-boundary", "architecture boundary", "coherent-refactor", "coherent refactor", "migration"))
+            return "architecture_boundary_or_migration";
+        if (ContainsAny(combined, "foundation", "contract", "follow-up tasks recorded", "multiple follow-ups"))
+            return "foundation_or_followup_scope";
+        if (ContainsAny(combined, "worker-pool", "worker pool", "direct-agent", "direct agent", "agent-work", "agent work", "api", "ui"))
+            return "high_risk_tag_or_surface";
+        return "selective_scope_audit_candidate";
+    }
+
+    private static string BuildScopeAuditTriggerContent(int taskId, int completionMessageId, string reason, string? branch, string? headCommit, int? reviewRoundId)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Scope audit trigger for task #{taskId}");
+        sb.AppendLine();
+        sb.AppendLine("Den Core detected a selective post-completion scope-audit candidate from a completed implementation packet.");
+        sb.AppendLine();
+        sb.AppendLine($"- Source completion message: #{completionMessageId}");
+        sb.AppendLine($"- Trigger reason: `{reason}`");
+        sb.AppendLine($"- Branch: `{branch ?? "not reported"}`");
+        sb.AppendLine($"- Head commit: `{headCommit ?? "not reported"}`");
+        if (reviewRoundId is not null)
+            sb.AppendLine($"- Review round: `#{reviewRoundId}`");
+        sb.AppendLine();
+        sb.AppendLine("Launch a scope-auditor only if the runner/orchestrator still considers this task eligible; ordinary simple/localized tasks should not accumulate extra ceremony.");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildScopeAuditPlannerRouteContent(int taskId, int auditMessageId, string auditVerdict, string? evidenceChecked, string? recommendedRoute, string? auditedHeadCommit, int? auditedReviewRoundId)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"## Scope audit needs Planner decision for task #{taskId}");
+        sb.AppendLine();
+        sb.AppendLine("A scope-auditor reported a verdict that requires project Planner/conductor judgment before treating the parent scope as fully settled.");
+        sb.AppendLine();
+        sb.AppendLine($"- Source scope-audit packet: #{auditMessageId}");
+        sb.AppendLine($"- Verdict: `{auditVerdict}`");
+        if (!string.IsNullOrWhiteSpace(recommendedRoute))
+            sb.AppendLine($"- Recommended route: `{recommendedRoute.Trim()}`");
+        if (!string.IsNullOrWhiteSpace(evidenceChecked))
+            sb.AppendLine($"- Evidence checked: {evidenceChecked.Trim()}");
+        if (!string.IsNullOrWhiteSpace(auditedHeadCommit))
+            sb.AppendLine($"- Audited head: `{auditedHeadCommit.Trim()}`");
+        if (auditedReviewRoundId is not null)
+            sb.AppendLine($"- Audited review round: `#{auditedReviewRoundId}`");
+        sb.AppendLine();
+        sb.AppendLine("Planner should decide whether to reopen/remediate, reclassify as phase-complete, promote follow-ups, accept backlog, or ask Patch for a product/architecture decision.");
+        return sb.ToString().TrimEnd();
+    }
+
+    private static bool ContainsAny(string haystack, params string[] needles) => needles.Any(needle => haystack.Contains(needle, StringComparison.Ordinal));
 
     private static async Task<Message?> FindExistingCompletionAsync(IMessageRepository messages, string projectId, int? taskId, string dedupe_key)
     {

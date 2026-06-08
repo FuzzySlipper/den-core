@@ -141,6 +141,390 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         });
     }
 
+    private async Task<Message> CreateWorkerCompletionPacketAsync(
+        int taskId,
+        string role,
+        string packetType,
+        string status,
+        string branch,
+        string headCommit,
+        string? runId = null,
+        string? testsRun = "dotnet test --no-restore: passed")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var messages = scope.ServiceProvider.GetRequiredService<IMessageRepository>();
+        var metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["type"] = packetType,
+            ["packet_kind"] = packetType,
+            ["schema"] = "den_worker_completion",
+            ["completion_packet"] = true,
+            ["role"] = role,
+            ["project_id"] = _projectId,
+            ["task_id"] = taskId,
+            ["run_id"] = runId ?? $"run-{role}-{Guid.NewGuid():N}",
+            ["status"] = status,
+            ["branch"] = branch,
+            ["head_commit"] = headCommit,
+            ["tests_run"] = testsRun,
+        }, JsonOpts);
+
+        return await messages.CreateAsync(new Message
+        {
+            ProjectId = _projectId,
+            TaskId = taskId,
+            Sender = role,
+            Intent = MessageIntent.StatusUpdate,
+            Content = $"# {packetType}",
+            Metadata = metadata
+        });
+    }
+
+    private async Task<Message> CreateWorkerContextPacketAsync(
+        int taskId,
+        string role,
+        string packetType,
+        string branch,
+        string headCommit,
+        string runId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var messages = scope.ServiceProvider.GetRequiredService<IMessageRepository>();
+        var metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["type"] = packetType,
+            ["packet_kind"] = packetType,
+            ["schema"] = "den_worker_packet",
+            ["role"] = role,
+            ["project_id"] = _projectId,
+            ["task_id"] = taskId,
+            ["run_id"] = runId,
+            ["branch"] = branch,
+            ["head_commit"] = headCommit,
+            ["reference_only_launch"] = true,
+        }, JsonOpts);
+
+        return await messages.CreateAsync(new Message
+        {
+            ProjectId = _projectId,
+            TaskId = taskId,
+            Sender = "runner",
+            Intent = MessageIntent.Handoff,
+            Content = $"# {packetType}",
+            Metadata = metadata
+        });
+    }
+
+    private async Task<WorkerAssignment> SeedGateAssignmentAsync(int taskId, string role, string runId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>();
+        var workerId = $"wp-{role}-{Guid.NewGuid():N}";
+        await repo.UpsertMemberAsync(new WorkerPoolMember
+        {
+            WorkerIdentity = workerId,
+            WorkerRole = role,
+            Status = WorkerPoolStates.MemberAvailable,
+        });
+
+        var assignment = await repo.LeaseAvailableWorkerAsync(new LeaseWorkerInput
+        {
+            ProjectId = _projectId,
+            TaskId = taskId,
+            Role = role,
+            AssignedBy = "runner",
+            RunId = runId,
+            PreferredWorkerIdentity = workerId,
+        });
+        Assert.NotNull(assignment);
+        return assignment;
+    }
+
+    private async Task<AgentStreamEntry> CreateGateWakeAsync(int taskId, string role, string runId, string headCommit)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var stream = scope.ServiceProvider.GetRequiredService<IAgentStreamRepository>();
+        var metadata = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["run_id"] = runId,
+            ["role"] = role,
+            ["head_commit"] = headCommit,
+            ["gate"] = role,
+        }, JsonOpts);
+
+        return await stream.AppendAsync(new AgentStreamEntry
+        {
+            StreamKind = AgentStreamKind.Ops,
+            EventType = "worker_wake_requested",
+            ProjectId = _projectId,
+            TaskId = taskId,
+            Sender = "den-host",
+            RecipientRole = role,
+            DeliveryMode = AgentStreamDeliveryMode.Wake,
+            Body = $"wake {role}",
+            Metadata = metadata,
+            DedupKey = $"test-wake:{taskId}:{runId}",
+        });
+    }
+
+    private async Task<JsonDocument> DetermineNextActionAsync(int taskId, int maxAttempts = 4)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var resultJson = await OrchestratorStateMachineTools.DetermineOrchestratorNextAction(
+            scope.ServiceProvider.GetRequiredService<ITaskRepository>(),
+            scope.ServiceProvider.GetRequiredService<IMessageRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>(),
+            scope.ServiceProvider.GetRequiredService<IReviewFindingRepository>(),
+            scope.ServiceProvider.GetRequiredService<IWorkerPoolRepository>(),
+            scope.ServiceProvider.GetRequiredService<IAgentStreamRepository>(),
+            _projectId,
+            taskId,
+            max_attempts: maxAttempts,
+            verbose: true);
+
+        return JsonDocument.Parse(resultJson);
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_OldFailedValidationNewHeadActiveValidator_WaitsInFlight()
+    {
+        var task = await CreateInProgressTaskAsync("Head-aware validation waits for active current-head gate");
+        var headA = $"a{Guid.NewGuid():N}";
+        var headB = $"b{Guid.NewGuid():N}";
+        var runId = $"run-validator-{Guid.NewGuid():N}";
+
+        var oldValidation = await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "validator",
+            "validation_packet",
+            "failed",
+            "task/head-aware-gates",
+            headA);
+        var implementation = await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            headB);
+        var context = await CreateWorkerContextPacketAsync(
+            task.Id,
+            "validator",
+            "validator_context_packet",
+            "task/head-aware-gates",
+            headB,
+            runId);
+        var assignment = await SeedGateAssignmentAsync(task.Id, "validator", runId);
+        var wake = await CreateGateWakeAsync(task.Id, "validator", runId, headB);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("wait_in_flight", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_in_flight", root.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(headB, root.GetProperty("workflow_head").GetProperty("head_commit").GetString());
+        Assert.Equal(implementation.Id, root.GetProperty("workflow_head").GetProperty("implementation_packet_id").GetInt32());
+
+        var validationGate = root.GetProperty("gate_projection").GetProperty("validation");
+        Assert.Equal("in_flight", validationGate.GetProperty("state").GetString());
+        Assert.Equal(oldValidation.Id, validationGate.GetProperty("superseded_packets")[0].GetProperty("message_id").GetInt32());
+        var active = validationGate.GetProperty("active_runs")[0];
+        Assert.Equal(runId, active.GetProperty("run_id").GetString());
+        Assert.Equal(assignment.Id, active.GetProperty("assignment_id").GetInt32());
+        Assert.Equal(context.Id, active.GetProperty("context_packet_id").GetInt32());
+        Assert.Equal(wake.Id, active.GetProperty("wake_event_id").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_OldFailedValidationNewHeadNoActiveGate_LaunchesValidatorWithHeadDedupeKey()
+    {
+        var task = await CreateInProgressTaskAsync("Head-aware validation launches only for current head");
+        var headA = $"a{Guid.NewGuid():N}";
+        var headB = $"b{Guid.NewGuid():N}";
+
+        var oldValidation = await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "validator",
+            "validation_packet",
+            "failed",
+            "task/head-aware-gates",
+            headA);
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            headB);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("launch_validator", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_missing_for_current_head", root.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal($"gate:{task.Id}:{headB}:validator:gate-policy-v1", root.GetProperty("decision").GetProperty("dedupe_key").GetString());
+
+        var validationGate = root.GetProperty("gate_projection").GetProperty("validation");
+        Assert.Equal("missing", validationGate.GetProperty("state").GetString());
+        Assert.Equal(oldValidation.Id, validationGate.GetProperty("superseded_packets")[0].GetProperty("message_id").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_MultipleActiveValidatorRunsForCurrentHead_NeedsReconcile()
+    {
+        var task = await CreateInProgressTaskAsync("Head-aware validation fails closed on ambiguous active gates");
+        var headB = $"b{Guid.NewGuid():N}";
+        var runIdOne = $"run-validator-{Guid.NewGuid():N}";
+        var runIdTwo = $"run-validator-{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            headB);
+        await CreateWorkerContextPacketAsync(
+            task.Id,
+            "validator",
+            "validator_context_packet",
+            "task/head-aware-gates",
+            headB,
+            runIdOne);
+        await CreateWorkerContextPacketAsync(
+            task.Id,
+            "validator",
+            "validator_context_packet",
+            "task/head-aware-gates",
+            headB,
+            runIdTwo);
+        var assignmentOne = await SeedGateAssignmentAsync(task.Id, "validator", runIdOne);
+        var assignmentTwo = await SeedGateAssignmentAsync(task.Id, "validator", runIdTwo);
+        await CreateGateWakeAsync(task.Id, "validator", runIdOne, headB);
+        await CreateGateWakeAsync(task.Id, "validator", runIdTwo, headB);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("needs_reconcile", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_ambiguous_in_flight", root.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.True(root.GetProperty("fail_closed").GetBoolean());
+
+        var activeRuns = root.GetProperty("gate_projection").GetProperty("validation").GetProperty("active_runs").EnumerateArray().ToList();
+        Assert.Equal(2, activeRuns.Count);
+        var assignmentIds = activeRuns.Select(run => run.GetProperty("assignment_id").GetInt32()).ToHashSet();
+        Assert.Contains(assignmentOne.Id, assignmentIds);
+        Assert.Contains(assignmentTwo.Id, assignmentIds);
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_NewerFailedSameHeadValidationWinsOverOlderPass()
+    {
+        var task = await CreateInProgressTaskAsync("Current-head validation uses newest same-head packet");
+        var head = $"b{Guid.NewGuid():N}";
+
+        var oldPass = await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "validator",
+            "validation_packet",
+            "completed",
+            "task/head-aware-gates",
+            head);
+        var newerFailure = await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "validator",
+            "validation_packet",
+            "failed",
+            "task/head-aware-gates",
+            head);
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            head);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("launch_coder", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_failed", root.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(newerFailure.Id, root.GetProperty("gate_projection").GetProperty("validation").GetProperty("terminal_packet").GetProperty("message_id").GetInt32());
+        Assert.NotEqual(oldPass.Id, root.GetProperty("latest_packets").GetProperty("validation").GetProperty("message_id").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_ActiveValidatorRerunForFailedCurrentHead_WaitsInFlight()
+    {
+        var task = await CreateInProgressTaskAsync("Current-head active validator rerun suppresses stale failure action");
+        var head = $"b{Guid.NewGuid():N}";
+        var runId = $"run-validator-{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "validator",
+            "validation_packet",
+            "failed",
+            "task/head-aware-gates",
+            head);
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            head);
+        await CreateWorkerContextPacketAsync(
+            task.Id,
+            "validator",
+            "validator_context_packet",
+            "task/head-aware-gates",
+            head,
+            runId);
+        var assignment = await SeedGateAssignmentAsync(task.Id, "validator", runId);
+        await CreateGateWakeAsync(task.Id, "validator", runId, head);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("wait_in_flight", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_in_flight", root.GetProperty("decision").GetProperty("reason").GetString());
+        Assert.Equal(assignment.Id, root.GetProperty("gate_projection").GetProperty("validation").GetProperty("active_runs")[0].GetProperty("assignment_id").GetInt32());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_CorrelatedAndUncorrelatedActiveValidatorRuns_NeedsReconcile()
+    {
+        var task = await CreateInProgressTaskAsync("Current-head validation treats mixed active assignments as ambiguous");
+        var head = $"b{Guid.NewGuid():N}";
+        var correlatedRunId = $"run-validator-{Guid.NewGuid():N}";
+        var uncorrelatedRunId = $"run-validator-{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(
+            task.Id,
+            "coder",
+            "implementation_packet",
+            "completed",
+            "task/head-aware-gates",
+            head);
+        await CreateWorkerContextPacketAsync(
+            task.Id,
+            "validator",
+            "validator_context_packet",
+            "task/head-aware-gates",
+            head,
+            correlatedRunId);
+        var correlatedAssignment = await SeedGateAssignmentAsync(task.Id, "validator", correlatedRunId);
+        var uncorrelatedAssignment = await SeedGateAssignmentAsync(task.Id, "validator", uncorrelatedRunId);
+        await CreateGateWakeAsync(task.Id, "validator", correlatedRunId, head);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+        Assert.Equal("needs_reconcile", root.GetProperty("decision").GetProperty("next_action").GetString());
+        Assert.Equal("validation_ambiguous_in_flight", root.GetProperty("decision").GetProperty("reason").GetString());
+        var activeRuns = root.GetProperty("gate_projection").GetProperty("validation").GetProperty("active_runs").EnumerateArray().ToList();
+        Assert.Equal(2, activeRuns.Count);
+        var assignmentIds = activeRuns.Select(run => run.GetProperty("assignment_id").GetInt32()).ToHashSet();
+        Assert.Contains(correlatedAssignment.Id, assignmentIds);
+        Assert.Contains(uncorrelatedAssignment.Id, assignmentIds);
+    }
+
     [Fact]
     public async Task DetermineOrchestratorNextAction_DoneTask_HoldsWithoutWorkerLaunch()
     {

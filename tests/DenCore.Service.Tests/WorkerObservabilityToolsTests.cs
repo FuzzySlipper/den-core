@@ -289,8 +289,12 @@ public class WorkerObservabilityToolsTests
         Assert.Contains("Scope audit trigger", trigger.Content);
     }
 
-    [Fact]
-    public async Task PostImplementationPacket_SimpleLocalizedScope_DoesNotCreateScopeAuditTrigger()
+    [Theory]
+    [InlineData("Simple localized-patch typo fix.", "Yes — tiny localized patch, no parent acceptance follow-up.")]
+    [InlineData("Built simple fix.", "No deferred work.")]
+    [InlineData("Updated guidance wording.", "No deferred work.")]
+    [InlineData("Rapid cleanup of stale comment.", "No deferred work.")]
+    public async Task PostImplementationPacket_OrdinaryScope_DoesNotCreateScopeAuditTrigger(string summary, string parentClosable)
     {
         var pool = new FakeWorkerPoolRepository();
         var messages = new CapturingMessageRepository();
@@ -304,11 +308,11 @@ public class WorkerObservabilityToolsTests
             status: "completed",
             role: "coder",
             packet_type: "implementation_packet",
-            summary: "Simple localized-patch typo fix.",
+            summary: summary,
             branch: "task/1245-foo",
             head_commit: "0123456789abcdef0123456789abcdef01234567",
             tests_run: "[\"dotnet test: passed\"]",
-            scope_parent_closable: "Yes — tiny localized patch, no parent acceptance follow-up.",
+            scope_parent_closable: parentClosable,
             verbose: true);
 
         var stored = await messages.GetMessagesAsync("proj", taskId: 1245, limit: 10);

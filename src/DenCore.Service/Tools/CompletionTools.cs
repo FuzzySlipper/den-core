@@ -293,8 +293,6 @@ public sealed class CompletionTools
             "direct agent",
             "agent-work",
             "agent work",
-            "api",
-            "ui",
             "foundation",
             "contract",
             "current-work",
@@ -304,7 +302,9 @@ public sealed class CompletionTools
             "follow-up tasks recorded",
             "multiple follow-ups",
             "operator-visible",
-            "live/operator-visible");
+            "live/operator-visible")
+            || ContainsToken(combined, "api")
+            || ContainsToken(combined, "ui");
     }
 
     private static bool ShouldRouteScopeAuditToPlanner(string? auditVerdict, string? auditRecommendedRoute)
@@ -332,7 +332,9 @@ public sealed class CompletionTools
             return "architecture_boundary_or_migration";
         if (ContainsAny(combined, "foundation", "contract", "follow-up tasks recorded", "multiple follow-ups"))
             return "foundation_or_followup_scope";
-        if (ContainsAny(combined, "worker-pool", "worker pool", "direct-agent", "direct agent", "agent-work", "agent work", "api", "ui"))
+        if (ContainsAny(combined, "worker-pool", "worker pool", "direct-agent", "direct agent", "agent-work", "agent work")
+            || ContainsToken(combined, "api")
+            || ContainsToken(combined, "ui"))
             return "high_risk_tag_or_surface";
         return "selective_scope_audit_candidate";
     }
@@ -378,6 +380,9 @@ public sealed class CompletionTools
     }
 
     private static bool ContainsAny(string haystack, params string[] needles) => needles.Any(needle => haystack.Contains(needle, StringComparison.Ordinal));
+
+    private static bool ContainsToken(string haystack, string token) =>
+        Regex.IsMatch(haystack, $"(?<![a-z0-9]){Regex.Escape(token)}(?![a-z0-9])", RegexOptions.CultureInvariant);
 
     private static async Task<Message?> FindExistingCompletionAsync(IMessageRepository messages, string projectId, int? taskId, string dedupe_key)
     {

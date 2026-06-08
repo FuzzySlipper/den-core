@@ -1,5 +1,7 @@
 using DenCore.Data;
 using DenCore.Models;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DenCore.Tests.Data;
 
@@ -14,6 +16,7 @@ public class RepositoryNullableProjectIdTests : IAsyncLifetime
     private IAgentInstanceBindingRepository _bindings = null!;
     private IWorkerPoolRepository _workers = null!;
     private IDesktopSessionEventRepository _events = null!;
+    private IAgentSessionRepository _sessions = null!;
     private IProjectRepository _projects = null!;
     private ITaskRepository _tasks = null!;
 
@@ -23,12 +26,254 @@ public class RepositoryNullableProjectIdTests : IAsyncLifetime
         _bindings = new AgentInstanceBindingRepository(_testDb.Db);
         _workers = new WorkerPoolRepository(_testDb.Db);
         _events = new DesktopSessionEventRepository(_testDb.Db);
+        _sessions = new AgentSessionRepository(_testDb.Db);
         _projects = new ProjectRepository(_testDb.Db);
         _tasks = new TaskRepository(_testDb.Db);
         await _projects.CreateAsync(new Project { Id = "test-proj", Name = "Test Project" });
     }
 
     public Task DisposeAsync() => _testDb.DisposeAsync();
+
+
+
+    // ── AgentSessionRepository with null ProjectId ───────────────────────
+
+    [Fact]
+    public async Task AgentSession_CheckInHeartbeatAndCheckout_WithNullProjectId_UsesGlobalSession()
+    {
+        var checkedIn = await _sessions.CheckInAsync(
+            agent: "global-agent",
+            projectId: null,
+            sessionId: "global-session",
+            metadata: "{}");
+
+        Assert.Equal("global-agent", checkedIn.Agent);
+        Assert.Null(checkedIn.ProjectId);
+        Assert.Equal("global-session", checkedIn.SessionId);
+
+        Assert.True(await _sessions.HeartbeatAsync("global-agent", null));
+        Assert.True(await _sessions.CheckOutAsync("global-agent", null));
+
+        var active = await _sessions.ListActiveAsync();
+        Assert.DoesNotContain(active, session => session.Agent == "global-agent");
+    }
+
+    [Fact]
+    public async Task AgentSession_ListActiveByProject_ExcludesGlobalSessions()
+    {
+        await _sessions.CheckInAsync("global-agent-filter", null, "global-filter-session");
+        await _sessions.CheckInAsync("project-agent-filter", "test-proj", "project-filter-session");
+
+        var projectSessions = await _sessions.ListActiveAsync("test-proj");
+
+        var session = Assert.Single(projectSessions, item => item.Agent == "project-agent-filter");
+        Assert.Equal("test-proj", session.ProjectId);
+        Assert.DoesNotContain(projectSessions, item => item.Agent == "global-agent-filter");
+    }
+
+    [Fact]
+    public async Task DatabaseInitializer_MigratesLegacyAgentSessionsTable_ToNullableGlobalSessionShape()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"den-core-legacy-agent-sessions-{Guid.NewGuid()}.db");
+        try
+        {
+            await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                await conn.OpenAsync();
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    PRAGMA foreign_keys = ON;
+                    CREATE TABLE projects (
+                        id            TEXT PRIMARY KEY,
+                        name          TEXT NOT NULL,
+                        kind          TEXT NOT NULL DEFAULT 'project'
+                                      CHECK (kind IN ('project', 'personal', 'assistant', 'knowledge_base', 'system')),
+                        visibility    TEXT NOT NULL DEFAULT 'normal'
+                                      CHECK (visibility IN ('normal', 'hidden', 'archived')),
+                        owner         TEXT,
+                        root_path     TEXT,
+                        description   TEXT,
+                        settings_json TEXT,
+                        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    INSERT INTO projects (id, name, kind, visibility) VALUES ('legacy-proj', 'Legacy Project', 'project', 'normal');
+                    CREATE TABLE agent_sessions (
+                        agent           TEXT NOT NULL,
+                        project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        session_id      TEXT,
+                        status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+                        checked_in_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                        last_heartbeat  TEXT NOT NULL DEFAULT (datetime('now')),
+                        metadata        TEXT,
+                        PRIMARY KEY (agent, project_id)
+                    );
+                    INSERT INTO agent_sessions (agent, project_id, session_id, status, metadata)
+                    VALUES ('legacy-agent', 'legacy-proj', 'legacy-session', 'active', '{"legacy":true}');
+                    """;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            var initializer = new DatabaseInitializer(dbPath, NullLogger<DatabaseInitializer>.Instance);
+            await initializer.InitializeAsync();
+
+            await using (var conn = new SqliteConnection(initializer.ConnectionString))
+            {
+                await conn.OpenAsync();
+                var columns = await ReadTableInfoAsync(conn, "agent_sessions");
+                Assert.Equal(0, columns["project_id"].NotNull);
+                Assert.Equal(1, columns["agent"].PrimaryKeyOrdinal);
+                Assert.Equal(0, columns["project_id"].PrimaryKeyOrdinal);
+            }
+
+            var repo = new AgentSessionRepository(new DbConnectionFactory(initializer.ConnectionString));
+            var global = await repo.CheckInAsync("global-after-migration", null, "global-after-migration-session");
+            Assert.Null(global.ProjectId);
+            Assert.True(await repo.HeartbeatAsync("global-after-migration", null));
+
+            var legacyProjectSessions = await repo.ListActiveAsync("legacy-proj");
+            Assert.Contains(legacyProjectSessions, session => session.Agent == "legacy-agent");
+        }
+        finally
+        {
+            if (File.Exists(dbPath))
+                File.Delete(dbPath);
+        }
+    }
+
+
+    [Fact]
+    public async Task DatabaseInitializer_MigratesLegacyInfrastructureTables_ToNullableProjectIdShape()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"den-core-legacy-infra-nullable-project-{Guid.NewGuid()}.db");
+        try
+        {
+            await using (var conn = new SqliteConnection($"Data Source={dbPath}"))
+            {
+                await conn.OpenAsync();
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    PRAGMA foreign_keys = ON;
+                    CREATE TABLE projects (
+                        id            TEXT PRIMARY KEY,
+                        name          TEXT NOT NULL,
+                        kind          TEXT NOT NULL DEFAULT 'project'
+                                      CHECK (kind IN ('project', 'personal', 'assistant', 'knowledge_base', 'system')),
+                        visibility    TEXT NOT NULL DEFAULT 'normal'
+                                      CHECK (visibility IN ('normal', 'hidden', 'archived')),
+                        owner         TEXT,
+                        root_path     TEXT,
+                        description   TEXT,
+                        settings_json TEXT,
+                        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    INSERT INTO projects (id, name, kind, visibility) VALUES ('legacy-proj', 'Legacy Project', 'project', 'normal');
+
+                    CREATE TABLE agent_instance_bindings (
+                        instance_id      TEXT PRIMARY KEY,
+                        project_id       TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        agent_identity   TEXT NOT NULL,
+                        agent_family     TEXT NOT NULL,
+                        role             TEXT,
+                        transport_kind   TEXT NOT NULL,
+                        status           TEXT NOT NULL DEFAULT 'active'
+                                         CHECK (status IN ('active', 'inactive', 'degraded')),
+                        session_id       TEXT,
+                        checked_in_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                        last_heartbeat   TEXT,
+                        metadata         TEXT,
+                        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    INSERT INTO agent_instance_bindings (
+                        instance_id, project_id, agent_identity, agent_family, transport_kind, status
+                    ) VALUES ('legacy-binding', 'legacy-proj', 'legacy-agent', 'hermes', 'channels', 'active');
+
+                    CREATE TABLE dispatch_entries (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                        target_agent    TEXT NOT NULL,
+                        status          TEXT NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN ('pending', 'approved', 'rejected', 'completed', 'expired')),
+                        trigger_type    TEXT NOT NULL
+                                        CHECK (trigger_type IN ('message', 'task_status')),
+                        trigger_id      INTEGER NOT NULL,
+                        task_id         INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                        summary         TEXT,
+                        context_prompt  TEXT,
+                        context_json    TEXT,
+                        dedup_key       TEXT NOT NULL,
+                        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at      TEXT NOT NULL,
+                        decided_at      TEXT,
+                        completed_at    TEXT,
+                        decided_by      TEXT,
+                        completed_by    TEXT
+                    );
+                    """;
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            var initializer = new DatabaseInitializer(dbPath, NullLogger<DatabaseInitializer>.Instance);
+            await initializer.InitializeAsync();
+
+            await using var verifyConn = new SqliteConnection(initializer.ConnectionString);
+            await verifyConn.OpenAsync();
+            var bindingColumns = await ReadTableInfoAsync(verifyConn, "agent_instance_bindings");
+            var dispatchColumns = await ReadTableInfoAsync(verifyConn, "dispatch_entries");
+            Assert.Equal(0, bindingColumns["project_id"].NotNull);
+            Assert.Equal(0, dispatchColumns["project_id"].NotNull);
+
+            var bindingSchema = await ReadTableSchemaAsync(verifyConn, "agent_instance_bindings");
+            var dispatchSchema = await ReadTableSchemaAsync(verifyConn, "dispatch_entries");
+            Assert.Contains("project_id TEXT REFERENCES projects(id) ON DELETE SET NULL", bindingSchema);
+            Assert.Contains("project_id TEXT REFERENCES projects(id) ON DELETE SET NULL", dispatchSchema);
+
+            var repo = new AgentInstanceBindingRepository(new DbConnectionFactory(initializer.ConnectionString));
+            var globalBinding = await repo.UpsertAsync(new AgentInstanceBinding
+            {
+                InstanceId = "global-binding-after-migration",
+                ProjectId = null,
+                AgentIdentity = "global-agent-after-migration",
+                AgentFamily = "hermes",
+                TransportKind = "channels",
+                Status = AgentInstanceBindingStatus.Active
+            });
+            Assert.Null(globalBinding.ProjectId);
+        }
+        finally
+        {
+            if (File.Exists(dbPath))
+                File.Delete(dbPath);
+        }
+    }
+
+    private static async Task<Dictionary<string, TableColumnInfo>> ReadTableInfoAsync(SqliteConnection conn, string tableName)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({tableName})";
+        var result = new Dictionary<string, TableColumnInfo>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            result[reader.GetString(1)] = new TableColumnInfo(
+                NotNull: reader.GetInt32(3),
+                PrimaryKeyOrdinal: reader.GetInt32(5));
+        }
+        return result;
+    }
+
+    private static async Task<string> ReadTableSchemaAsync(SqliteConnection conn, string tableName)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = @name";
+        cmd.Parameters.AddWithValue("@name", tableName);
+        return (string)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    private sealed record TableColumnInfo(int NotNull, int PrimaryKeyOrdinal);
+
 
     // ── AgentInstanceBindingRepository ───────────────────────────────────
 

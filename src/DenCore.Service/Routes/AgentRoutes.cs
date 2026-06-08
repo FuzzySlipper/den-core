@@ -22,7 +22,8 @@ public static class AgentRoutes
                 await bindings.UpsertAsync(binding);
             try
             {
-                await notifications.SendAgentStatusAsync(req.ProjectId, req.Agent, "checked_in");
+                if (req.ProjectId is not null)
+                    await notifications.SendAgentStatusAsync(req.ProjectId, req.Agent, "checked_in");
             }
             catch (Exception ex)
             {
@@ -63,7 +64,8 @@ public static class AgentRoutes
             {
                 try
                 {
-                    await notifications.SendAgentStatusAsync(req.ProjectId, req.Agent, "checked_out");
+                    if (req.ProjectId is not null)
+                        await notifications.SendAgentStatusAsync(req.ProjectId, req.Agent, "checked_out");
                 }
                 catch (Exception ex)
                 {
@@ -184,7 +186,7 @@ public static class AgentRoutes
 
 public record CheckInRequest(
     string Agent,
-    string ProjectId,
+    string? ProjectId,
     string? SessionId = null,
     string? Metadata = null,
     string? InstanceId = null,
@@ -193,5 +195,5 @@ public record CheckInRequest(
     string? TransportKind = null,
     string? BindingStatus = null);
 
-public record HeartbeatRequest(string Agent, string ProjectId, string? InstanceId = null);
-public record CheckOutRequest(string Agent, string ProjectId, string? SessionId = null, string? InstanceId = null);
+public record HeartbeatRequest(string Agent, string? ProjectId, string? InstanceId = null);
+public record CheckOutRequest(string Agent, string? ProjectId, string? SessionId = null, string? InstanceId = null);

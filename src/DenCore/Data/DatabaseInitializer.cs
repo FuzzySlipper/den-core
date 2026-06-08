@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using DenCore.Models;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -1023,6 +1024,7 @@ public sealed class DatabaseInitializer
         // SQLite has no ALTER TABLE ... ADD COLUMN IF NOT EXISTS,
         // so we check via PRAGMA table_info.
         await TryAddColumnAsync(connection, "agent_sessions", "session_id", "TEXT");
+        await EnsureAgentSessionsGlobalSchemaAsync(connection);
         await TryAddColumnAsync(connection, "desktop_diff_snapshots", "source_display_name", "TEXT");
         await TryAddColumnAsync(connection, "desktop_session_snapshots", "title", "TEXT");
         await TryAddColumnAsync(connection, "desktop_session_snapshots", "display_name", "TEXT");
@@ -1176,6 +1178,10 @@ public sealed class DatabaseInitializer
 
         // Ensure orchestrator_leases schema (migration for existing DBs)
         await EnsureOrchestratorLeasesSchemaAsync(connection);
+
+        // Migration: relax legacy project-scoped infrastructure tables to allow global rows.
+        await EnsureNullableProjectIdInfrastructureTablesAsync(connection);
+        await EnsureNullableProjectIdInfrastructureIndexesAsync(connection);
 
         // Migration: expand no-capacity reason_code CHECK for hard_selector_mismatch
         await EnsureNoCapacityReasonCodesAsync(connection);
@@ -2092,6 +2098,343 @@ public sealed class DatabaseInitializer
             // A parallel initializer may have added the column between the PRAGMA check and ALTER TABLE.
         }
     }
+
+    private async Task EnsureNullableProjectIdInfrastructureTablesAsync(SqliteConnection connection)
+    {
+        var tables = new[]
+        {
+            "agent_instance_bindings",
+            "dispatch_entries",
+            "desktop_git_snapshots",
+            "desktop_diff_snapshots",
+            "desktop_session_snapshots",
+            "desktop_session_events",
+            "worker_assignments",
+            "orchestrator_leases"
+        };
+
+        foreach (var table in tables)
+        {
+            await EnsureNullableProjectIdTableAsync(connection, table);
+        }
+    }
+
+    private async Task EnsureNullableProjectIdTableAsync(SqliteConnection connection, string table)
+    {
+        var schema = await GetTableCreateSqlAsync(connection, table);
+        if (schema is null)
+            return;
+
+        var columns = await ReadTableInfoAsync(connection, table);
+        if (!columns.TryGetValue("project_id", out var projectColumn))
+            return;
+
+        var relaxedSchema = RelaxProjectIdColumnSql(schema);
+        if (projectColumn.NotNull == 0 && string.Equals(relaxedSchema, schema, StringComparison.Ordinal))
+            return;
+
+        if (string.Equals(relaxedSchema, schema, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Could not derive nullable project_id schema for {table}.");
+
+        var tempTable = $"{table}_project_id_nullable_new";
+        relaxedSchema = RenameCreateTableSql(relaxedSchema, table, tempTable);
+        var columnList = string.Join(", ", columns.Keys.Select(QuoteIdentifier));
+
+        _logger.LogInformation("Migrating {Table} to nullable project_id / ON DELETE SET NULL shape", table);
+
+        await using (var fkOffCmd = connection.CreateCommand())
+        {
+            fkOffCmd.CommandText = "PRAGMA foreign_keys = OFF";
+            await fkOffCmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await using var rebuildCmd = connection.CreateCommand();
+            rebuildCmd.CommandText = $"""
+                BEGIN IMMEDIATE;
+
+                DROP TABLE IF EXISTS {QuoteIdentifier(tempTable)};
+                {relaxedSchema};
+
+                INSERT INTO {QuoteIdentifier(tempTable)} ({columnList})
+                SELECT {columnList}
+                FROM {QuoteIdentifier(table)};
+
+                DROP TABLE {QuoteIdentifier(table)};
+                ALTER TABLE {QuoteIdentifier(tempTable)} RENAME TO {QuoteIdentifier(table)};
+
+                COMMIT;
+                """;
+            await rebuildCmd.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            await using var rollbackCmd = connection.CreateCommand();
+            rollbackCmd.CommandText = "ROLLBACK";
+            try { await rollbackCmd.ExecuteNonQueryAsync(); } catch (SqliteException) { }
+            throw;
+        }
+        finally
+        {
+            await using var fkOnCmd = connection.CreateCommand();
+            fkOnCmd.CommandText = "PRAGMA foreign_keys = ON";
+            await fkOnCmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static async Task<string?> GetTableCreateSqlAsync(SqliteConnection connection, string table)
+    {
+        await using var schemaCmd = connection.CreateCommand();
+        schemaCmd.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = @name";
+        schemaCmd.Parameters.AddWithValue("@name", table);
+        return (string?)await schemaCmd.ExecuteScalarAsync();
+    }
+
+    private static string RelaxProjectIdColumnSql(string createTableSql)
+    {
+        var relaxed = Regex.Replace(
+            createTableSql,
+            @"project_id\s+TEXT\s+NOT\s+NULL\s+REFERENCES\s+projects\(id\)(?:\s+ON\s+DELETE\s+(?:CASCADE|SET\s+NULL))?",
+            "project_id TEXT REFERENCES projects(id) ON DELETE SET NULL",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        relaxed = Regex.Replace(
+            relaxed,
+            @"project_id\s+TEXT\s+REFERENCES\s+projects\(id\)\s+ON\s+DELETE\s+CASCADE",
+            "project_id TEXT REFERENCES projects(id) ON DELETE SET NULL",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return relaxed.Trim().TrimEnd(';');
+    }
+
+    private static string RenameCreateTableSql(string createTableSql, string oldName, string newName)
+    {
+        return Regex.Replace(
+            createTableSql,
+            $@"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?{Regex.Escape(oldName)}\b",
+            $"CREATE TABLE {QuoteIdentifier(newName)}",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static string QuoteIdentifier(string identifier) => $"\"{identifier.Replace("\"", "\"\"")}\"";
+
+    private static async Task EnsureNullableProjectIdInfrastructureIndexesAsync(SqliteConnection connection)
+    {
+        await EnsureIndexAsync(connection, "idx_agent_sessions_project_status",
+            "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_status ON agent_sessions(project_id, status)");
+
+        await EnsureIndexAsync(connection, "idx_agent_bindings_project_status",
+            "CREATE INDEX IF NOT EXISTS idx_agent_bindings_project_status ON agent_instance_bindings(project_id, status, last_heartbeat DESC)");
+        await EnsureIndexAsync(connection, "idx_agent_bindings_project_role_status",
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_bindings_project_role_status
+            ON agent_instance_bindings(project_id, role, status, last_heartbeat DESC)
+            WHERE role IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_agent_bindings_project_agent_status",
+            "CREATE INDEX IF NOT EXISTS idx_agent_bindings_project_agent_status ON agent_instance_bindings(project_id, agent_identity, status, last_heartbeat DESC)");
+        await EnsureIndexAsync(connection, "idx_agent_bindings_session",
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_bindings_session
+            ON agent_instance_bindings(session_id)
+            WHERE session_id IS NOT NULL
+            """);
+
+        await EnsureIndexAsync(connection, "idx_dispatch_status",
+            "CREATE INDEX IF NOT EXISTS idx_dispatch_status ON dispatch_entries(status)");
+        await EnsureIndexAsync(connection, "idx_dispatch_project_status",
+            "CREATE INDEX IF NOT EXISTS idx_dispatch_project_status ON dispatch_entries(project_id, status)");
+        await EnsureIndexAsync(connection, "idx_dispatch_dedup",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_dedup ON dispatch_entries(dedup_key) WHERE status = 'pending'");
+
+        await EnsureDesktopSnapshotIndexesAsync(connection);
+        await EnsureWorkerAssignmentIndexesAsync(connection);
+        await EnsureOrchestratorLeaseIndexesAsync(connection);
+    }
+
+    private static async Task EnsureDesktopSnapshotIndexesAsync(SqliteConnection connection)
+    {
+        await EnsureIndexAsync(connection, "idx_desktop_git_snapshots_project_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_git_snapshots_project_observed ON desktop_git_snapshots(project_id, observed_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_git_snapshots_task_observed",
+            """
+            CREATE INDEX IF NOT EXISTS idx_desktop_git_snapshots_task_observed
+            ON desktop_git_snapshots(task_id, observed_at DESC, id DESC)
+            WHERE task_id IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_desktop_git_snapshots_workspace_observed",
+            """
+            CREATE INDEX IF NOT EXISTS idx_desktop_git_snapshots_workspace_observed
+            ON desktop_git_snapshots(workspace_id, observed_at DESC, id DESC)
+            WHERE workspace_id IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_desktop_git_snapshots_source_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_git_snapshots_source_observed ON desktop_git_snapshots(source_instance_id, observed_at DESC, id DESC)");
+
+        await EnsureIndexAsync(connection, "idx_desktop_diff_snapshots_project_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_diff_snapshots_project_observed ON desktop_diff_snapshots(project_id, observed_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_diff_snapshots_source_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_diff_snapshots_source_observed ON desktop_diff_snapshots(source_instance_id, observed_at DESC, id DESC)");
+
+        await EnsureIndexAsync(connection, "idx_desktop_session_snapshots_project_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_snapshots_project_observed ON desktop_session_snapshots(project_id, observed_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_session_snapshots_task_observed",
+            """
+            CREATE INDEX IF NOT EXISTS idx_desktop_session_snapshots_task_observed
+            ON desktop_session_snapshots(task_id, observed_at DESC, id DESC)
+            WHERE task_id IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_desktop_session_snapshots_source_observed",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_snapshots_source_observed ON desktop_session_snapshots(source_instance_id, observed_at DESC, id DESC)");
+
+        await EnsureIndexAsync(connection, "idx_desktop_session_events_project_created",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_events_project_created ON desktop_session_events(project_id, created_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_session_events_source_created",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_events_source_created ON desktop_session_events(source_instance_id, created_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_session_events_session_created",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_events_session_created ON desktop_session_events(session_id, created_at DESC, id DESC)");
+        await EnsureIndexAsync(connection, "idx_desktop_session_events_task_created",
+            """
+            CREATE INDEX IF NOT EXISTS idx_desktop_session_events_task_created
+            ON desktop_session_events(task_id, created_at DESC, id DESC)
+            WHERE task_id IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_desktop_session_events_event_type_created",
+            "CREATE INDEX IF NOT EXISTS idx_desktop_session_events_event_type_created ON desktop_session_events(event_type, created_at DESC, id DESC)");
+    }
+
+    private static async Task EnsureWorkerAssignmentIndexesAsync(SqliteConnection connection)
+    {
+        await EnsureIndexAsync(connection, "idx_worker_assignments_worker_state",
+            "CREATE INDEX IF NOT EXISTS idx_worker_assignments_worker_state ON worker_assignments(worker_identity, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_worker_assignments_project_state",
+            "CREATE INDEX IF NOT EXISTS idx_worker_assignments_project_state ON worker_assignments(project_id, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_worker_assignments_task_state",
+            """
+            CREATE INDEX IF NOT EXISTS idx_worker_assignments_task_state
+            ON worker_assignments(task_id, state, updated_at DESC)
+            WHERE task_id IS NOT NULL
+            """);
+        await EnsureIndexAsync(connection, "idx_worker_assignments_state_updated",
+            "CREATE INDEX IF NOT EXISTS idx_worker_assignments_state_updated ON worker_assignments(state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_worker_assignments_lease_id_unique",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_assignments_lease_id_unique ON worker_assignments(lease_id) WHERE lease_id IS NOT NULL");
+    }
+
+    private static async Task EnsureOrchestratorLeaseIndexesAsync(SqliteConnection connection)
+    {
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_project",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_project ON orchestrator_leases(project_id, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_orchestrator",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_orchestrator ON orchestrator_leases(orchestrator_identity, state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_state",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_state ON orchestrator_leases(state, updated_at DESC)");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_expires",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_expires ON orchestrator_leases(lease_expires_at, state) WHERE lease_expires_at IS NOT NULL");
+        await EnsureIndexAsync(connection, "idx_orchestrator_leases_lease_kind",
+            "CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_lease_kind ON orchestrator_leases(lease_kind, project_id, state)");
+    }
+
+    private async Task EnsureAgentSessionsGlobalSchemaAsync(SqliteConnection connection)
+    {
+        var columns = await ReadTableInfoAsync(connection, "agent_sessions");
+        if (!columns.TryGetValue("agent", out var agentColumn) ||
+            !columns.TryGetValue("project_id", out var projectColumn))
+        {
+            return;
+        }
+
+        var alreadyGlobalShape =
+            projectColumn.NotNull == 0 &&
+            agentColumn.PrimaryKeyOrdinal == 1 &&
+            projectColumn.PrimaryKeyOrdinal == 0;
+        if (alreadyGlobalShape)
+            return;
+
+        _logger.LogInformation("Migrating agent_sessions to nullable project_id / global-session primary key shape");
+
+        await using (var fkOffCmd = connection.CreateCommand())
+        {
+            fkOffCmd.CommandText = "PRAGMA foreign_keys = OFF";
+            await fkOffCmd.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await using var rebuildCmd = connection.CreateCommand();
+            rebuildCmd.CommandText = """
+                BEGIN IMMEDIATE;
+
+                CREATE TABLE agent_sessions_new (
+                    agent           TEXT NOT NULL,
+                    project_id      TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                    session_id      TEXT,
+                    status          TEXT NOT NULL DEFAULT 'active'
+                                    CHECK (status IN ('active', 'inactive')),
+                    checked_in_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_heartbeat  TEXT NOT NULL DEFAULT (datetime('now')),
+                    metadata        TEXT,
+                    PRIMARY KEY (agent)
+                );
+
+                INSERT OR REPLACE INTO agent_sessions_new (
+                    agent, project_id, session_id, status, checked_in_at, last_heartbeat, metadata
+                )
+                SELECT
+                    agent,
+                    NULLIF(project_id, ''),
+                    session_id,
+                    status,
+                    checked_in_at,
+                    last_heartbeat,
+                    metadata
+                FROM agent_sessions
+                ORDER BY datetime(last_heartbeat), rowid;
+
+                DROP TABLE agent_sessions;
+                ALTER TABLE agent_sessions_new RENAME TO agent_sessions;
+
+                CREATE INDEX IF NOT EXISTS idx_agent_sessions_project_status
+                    ON agent_sessions(project_id, status);
+
+                COMMIT;
+                """;
+            await rebuildCmd.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            await using var rollbackCmd = connection.CreateCommand();
+            rollbackCmd.CommandText = "ROLLBACK";
+            try { await rollbackCmd.ExecuteNonQueryAsync(); } catch (SqliteException) { }
+            throw;
+        }
+        finally
+        {
+            await using var fkOnCmd = connection.CreateCommand();
+            fkOnCmd.CommandText = "PRAGMA foreign_keys = ON";
+            await fkOnCmd.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static async Task<Dictionary<string, TableColumnInfo>> ReadTableInfoAsync(SqliteConnection connection, string table)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({table})";
+
+        var columns = new Dictionary<string, TableColumnInfo>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            columns[reader.GetString(1)] = new TableColumnInfo(
+                NotNull: reader.GetInt32(3),
+                PrimaryKeyOrdinal: reader.GetInt32(5));
+        }
+
+        return columns;
+    }
+
+    private sealed record TableColumnInfo(int NotNull, int PrimaryKeyOrdinal);
 
     private async Task EnsureMessageIntentAllowsNotificationAsync(SqliteConnection connection)
     {

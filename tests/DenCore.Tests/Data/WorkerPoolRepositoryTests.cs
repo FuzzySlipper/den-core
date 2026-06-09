@@ -12,6 +12,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
     private IWorkerPoolRepository _repo = null!;
     private IProjectRepository _projects = null!;
     private ITaskRepository _tasks = null!;
+    private IReviewRoundRepository _reviewRounds = null!;
 
     public async Task InitializeAsync()
     {
@@ -19,19 +20,20 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         _repo = new WorkerPoolRepository(_testDb.Db);
         _projects = new ProjectRepository(_testDb.Db);
         _tasks = new TaskRepository(_testDb.Db);
+        _reviewRounds = new ReviewRoundRepository(_testDb.Db);
 
         await _projects.CreateAsync(new Project { Id = "test-proj", Name = "Test Project" });
     }
 
     public Task DisposeAsync() => _testDb.DisposeAsync();
 
-    private async Task<int> SeedTaskAsync()
+    private async Task<int> SeedTaskAsync(DenCore.Models.TaskStatus status = DenCore.Models.TaskStatus.Planned)
     {
         var task = await _tasks.CreateAsync(new ProjectTask
         {
             ProjectId = "test-proj",
             Title = "Test Task",
-            Status = DenCore.Models.TaskStatus.Planned,
+            Status = status,
         }, null);
         return task.Id;
     }
@@ -2933,6 +2935,134 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         Assert.DoesNotContain(result.Conditions, c =>
             c.Classification == StaleClassificationTypes.OrphanedOrchestratorLease
             && c.WorkerIdentity == "orch-fresh");
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DoesNotReportMissingReviewerCompletion_ForDoneTask()
+    {
+        var taskId = await SeedTaskAsync(DenCore.Models.TaskStatus.Done);
+        await _reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = taskId,
+            RequestedBy = "runner",
+            Branch = "task/done-pending-review",
+            BaseBranch = "main",
+            BaseCommit = "abc123",
+            HeadCommit = "def456",
+        });
+
+        await BackdateReviewRoundAsync(taskId, 1, "-45 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ReviewerStaleThresholdMinutes = 15,
+        });
+
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.TaskId == taskId);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DoesNotReportMissingReviewerCompletion_ForCancelledTask()
+    {
+        var taskId = await SeedTaskAsync(DenCore.Models.TaskStatus.Cancelled);
+        await _reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = taskId,
+            RequestedBy = "runner",
+            Branch = "task/cancelled-pending-review",
+            BaseBranch = "main",
+            BaseCommit = "abc123",
+            HeadCommit = "def456",
+        });
+
+        await BackdateReviewRoundAsync(taskId, 1, "-45 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ReviewerStaleThresholdMinutes = 15,
+        });
+
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.TaskId == taskId);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_DoesNotReportMissingReviewerCompletion_ForSupersededRound()
+    {
+        var taskId = await SeedTaskAsync();
+        await _reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = taskId,
+            RequestedBy = "runner",
+            Branch = "task/superseded-review",
+            BaseBranch = "main",
+            BaseCommit = "abc123",
+            HeadCommit = "def456",
+        });
+        await BackdateReviewRoundAsync(taskId, 1, "-45 minutes");
+
+        var latest = await _reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = taskId,
+            RequestedBy = "runner",
+            Branch = "task/superseded-review",
+            BaseBranch = "main",
+            BaseCommit = "abc123",
+            HeadCommit = "fedcba",
+        });
+        await _reviewRounds.SetVerdictAsync(latest.Id, ReviewVerdict.LooksGood, "reviewer");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ReviewerStaleThresholdMinutes = 15,
+        });
+
+        Assert.DoesNotContain(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.TaskId == taskId);
+    }
+
+    [Fact]
+    public async Task SweepStaleWorkers_ReportsMissingReviewerCompletion_ForActiveLatestRound()
+    {
+        var taskId = await SeedTaskAsync(DenCore.Models.TaskStatus.Review);
+        await _reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = taskId,
+            RequestedBy = "runner",
+            Branch = "task/active-pending-review",
+            BaseBranch = "main",
+            BaseCommit = "abc123",
+            HeadCommit = "def456",
+        });
+        await BackdateReviewRoundAsync(taskId, 1, "-45 minutes");
+
+        var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
+        {
+            ReviewerStaleThresholdMinutes = 15,
+        });
+
+        Assert.Contains(result.Conditions, c =>
+            c.Classification == StaleClassificationTypes.MissingReviewerCompletion
+            && c.TaskId == taskId);
+    }
+
+    private async Task BackdateReviewRoundAsync(int taskId, int roundNumber, string sqliteOffset)
+    {
+        await using var conn = await _testDb.Db.CreateConnectionAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE review_rounds
+            SET requested_at = datetime('now', @offset)
+            WHERE task_id = @taskId AND round_number = @roundNumber
+            """;
+        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.Parameters.AddWithValue("@roundNumber", roundNumber);
+        cmd.Parameters.AddWithValue("@offset", sqliteOffset);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     // ─────────────────────────────────────────────────────────────────

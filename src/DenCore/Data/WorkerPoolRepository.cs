@@ -2289,6 +2289,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         var where = new List<string>
         {
             "rr.verdict IS NULL",
+            "t.status NOT IN ('done', 'cancelled')",
+            "rr.round_number = (SELECT MAX(rr_latest.round_number) FROM review_rounds rr_latest WHERE rr_latest.task_id = rr.task_id)",
             $"rr.requested_at <= datetime('now', '-{options.ReviewerStaleThresholdMinutes} minutes')"
         };
         if (piFilter)

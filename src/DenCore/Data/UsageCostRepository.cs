@@ -591,36 +591,38 @@ public sealed class UsageCostRepository : IUsageCostRepository
             return null;
 
         // API pricing: sum of token counts * per-million prices
+        // Pure integer arithmetic: tokens * price / 1_000_000 with rounding to nearest micro-cent
+        // Rounding: add half the divisor before division: (tokens * price + 500_000) / 1_000_000
         long cost = 0;
         bool hasAnyData = false;
 
         if (e.InputTokens.HasValue && pricing.InputPriceMicroCentsPerMillion.HasValue)
         {
-            cost += (long)(e.InputTokens.Value * (double)pricing.InputPriceMicroCentsPerMillion.Value / 1_000_000);
+            cost += (e.InputTokens.Value * (long)pricing.InputPriceMicroCentsPerMillion.Value + 500_000) / 1_000_000;
             hasAnyData = true;
         }
 
         if (e.OutputTokens.HasValue && pricing.OutputPriceMicroCentsPerMillion.HasValue)
         {
-            cost += (long)(e.OutputTokens.Value * (double)pricing.OutputPriceMicroCentsPerMillion.Value / 1_000_000);
+            cost += (e.OutputTokens.Value * (long)pricing.OutputPriceMicroCentsPerMillion.Value + 500_000) / 1_000_000;
             hasAnyData = true;
         }
 
         if (e.CacheReadTokens.HasValue && pricing.CacheReadPriceMicroCentsPerMillion.HasValue)
         {
-            cost += (long)(e.CacheReadTokens.Value * (double)pricing.CacheReadPriceMicroCentsPerMillion.Value / 1_000_000);
+            cost += (e.CacheReadTokens.Value * (long)pricing.CacheReadPriceMicroCentsPerMillion.Value + 500_000) / 1_000_000;
             hasAnyData = true;
         }
 
         if (e.CacheWriteTokens.HasValue && pricing.CacheWritePriceMicroCentsPerMillion.HasValue)
         {
-            cost += (long)(e.CacheWriteTokens.Value * (double)pricing.CacheWritePriceMicroCentsPerMillion.Value / 1_000_000);
+            cost += (e.CacheWriteTokens.Value * (long)pricing.CacheWritePriceMicroCentsPerMillion.Value + 500_000) / 1_000_000;
             hasAnyData = true;
         }
 
         if (e.ReasoningTokens.HasValue && pricing.ReasoningPriceMicroCentsPerMillion.HasValue)
         {
-            cost += (long)(e.ReasoningTokens.Value * (double)pricing.ReasoningPriceMicroCentsPerMillion.Value / 1_000_000);
+            cost += (e.ReasoningTokens.Value * (long)pricing.ReasoningPriceMicroCentsPerMillion.Value + 500_000) / 1_000_000;
             hasAnyData = true;
         }
 

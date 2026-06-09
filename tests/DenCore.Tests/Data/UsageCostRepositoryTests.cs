@@ -831,7 +831,141 @@ public class UsageCostRepositoryTests : IAsyncLifetime
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Cache read/write cost computation
+    // Exact integer cost arithmetic — no floating-point drift
+    // ─────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ComputeCost_ExactIntegerArithmetic_NoFloatingPointDrift()
+    {
+        var snap = await _repo.EnsureDefaultPricingSnapshotAsync();
+        var taskId = await SeedTaskAsync();
+
+        // Concrete scenario: openai gpt-4o-mini
+        // input: 15000 micro-cents/M, output: 60000 micro-cents/M
+        // 500K input → (500_000 * 15000 + 500_000) / 1_000_000 = (7_500_000_000 + 500_000) / 1_000_000 = 7500
+        // 200K output → (200_000 * 60000 + 500_000) / 1_000_000 = (12_000_000_000 + 500_000) / 1_000_000 = 12000
+        var e = await _repo.RecordUsageEventAsync(MakeEvent(snap.Id, taskId, "coder",
+            "openai", "gpt-4o-mini", inputTokens: 500_000, outputTokens: 200_000));
+
+        Assert.NotNull(e.ApproximateCostMicroCents);
+        Assert.Equal(19500, e.ApproximateCostMicroCents.Value); // 7500 + 12000 = 19500 micro-cents
+    }
+
+    [Fact]
+    public async Task ComputeCost_IncludesReasoningAndPerRequestCosts_ExactInteger()
+    {
+        var snap = await _repo.EnsureDefaultPricingSnapshotAsync();
+        var taskId = await SeedTaskAsync();
+
+        // xai grok-3: input 300000, output 1500000 per-M micro-cents
+        // 500K input → (500_000 * 300_000 + 500_000) / 1_000_000 = 150_000
+        // 100K output → (100_000 * 1_500_000 + 500_000) / 1_000_000 = 150_000
+        // Reasoning tokens don't have specific pricing for grok-3, so cost comes only from input+output
+        var e = await _repo.RecordUsageEventAsync(new ModelUsageEvent
+        {
+            OccurredAt = DateTime.UtcNow.ToString("o"),
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            WorkerRole = "coder",
+            OperationKind = UsageCostConstants.OperationWorkerTurn,
+            Provider = "xai",
+            Model = "grok-3",
+            EndpointKind = UsageCostConstants.EndpointApi,
+            InputTokens = 500_000,
+            OutputTokens = 100_000,
+            ReasoningTokens = 200_000,
+            RequestCount = 1,
+            PricingSnapshotId = snap.Id,
+        });
+
+        Assert.NotNull(e.ApproximateCostMicroCents);
+        Assert.Equal(300_000, e.ApproximateCostMicroCents.Value); // 150_000 + 150_000 = 300_000
+    }
+
+    [Fact]
+    public async Task ComputeCost_FreeModel_ReturnsZeroMicroCents()
+    {
+        var snap = await _repo.EnsureDefaultPricingSnapshotAsync();
+        var taskId = await SeedTaskAsync();
+
+        var e = await _repo.RecordUsageEventAsync(new ModelUsageEvent
+        {
+            OccurredAt = DateTime.UtcNow.ToString("o"),
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            WorkerRole = "coder",
+            OperationKind = UsageCostConstants.OperationWorkerTurn,
+            Provider = "ollama",
+            Model = "llama3.2:3b",
+            EndpointKind = UsageCostConstants.EndpointLocal,
+            InputTokens = 10_000,
+            OutputTokens = 5_000,
+            PricingSnapshotId = snap.Id,
+        });
+
+        Assert.NotNull(e.ApproximateCostMicroCents);
+        Assert.Equal(0, e.ApproximateCostMicroCents.Value);
+    }
+
+    [Fact]
+    public async Task ComputeCost_UnknownPricing_ReturnsNull()
+    {
+        var snap = await _repo.EnsureDefaultPricingSnapshotAsync();
+        var taskId = await SeedTaskAsync();
+
+        var e = await _repo.RecordUsageEventAsync(new ModelUsageEvent
+        {
+            OccurredAt = DateTime.UtcNow.ToString("o"),
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            WorkerRole = "coder",
+            OperationKind = UsageCostConstants.OperationWorkerTurn,
+            Provider = "unknown-provider",
+            Model = "unknown-model",
+            EndpointKind = UsageCostConstants.EndpointApi,
+            InputTokens = 10_000,
+            OutputTokens = 5_000,
+            PricingSnapshotId = snap.Id,
+        });
+
+        Assert.Null(e.ApproximateCostMicroCents);
+    }
+
+    [Fact]
+    public async Task ComputeCost_CacheTokens_ExactIntegerArithmetic()
+    {
+        var snap = await _repo.EnsureDefaultPricingSnapshotAsync();
+        var taskId = await SeedTaskAsync();
+
+        // anthropic claude-sonnet-4: input 300_000, output 1_500_000, cache_read 30_000, cache_write 375_000 per-M micro-cents
+        // 100K input → (100_000 * 300_000 + 500_000) / 1_000_000 = 30_000
+        // 50K output → (50_000 * 1_500_000 + 500_000) / 1_000_000 = 75_000
+        // 200K cache_read → (200_000 * 30_000 + 500_000) / 1_000_000 = 6_000
+        // 10K cache_write → (10_000 * 375_000 + 500_000) / 1_000_000 = 3_750
+        // Total: 30_000 + 75_000 + 6_000 + 3_750 = 114_750
+        var e = await _repo.RecordUsageEventAsync(new ModelUsageEvent
+        {
+            OccurredAt = DateTime.UtcNow.ToString("o"),
+            ProjectId = "test-proj",
+            TaskId = taskId,
+            WorkerRole = "reviewer",
+            OperationKind = UsageCostConstants.OperationReview,
+            Provider = "anthropic",
+            Model = "claude-sonnet-4",
+            EndpointKind = UsageCostConstants.EndpointApi,
+            InputTokens = 100_000,
+            OutputTokens = 50_000,
+            CacheReadTokens = 200_000,
+            CacheWriteTokens = 10_000,
+            PricingSnapshotId = snap.Id,
+        });
+
+        Assert.NotNull(e.ApproximateCostMicroCents);
+        Assert.Equal(114_750, e.ApproximateCostMicroCents.Value);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Cache read/write cost computation (behavioural)
     // ─────────────────────────────────────────────────────────────────
 
     [Fact]

@@ -1191,6 +1191,9 @@ public sealed class DatabaseInitializer
             """
             TEXT NOT NULL DEFAULT 'normal' CHECK (visibility IN ('normal', 'hidden', 'archived'))
             """);
+
+        // Usage cost telemetry (#2081)
+        await EnsureUsageCostSchemaAsync(connection);
     }
 
     private static async Task EnsureAgentGuidanceSchemaAsync(SqliteConnection connection)
@@ -3464,5 +3467,95 @@ public sealed class DatabaseInitializer
             fkOn.CommandText = "PRAGMA foreign_keys = ON;";
             await fkOn.ExecuteNonQueryAsync();
         }
+    }
+
+    /// <summary>
+    /// Core-owned usage cost telemetry schema (#2081).
+    /// Usage events are append-only-ish records of worker model usage.
+    /// Pricing snapshots are versioned and immutable after creation.
+    /// </summary>
+    private static async Task EnsureUsageCostSchemaAsync(SqliteConnection connection)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            ------------------------------------------------------------
+            -- USAGE EVENTS
+            -- Append-only-ish worker model usage records. Keyed to
+            -- Den workflow identities for role/model cost attribution.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+                occurred_at                  TEXT NOT NULL,
+                project_id                   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                task_id                      INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                assignment_id                INTEGER,
+                run_id                       TEXT,
+                session_id                   TEXT,
+                agent_identity               TEXT,
+                profile_identity             TEXT,
+                worker_role                  TEXT,
+                worker_identity              TEXT,
+                operation_kind               TEXT NOT NULL,
+                provider                     TEXT NOT NULL,
+                model                        TEXT NOT NULL,
+                model_alias                  TEXT,
+                resolved_model               TEXT,
+                endpoint_kind                TEXT,
+                input_tokens                 INTEGER,
+                output_tokens                INTEGER,
+                cache_read_tokens            INTEGER,
+                cache_write_tokens           INTEGER,
+                reasoning_tokens             INTEGER,
+                tool_result_tokens           INTEGER,
+                request_count                INTEGER NOT NULL DEFAULT 1,
+                retry_count                  INTEGER NOT NULL DEFAULT 0,
+                streaming                    INTEGER NOT NULL DEFAULT 0,
+                error_kind                   TEXT,
+                pricing_snapshot_id          INTEGER,
+                approximate_cost_micro_cents INTEGER,
+                provenance                   TEXT,
+                adapter_version              TEXT,
+                raw_usage_source             TEXT,
+                request_id_hint              TEXT,
+                created_at                   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_usage_events_project_occurred
+                ON usage_events(project_id, occurred_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_usage_events_task_occurred
+                ON usage_events(task_id, occurred_at DESC, id DESC)
+                WHERE task_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_usage_events_role_occurred
+                ON usage_events(worker_role, occurred_at DESC, id DESC)
+                WHERE worker_role IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_usage_events_provider_model
+                ON usage_events(provider, model, occurred_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_usage_events_run
+                ON usage_events(run_id, occurred_at DESC, id DESC)
+                WHERE run_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_usage_events_pricing_snapshot
+                ON usage_events(pricing_snapshot_id)
+                WHERE pricing_snapshot_id IS NOT NULL;
+
+            ------------------------------------------------------------
+            -- PRICING SNAPSHOTS
+            -- Versioned pricing catalogs. Immutable after creation.
+            -- Referenced by usage_events.pricing_snapshot_id.
+            ------------------------------------------------------------
+            CREATE TABLE IF NOT EXISTS pricing_snapshots (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_label    TEXT NOT NULL,
+                snapshot_version  TEXT NOT NULL,
+                effective_at      TEXT,
+                entries_json      TEXT NOT NULL,
+                created_by        TEXT,
+                notes             TEXT,
+                created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pricing_snapshots_version
+                ON pricing_snapshots(snapshot_version, id DESC);
+            """;
+        await cmd.ExecuteNonQueryAsync();
     }
 }

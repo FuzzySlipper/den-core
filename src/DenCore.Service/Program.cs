@@ -94,6 +94,8 @@ builder.Services.AddSingleton<IDesktopSnapshotRepository, DesktopSnapshotReposit
 builder.Services.AddSingleton<IDesktopSessionEventRepository, DesktopSessionEventRepository>();
 builder.Services.AddSingleton<ICollaborationRepository, CollaborationRepository>();
 builder.Services.AddSingleton<IDiscussionRepository, DiscussionRepository>();
+builder.Services.AddSingleton<IUsageCostRepository, UsageCostRepository>();
+builder.Services.AddSingleton<IUsageCostService, UsageCostService>();
 builder.Services.AddSingleton<IWorkerPoolRepository, WorkerPoolRepository>();
 builder.Services.AddSingleton<ICapabilityRepository, CapabilityRepository>();
 builder.Services.AddScoped<ICapabilityInvocationService, CapabilityInvocationService>();

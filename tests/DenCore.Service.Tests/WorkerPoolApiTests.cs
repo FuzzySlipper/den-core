@@ -526,6 +526,117 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DetermineOrchestratorNextAction_ValidatorSameHeadSuccessful_FastConfirms()
+    {
+        var task = await CreateInProgressTaskAsync("Fast-confirm same-head successful validator");
+        var head = $"h{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(task.Id, "coder", "implementation_packet", "completed", "task/gate-decision", head);
+        await CreateWorkerCompletionPacketAsync(task.Id, "validator", "validation_packet", "completed", "task/gate-decision", head);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+
+        // gate_decision projection should exist and include per-role actions
+        var gateDecision = root.GetProperty("gate_decision");
+        Assert.Equal("gate-policy-v1", gateDecision.GetProperty("policy_version").GetString());
+        Assert.Equal("gate:{task_id}:{implementation_head}:{gate_role}:gate-policy-v1", gateDecision.GetProperty("dedupe_key_shape").GetString());
+
+        // Validator should fast_confirm — already passed at same head
+        var validator = gateDecision.GetProperty("per_role").GetProperty("validator");
+        Assert.Equal("fast_confirm", validator.GetProperty("recommended_action").GetString());
+        Assert.Equal("Terminal successful validator packet exists for current implementation head.", validator.GetProperty("reason").GetString());
+
+        // The orchestrator's own decision should reflect validation passed (not launch_validator/rerun)
+        // It should progress past validation to drift check
+        Assert.NotEqual("launch_validator", root.GetProperty("decision").GetProperty("next_action").GetString());
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_PacketAuditorSkipWhenOnlyCoderAndReviewer()
+    {
+        var task = await CreateInProgressTaskAsync("Skip packet-auditor when no cross-packet consistency question");
+        var head = $"h{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(task.Id, "coder", "implementation_packet", "completed", "task/gate-decision", head);
+        // Only coder completed — no validator, no drift checker, no other roles
+        // The orchestrator will note missing validation, but packet_auditor has no cross-packet consistency question
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+
+        var gateDecision = root.GetProperty("gate_decision");
+        var auditor = gateDecision.GetProperty("per_role").GetProperty("packet_auditor");
+        // Packet-auditor skip: only coder ran, no cross-role consistency question
+        Assert.Equal("skip", auditor.GetProperty("recommended_action").GetString());
+        Assert.Contains("cross-packet", auditor.GetProperty("reason").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_PacketAuditorRunsWhenLooksGoodReviewIsForOldHead()
+    {
+        var task = await CreateInProgressTaskAsync("Packet-auditor catches stale review head");
+        var headA = $"a{Guid.NewGuid():N}";
+        var headB = $"b{Guid.NewGuid():N}";
+
+        using var scope = _factory.Services.CreateScope();
+        var reviewRounds = scope.ServiceProvider.GetRequiredService<IReviewRoundRepository>();
+        var round = await reviewRounds.CreateAsync(new CreateReviewRoundInput
+        {
+            TaskId = task.Id,
+            RequestedBy = "runner",
+            Branch = "task/gate-decision",
+            BaseBranch = "main",
+            BaseCommit = "base",
+            HeadCommit = headA,
+        });
+        await reviewRounds.SetVerdictAsync(round.Id, ReviewVerdict.LooksGood, "reviewer");
+
+        await CreateWorkerCompletionPacketAsync(task.Id, "coder", "implementation_packet", "completed", "task/gate-decision", headB);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+
+        var auditor = root.GetProperty("gate_decision").GetProperty("per_role").GetProperty("packet_auditor");
+        Assert.Equal("run", auditor.GetProperty("recommended_action").GetString());
+        Assert.Contains("review", auditor.GetProperty("reason").GetString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DetermineOrchestratorNextAction_GateDecisionIncludesConsumerGuidance()
+    {
+        var task = await CreateInProgressTaskAsync("gate_decision compact readback for consumers");
+        var head = $"h{Guid.NewGuid():N}";
+
+        await CreateWorkerCompletionPacketAsync(task.Id, "coder", "implementation_packet", "completed", "task/gate-decision", head);
+
+        using var doc = await DetermineNextActionAsync(task.Id);
+        var root = doc.RootElement;
+
+        var gateDecision = root.GetProperty("gate_decision");
+        Assert.Equal("gate-policy-v1", gateDecision.GetProperty("policy_version").GetString());
+        Assert.Equal("gate:{task_id}:{implementation_head}:{gate_role}:gate-policy-v1", gateDecision.GetProperty("dedupe_key_shape").GetString());
+
+        // All three gate roles should be present in per_role
+        var perRole = gateDecision.GetProperty("per_role");
+        Assert.True(perRole.TryGetProperty("validator", out _));
+        Assert.True(perRole.TryGetProperty("drift_checker", out _));
+        Assert.True(perRole.TryGetProperty("packet_auditor", out _));
+
+        // Each per-role entry must include recommended_action, reason, and handles
+        foreach (var role in new[] { "validator", "drift_checker", "packet_auditor" })
+        {
+            var entry = perRole.GetProperty(role);
+            Assert.True(entry.TryGetProperty("recommended_action", out var action));
+            Assert.True(entry.TryGetProperty("reason", out _));
+            Assert.True(entry.TryGetProperty("handles", out _));
+
+            var actionStr = action.GetString();
+            Assert.Contains(actionStr, new[] { "run", "skip", "fast_confirm", "wait_in_flight", "needs_reconcile" });
+        }
+    }
+
+    [Fact]
     public async Task DetermineOrchestratorNextAction_DoneTask_HoldsWithoutWorkerLaunch()
     {
         using var scope = _factory.Services.CreateScope();

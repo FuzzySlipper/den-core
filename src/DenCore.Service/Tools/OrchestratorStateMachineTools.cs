@@ -275,6 +275,21 @@ public sealed class OrchestratorStateMachineTools
             decision = new Decision("ready_for_done_or_merge", "looks_good_validated", "Review verdict is looks_good and validation/drift/audit packets match the current implementation head.", "Mark done or request human merge decision according to project workflow.");
         }
 
+        var currentImplementationHead = implementation is null ? null : MetadataString(implementation, "head_commit");
+        var reviewLooksGoodForSupersededHead = latestRound?.Verdict == ReviewVerdict.LooksGood
+            && !string.IsNullOrWhiteSpace(currentImplementationHead)
+            && !string.Equals(latestRound.HeadCommit, currentImplementationHead, StringComparison.OrdinalIgnoreCase);
+        var reviewerPacketForSupersededHead = reviewCompletion is not null
+            && !string.IsNullOrWhiteSpace(currentImplementationHead)
+            && !MetadataHeadMatches(reviewCompletion, currentImplementationHead);
+        var packetAuditNeedsReviewHeadCheck = reviewLooksGoodForSupersededHead || reviewerPacketForSupersededHead;
+        var packetAuditHasConsistencyQuestion = validationGate.SameHeadPacket is not null
+            || driftGate.SameHeadPacket is not null
+            || packetAuditNeedsReviewHeadCheck;
+        var packetAuditRunReason = packetAuditNeedsReviewHeadCheck
+            ? "Reviewer/review verdict evidence targets a superseded implementation head; packet-auditor should verify cross-packet head consistency."
+            : null;
+
         var result = new
         {
             summary = $"next action: {decision.NextAction} ({decision.Reason})",
@@ -300,6 +315,17 @@ public sealed class OrchestratorStateMachineTools
                 validation = GateProjection(validationGate),
                 drift_check = GateProjection(driftGate),
                 packet_audit = GateProjection(auditGate),
+            },
+            gate_decision = new
+            {
+                policy_version = GatePolicyVersion,
+                dedupe_key_shape = "gate:{task_id}:{implementation_head}:{gate_role}:gate-policy-v1",
+                per_role = new
+                {
+                    validator = GateRoleDecision(validationGate, hasMultiRolePackets: auditGate.SameHeadPacket is not null || driftGate.SameHeadPacket is not null),
+                    drift_checker = GateRoleDecision(driftGate, hasMultiRolePackets: true),
+                    packet_auditor = GateRoleDecision(auditGate, hasMultiRolePackets: packetAuditHasConsistencyQuestion, missingRunReason: packetAuditRunReason),
+                },
             },
             latest_packets = new
             {
@@ -591,6 +617,106 @@ public sealed class OrchestratorStateMachineTools
                 active_run_count = gate.ActiveRuns.Count,
                 state = gate.State,
             },
+        };
+    }
+
+    private static object GateRoleDecision(GateState gate, bool hasMultiRolePackets, string? missingRunReason = null)
+    {
+        string action;
+        string reason;
+        object handles;
+
+        switch (gate.State)
+        {
+            case "passed":
+                action = "fast_confirm";
+                reason = $"Terminal successful {gate.Role} packet exists for current implementation head.";
+                handles = new
+                {
+                    terminal_packet_id = gate.SuccessfulPacket?.Id,
+                    terminal_packet_head = gate.CurrentHead,
+                    gate = gate.GateName,
+                    role = gate.Role,
+                    dedupe_key = gate.DedupeKey,
+                };
+                break;
+            case "in_flight":
+                action = "wait_in_flight";
+                reason = $"A {gate.Role} run is already active for the current implementation head.";
+                handles = new
+                {
+                    active_run_id = gate.ActiveRuns.FirstOrDefault()?.RunId,
+                    active_assignment_id = gate.ActiveRuns.FirstOrDefault()?.AssignmentId,
+                    context_packet_id = gate.ActiveRuns.FirstOrDefault()?.ContextPacketId,
+                    wake_event_id = gate.ActiveRuns.FirstOrDefault()?.WakeEventId,
+                    gate = gate.GateName,
+                    role = gate.Role,
+                    active_run_count = gate.ActiveRuns.Count,
+                };
+                break;
+            case "ambiguous_in_flight":
+                action = "needs_reconcile";
+                reason = $"Multiple active {gate.Role} runs are visible for the current implementation head; fail closed.";
+                handles = new
+                {
+                    active_run_ids = gate.ActiveRuns.Select(r => r.RunId).ToList(),
+                    active_assignment_ids = gate.ActiveRuns.Select(r => r.AssignmentId).ToList(),
+                    gate = gate.GateName,
+                    role = gate.Role,
+                    state = gate.State,
+                    dedupe_key = gate.DedupeKey,
+                };
+                break;
+            case "failed_current_head":
+                action = "run";
+                reason = $"Current-head {gate.Role} packet failed; re-run after the upstream failure is addressed.";
+                handles = new
+                {
+                    failed_packet_id = gate.SameHeadPacket?.Id,
+                    implementation_head = gate.CurrentHead,
+                    gate = gate.GateName,
+                    role = gate.Role,
+                    dedupe_key = gate.DedupeKey,
+                };
+                break;
+            default: // "missing"
+                // Packet-auditor skip: only coder (or coder+reviewer) ran, no cross-packet consistency question
+                if (gate.GateName == "packet_audit" && !hasMultiRolePackets)
+                {
+                    action = "skip";
+                    reason = "Only coder (or coder+reviewer) ran — no cross-packet or multi-role consistency question exists.";
+                    handles = new
+                    {
+                        gate = gate.GateName,
+                        role = gate.Role,
+                        current_head = gate.CurrentHead,
+                        has_multi_role_packets = hasMultiRolePackets,
+                    };
+                }
+                else
+                {
+                    action = "run";
+                    reason = missingRunReason ?? $"No {gate.Role} packet exists for the current implementation head.";
+                    handles = new
+                    {
+                        gate = gate.GateName,
+                        role = gate.Role,
+                        implementation_head = gate.CurrentHead,
+                        dedupe_key = gate.DedupeKey,
+                    };
+                }
+                break;
+        }
+
+        return new
+        {
+            recommended_action = action,
+            reason,
+            handles,
+            gate = gate.GateName,
+            role = gate.Role,
+            state = gate.State,
+            dedupe_key = gate.DedupeKey,
         };
     }
 

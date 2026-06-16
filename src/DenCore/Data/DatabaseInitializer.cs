@@ -1005,6 +1005,95 @@ public sealed class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS idx_discussion_comments_parent
             ON discussion_comments(parent_comment_id)
             WHERE parent_comment_id IS NOT NULL;
+
+        ------------------------------------------------------------
+        -- KNOWLEDGE LIBRARY
+        ------------------------------------------------------------
+        CREATE TABLE IF NOT EXISTS knowledge_entries (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug               TEXT NOT NULL UNIQUE,
+            title              TEXT NOT NULL,
+            summary            TEXT,
+            body_markdown      TEXT NOT NULL,
+            kind               TEXT NOT NULL DEFAULT 'reference'
+                               CHECK (kind IN (
+                                   'concept', 'reference', 'glossary', 'convention',
+                                   'service_map', 'tool_notes', 'gotcha',
+                                   'architecture_note', 'migration_note'
+                               )),
+            status             TEXT NOT NULL DEFAULT 'draft'
+                               CHECK (status IN ('draft', 'reviewed', 'needs_review', 'deprecated', 'archived')),
+            curation_state     TEXT NOT NULL DEFAULT 'unreviewed_import'
+                               CHECK (curation_state IN ('unreviewed_import', 'human_curated', 'agent_curated', 'needs_recheck')),
+            audience_json      TEXT,
+            aliases_json       TEXT,
+            source_refs_json   TEXT,
+            accuracy_notes     TEXT,
+            replacement_slug   TEXT REFERENCES knowledge_entries(slug) ON DELETE SET NULL,
+            last_reviewed_at   TEXT,
+            review_due_at      TEXT,
+            created_by         TEXT,
+            updated_by         TEXT,
+            created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_entries_status_kind
+            ON knowledge_entries(status, kind, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_entries_review_due
+            ON knowledge_entries(review_due_at)
+            WHERE review_due_at IS NOT NULL AND status IN ('reviewed', 'needs_review');
+
+        CREATE TABLE IF NOT EXISTS knowledge_entry_tags (
+            entry_id INTEGER NOT NULL REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+            tag      TEXT NOT NULL,
+            PRIMARY KEY (entry_id, tag)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_knowledge_entry_tags_tag
+            ON knowledge_entry_tags(tag, entry_id);
+
+        CREATE TABLE IF NOT EXISTS knowledge_entry_revisions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id         INTEGER NOT NULL REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+            revision_number  INTEGER NOT NULL,
+            title            TEXT NOT NULL,
+            summary          TEXT,
+            body_markdown    TEXT NOT NULL,
+            kind             TEXT NOT NULL,
+            status           TEXT NOT NULL,
+            curation_state   TEXT NOT NULL,
+            tags_json        TEXT,
+            audience_json    TEXT,
+            aliases_json     TEXT,
+            source_refs_json TEXT,
+            accuracy_notes   TEXT,
+            replacement_slug TEXT,
+            changed_by       TEXT,
+            change_note      TEXT,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(entry_id, revision_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS knowledge_entry_links (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_entry_id   INTEGER NOT NULL REFERENCES knowledge_entries(id) ON DELETE CASCADE,
+            to_entry_slug   TEXT NOT NULL,
+            link_kind       TEXT NOT NULL DEFAULT 'related'
+                            CHECK (link_kind IN ('related', 'supersedes', 'superseded_by', 'see_also', 'depends_on')),
+            description     TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(from_entry_id, to_entry_slug, link_kind)
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_entries_fts USING fts5(
+            slug,
+            title,
+            summary,
+            body_markdown,
+            tokenize='porter unicode61'
+        );
         """;
 
     private async Task RunMigrationsAsync(SqliteConnection connection)
@@ -1019,6 +1108,7 @@ public sealed class DatabaseInitializer
         await EnsureDesktopSnapshotSchemaAsync(connection);
         await EnsureBlackboardSchemaAsync(connection);
         await EnsureCapabilitySchemaAsync(connection);
+        await EnsureKnowledgeLibrarySchemaAsync(connection);
 
         // Add session_id column to agent_sessions if it doesn't exist.
         // SQLite has no ALTER TABLE ... ADD COLUMN IF NOT EXISTS,
@@ -3557,5 +3647,21 @@ public sealed class DatabaseInitializer
                 ON pricing_snapshots(snapshot_version, id DESC);
             """;
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static async Task EnsureKnowledgeLibrarySchemaAsync(SqliteConnection connection)
+    {
+        await using var checkCmd = connection.CreateCommand();
+        checkCmd.CommandText = "SELECT COUNT(*) FROM knowledge_entries";
+        long count;
+        try
+        {
+            count = (long)(await checkCmd.ExecuteScalarAsync())!;
+        }
+        catch (SqliteException)
+        {
+            return;
+        }
+        if (count == 0) return;
     }
 }

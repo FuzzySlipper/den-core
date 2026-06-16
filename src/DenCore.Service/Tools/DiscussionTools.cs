@@ -24,7 +24,8 @@ public sealed class DiscussionTools
         "use get_document for canonical document JSON without discussion fields. " +
         "When create_if_missing=false (default) and no default thread exists, returns an empty result. " +
         "Set create_if_missing=true to auto-create a default thread. " +
-        "Use include_resolved=true to include resolved/archived threads.")]
+        "Use include_resolved=true to include resolved/archived threads. " +
+        "Note: you do NOT need to call this before comment_on_document — that tool auto-creates the thread.")]
     public static async Task<string> GetDocumentDiscussion(
         IDiscussionRepository repo,
         IDocumentRepository docRepo,
@@ -188,10 +189,13 @@ public sealed class DiscussionTools
     [McpToolProfile("admin-current", "planner", "runner")]
     [McpToolBundle("discussion")]
     [McpServerTool(Name = "comment_on_document"), Description(
-        "Add a comment to a document's default discussion thread. " +
-        "If no default thread exists, one is auto-created. " +
-        "For replying to an existing comment, use parent_comment_id. " +
-        "Use get_document_discussion (not get_document) to see comments — discussion is separate from document content.")]
+        "Add ONE comment to a Den document identified by project_id + slug. " +
+        "This is the green path when the user says \"comment on this document.\" " +
+        "You do NOT need to call get_document_discussion or list_discussion_threads first; " +
+        "Core auto-creates a default discussion thread and writes the comment to it. " +
+        "Use parent_comment_id only when replying to a specific existing comment. " +
+        "Use anchor only when the comment targets a specific section/location. " +
+        "Use create_discussion_comment only when the user explicitly provides a discussion thread ID.")]
     public static async Task<string> CommentOnDocument(
         IDiscussionRepository repo,
         IDocumentRepository docRepo,
@@ -259,8 +263,8 @@ public sealed class DiscussionTools
     [McpToolProfile("admin-current", "planner", "runner")]
     [McpToolBundle("discussion")]
     [McpServerTool(Name = "create_discussion_comment"), Description(
-        "Add a comment to an existing discussion thread by thread ID. " +
-        "For document-level comments, consider using comment_on_document instead. " +
+        "Low-level thread-ID comment tool for adding a comment to an existing discussion thread by ID. " +
+        "Prefer comment_on_document for normal document comments — it auto-creates the thread. " +
         "Use parent_comment_id to reply to an existing comment.")]
     public static async Task<string> CreateDiscussionComment(
         IDiscussionRepository repo,

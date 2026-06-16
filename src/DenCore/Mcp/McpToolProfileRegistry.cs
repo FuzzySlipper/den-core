@@ -295,10 +295,16 @@ public sealed class McpToolProfileRegistry
             "invoke_capability",
             "analyze_image");
 
+        // ---- knowledge bundle ----
+        // Global knowledge library: search, guided retrieval, entry lookup, and curation upsert.
+        m.Add(McpToolBundles.Knowledge,
+            "den_knowledge_search", "den_knowledge_guide", "den_knowledge_get",
+            "den_knowledge_store");
+
         AddPublicSpecBundles();
 
         // ---- profile: planner ----
-        // core + task + messaging + document + blackboard + agent + agent-stream + orchestrator + worker(read) + packet(read) + discussion
+        // core + task + messaging + document + blackboard + agent + agent-stream + orchestrator + worker(read) + packet(read) + discussion + knowledge
         m.Profile(McpToolProfiles.Planner,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -308,7 +314,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Agent,
             McpToolBundles.AgentStream,
             McpToolBundles.Orchestrator,
-            McpToolBundles.Discussion);
+            McpToolBundles.Discussion,
+            McpToolBundles.Knowledge);
         // worker read-only subset for planner
         m.ProfileAdd(McpToolProfiles.Planner,
             "get_worker_run", "get_worker_run_status", "list_worker_runs",
@@ -327,7 +334,7 @@ public sealed class McpToolProfileRegistry
             "list_capabilities", "get_capability");
 
         // ---- profile: runner ----
-        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion + capability
+        // core + task + review + messaging + document + blackboard + agent + agent-stream + worker + packet(coder+validator) + orchestrator + discussion + capability + knowledge
         m.Profile(McpToolProfiles.Runner,
             McpToolBundles.Core,
             McpToolBundles.Task,
@@ -341,7 +348,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.WorkerPool,
             McpToolBundles.Orchestrator,
             McpToolBundles.Discussion,
-            McpToolBundles.Capability);
+            McpToolBundles.Capability,
+            McpToolBundles.Knowledge);
         // runner-specific packet subset
         m.ProfileAdd(McpToolProfiles.Runner,
             "get_latest_task_packet", "render_worker_prompt",
@@ -382,7 +390,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Messaging,
             McpToolBundles.Document,
             McpToolBundles.Agent,
-            McpToolBundles.Worker);
+            McpToolBundles.Worker,
+            McpToolBundles.Knowledge);
         m.ProfileAdd(McpToolProfiles.WorkerCoder,
             "get_task_workflow_summary", "list_tasks", "get_task",
             "list_review_rounds", "list_review_findings",
@@ -402,7 +411,8 @@ public sealed class McpToolProfileRegistry
             McpToolBundles.Messaging,
             McpToolBundles.Document,
             McpToolBundles.Agent,
-            McpToolBundles.Worker);
+            McpToolBundles.Worker,
+            McpToolBundles.Knowledge);
         m.ProfileAdd(McpToolProfiles.WorkerReviewer,
             "get_task_workflow_summary", "list_tasks", "get_task",
             "get_latest_task_packet",

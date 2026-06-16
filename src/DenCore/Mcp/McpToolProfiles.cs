@@ -43,6 +43,7 @@ public static class McpToolBundles
     public const string Discussion = "discussion";
     public const string WorkerPool = "worker-pool";
     public const string Capability = "capability";
+    public const string Knowledge = "knowledge";
 
     // Public bundle selector names from the MCP profile/bundle model spec.
     // These are virtual bundles composed from the finer-grained implementation

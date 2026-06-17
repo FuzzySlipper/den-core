@@ -13,13 +13,13 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 using ModelContextProtocol.AspNetCore;
 
-var builder = WebApplication.CreateBuilder(args);
-
 // Strip --validate-prod from args early so it never interferes with
 // CLI config parsing when it appears before key/value pairs like --port.
 // It is checked below after all CLI overrides are applied.
 var originalArgs = args;
 args = originalArgs.Where(a => a != "--validate-prod" && a != "--validate-prod=true").ToArray();
+
+var builder = WebApplication.CreateBuilder(args);
 
 // Configuration (appsettings.json + environment variables + CLI args)
 // DenCore is the primary config section; DenMcp legacy env vars are merged

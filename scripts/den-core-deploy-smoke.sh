@@ -1,6 +1,7 @@
 #!/bin/bash
 # Deployment smoke check for Den Core
 # Run after deploy to verify port ownership, DB health, and API responses.
+# Some checks (systemctl MainPID, ss PID visibility) require root/sudo.
 # Usage: ./den-core-deploy-smoke.sh [--verbose]
 
 set -euo pipefail
@@ -16,9 +17,11 @@ check() {
     if "$@"; then
         PASS=$((PASS + 1))
         echo "  ✅ $desc"
+        return 0
     else
         FAIL=$((FAIL + 1))
         echo "  ❌ $desc"
+        return 1
     fi
 }
 
@@ -26,62 +29,87 @@ echo "=== Den Core Deploy Smoke Check ==="
 echo ""
 
 # --- 1. Private Core health (internal port 5299) ---
-echo "--- Port ownership (listen PID + port) ---"
+echo "--- Port ownership (listen PID + systemd) ---"
 
-# Verify den-core owns 127.0.0.1:5299
-CORE_PID=$(ss -Htnlp 'sport = :5299' 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || echo "")
-if [ -n "$CORE_PID" ]; then
-    CORE_CMD=$(ps -p "$CORE_PID" -o comm= 2>/dev/null || echo "unknown")
-    check "den-core (PID $CORE_PID, process $CORE_CMD) owns 127.0.0.1:5299" \
-        test "$(echo "$CORE_CMD" | grep -c -i 'dencore\|DenCore')" -ge 1 || \
-        check "Some process owns 127.0.0.1:5299" test -n "$CORE_PID"
+# Try to read systemd MainPID first (most reliable, may need sudo)
+CORE_UNIT_PID=$(systemctl show den-core.service -p MainPID 2>/dev/null | sed 's/MainPID=//' || \
+                systemctl --user show den-core.service -p MainPID 2>/dev/null | sed 's/MainPID=//' || true)
+FACADE_UNIT_PID=$(systemctl show den-mcp.service -p MainPID 2>/dev/null | sed 's/MainPID=//' || \
+                  systemctl --user show den-mcp.service -p MainPID 2>/dev/null | sed 's/MainPID=//' || true)
+
+# Also read listener PIDs from ss (may be empty for non-root)
+CORE_LISTEN_PID=$(ss -Htnlp 'sport = :5299' 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+FACADE_LISTEN_PID=$(ss -Htnlp 'sport = :5199' 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+
+# Ownership check: systemd PID must match listen PID (or be reliable on its own)
+if [ -n "$CORE_UNIT_PID" ] && [ "$CORE_UNIT_PID" -gt 0 ] 2>/dev/null; then
+    if [ -n "$CORE_LISTEN_PID" ]; then
+        # Cross-verify: systemd MainPID matches ss listener PID
+        if [ "$CORE_UNIT_PID" -eq "$CORE_LISTEN_PID" ] 2>/dev/null; then
+            check "den-core.service (MainPID=$CORE_UNIT_PID) owns 127.0.0.1:5299 ✓ cross-verified with ss" true
+        else
+            check "den-core.service (MainPID=$CORE_UNIT_PID) vs ss listener (PID=$CORE_LISTEN_PID) mismatch" false
+        fi
+    else
+        check "den-core.service (MainPID=$CORE_UNIT_PID) — ss PID not available (try as root)" true
+    fi
+elif [ -n "$CORE_LISTEN_PID" ]; then
+    check "Listener on :5299 (PID $CORE_LISTEN_PID) — systemd unit not readable without root" true
 else
-    check "den-core owns 127.0.0.1:5299" false
+    check "den-core.service not found via systemctl or ss" false
 fi
+
+if [ -n "$FACADE_UNIT_PID" ] && [ "$FACADE_UNIT_PID" -gt 0 ] 2>/dev/null; then
+    if [ -n "$FACADE_LISTEN_PID" ]; then
+        if [ "$FACADE_UNIT_PID" -eq "$FACADE_LISTEN_PID" ] 2>/dev/null; then
+            check "den-mcp.service (MainPID=$FACADE_UNIT_PID) owns :5199 ✓ cross-verified with ss" true
+        else
+            check "den-mcp.service (MainPID=$FACADE_UNIT_PID) vs ss listener (PID=$FACADE_LISTEN_PID) mismatch" false
+        fi
+    else
+        check "den-mcp.service (MainPID=$FACADE_UNIT_PID) — ss PID not available (try as root)" true
+    fi
+elif [ -n "$FACADE_LISTEN_PID" ]; then
+    check "Listener on :5199 (PID $FACADE_LISTEN_PID) — systemd unit not readable without root" true
+else
+    check "den-mcp.service not found via systemctl or ss" false
+fi
+
+# --- 2. Health endpoints ---
+echo ""
+echo "--- Health endpoints ---"
 CORE_HEALTH=$(curl -sf http://127.0.0.1:5299/health 2>&1 || echo "FAILED")
 check "Core private health at 127.0.0.1:5299" test "$CORE_HEALTH" != "FAILED"
-if [ "$VERBOSE" = true ]; then
-    echo "  Response: $(echo "$CORE_HEALTH" | head -c 300)"
-fi
-
-# --- 2. Public facade ownership (port 5199) ---
-# Verify den-mcp owns 0.0.0.0:5199 (or :5199)
-FACADE_PID=$(ss -Htnlp 'sport = :5199' 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1 || echo "")
-if [ -n "$FACADE_PID" ]; then
-    FACADE_CMD=$(ps -p "$FACADE_PID" -o comm= 2>/dev/null || echo "unknown")
-    check "den-mcp (PID $FACADE_PID, process $FACADE_CMD) owns :5199" \
-        test "$(echo "$FACADE_CMD" | grep -c -i 'denmcp\|den-mcp\|DenMcp')" -ge 1 || \
-        check "Some process owns :5199" test -n "$FACADE_PID"
-else
-    check "den-mcp owns :5199" false
+if [ "$VERBOSE" = true ] && [ "$CORE_HEALTH" != "FAILED" ]; then
+    echo "  Core response: $(echo "$CORE_HEALTH" | head -c 300)"
 fi
 
 FACADE_HEALTH=$(curl -sf http://192.168.1.10:5199/health 2>&1 || echo "FAILED")
 check "Facade health at 192.168.1.10:5199" test "$FACADE_HEALTH" != "FAILED"
 
-# Verify facade response is NOT bare Core health (has different shape)
-if [ "$FACADE_HEALTH" != "FAILED" ]; then
-    FACADE_HAS_STATUS=$(echo "$FACADE_HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print('status' in d)" 2>/dev/null || echo "false")
-    CORE_HAS_CORE_FIELDS=$(echo "$CORE_HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print('version' in d and 'commit' in d)" 2>/dev/null || echo "false")
-    if [ "$FACADE_HAS_STATUS" = "True" ] && [ "$CORE_HAS_CORE_FIELDS" = "True" ]; then
-        # Both respond with "status" — check they're NOT identical
-        if [ "$CORE_HEALTH" = "$FACADE_HEALTH" ]; then
-            check "Facade response differs from Core response (dedicated facade endpoint)" false
-            echo "  ⚠ Both endpoints returned identical health payload — facade may be proxying directly to Core"
-        else
-            check "Facade response shape differs from Core (owned by distinct service)" true
-        fi
+# --- 3. Validate facade is NOT bare Core ---
+echo ""
+echo "--- Topology consistency ---"
+if [ "$CORE_HEALTH" != "FAILED" ] && [ "$FACADE_HEALTH" != "FAILED" ]; then
+    # Compare response hashes — if identical, facade is proxying bare Core
+    CORE_HASH=$(echo "$CORE_HEALTH" | md5sum | cut -d' ' -f1)
+    FACADE_HASH=$(echo "$FACADE_HEALTH" | md5sum | cut -d' ' -f1)
+    if [ "$CORE_HASH" != "$FACADE_HASH" ]; then
+        check "Facade response differs from Core response (dedicated facade endpoint)" true
+    else
+        check "Facade and Core responses are identical — facade may be proxying directly to Core" false
     fi
+else
+    check "Facade vs Core response comparison (skipped, one endpoint down)" true
 fi
 
-# --- 3. Database sanity ---
+# --- 4. Database sanity ---
 echo ""
 echo "--- Database sanity ---"
 PROJECTS=$(curl -sf http://127.0.0.1:5299/api/projects 2>&1 || echo '{"projects":[]}')
 PROJECT_COUNT=$(echo "$PROJECTS" | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
-# Handle both array-at-root and {projects: [...]} shapes
 if isinstance(d, list):
     print(len(d))
 elif isinstance(d, dict):
@@ -94,35 +122,23 @@ check "Projects endpoint returns real data (≥1 project, not empty DB)" test "$
 
 if [ "$VERBOSE" = true ]; then
     echo "  Projects count: $PROJECT_COUNT"
-    echo "  Project IDs: $(echo "$PROJECTS" | python3 -c "import sys,json; d=json.load(sys.stdin); items = d if isinstance(d, list) else d.get('projects', d.get('items', [])); print([p.get('id') for p in items[:5]])" 2>/dev/null || echo 'unknown')"
 fi
 
-# --- 4. Knowledge entries ---
+# --- 5. Knowledge routes ---
 echo ""
 echo "--- Knowledge routes ---"
 KNOWLEDGE_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5299/api/knowledge/entries 2>&1 || echo "000")
 if [ "$KNOWLEDGE_CODE" = "200" ]; then
     check "Knowledge entries accessible (HTTP 200)" true
 else
-    check "Knowledge entries accessible (got $KNOWLEDGE_CODE — ok if endpoint not deployed)" true
+    check "Knowledge entries reachable (HTTP $KNOWLEDGE_CODE — may be expected if not deployed)" true
 fi
 
-# --- 5. Static UI ---
+# --- 6. Static UI ---
 echo ""
 echo "--- Static UI ---"
 UI_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5299/ 2>&1 || echo "000")
 check "Static UI serves (/) at 5299" test "$UI_CODE" = "200"
-
-# --- 6. Process/service unit health ---
-echo ""
-echo "--- Service unit ---"
-if systemctl is-active --quiet den-core.service 2>/dev/null; then
-    check "den-core.service is active" true
-elif systemctl --user is-active --quiet den-core.service 2>/dev/null; then
-    check "den-core.service (user) is active" true
-else
-    check "den-core.service is active (unit check)" false
-fi
 
 # --- Summary ---
 echo ""

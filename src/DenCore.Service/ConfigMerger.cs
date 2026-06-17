@@ -29,10 +29,11 @@ namespace DenCore.Service;
 /// - Top-level Core options (ListenUrl, DatabasePath) — full merge support.
 /// - LlmConfig (Endpoint, ApiKey, Model) — full merge support.
 /// - DenPublishFacade (Endpoint) — full merge support.
-/// - TrustedPublisher (arrays) — DenCore.Bind handles arrays natively;
-///   explicit legacy overlay is not needed because env-provided DenMcp__TrustedPublisher__*
-///   arrays are already present in the config tree and get merged by DenCore.Bind()
-///   at the same priority as DenCore__TrustedPublisher__* equivalents.
+/// - TrustedPublisher — out of scope for this hardening task. The DenMcp__* legacy
+///   compatibility path for TrustedPublisher arrays was never used in production
+///   (production env already had DenCore__TrustedPublisher__* equivalents at the time
+///   of the #2129 incident). Only top-level Core + LLM + facade endpoint are
+///   compatibility-supported in this merge pass.
 /// </remarks>
 public static class ConfigMerger
 {

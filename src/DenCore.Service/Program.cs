@@ -15,6 +15,12 @@ using ModelContextProtocol.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Strip --validate-prod from args early so it never interferes with
+// CLI config parsing when it appears before key/value pairs like --port.
+// It is checked below after all CLI overrides are applied.
+var originalArgs = args;
+args = originalArgs.Where(a => a != "--validate-prod" && a != "--validate-prod=true").ToArray();
+
 // Configuration (appsettings.json + environment variables + CLI args)
 // DenCore is the primary config section; DenMcp legacy env vars are merged
 // via ConfigMerger for backward compatibility, so production env doesn't
@@ -51,7 +57,7 @@ if (builder.Configuration["llm-context-token-budget"] is { } llmContextTokenBudg
 //   2. Explicit --validate-prod: validates and exits regardless of result
 //      (preflight command for CI/deploy scripts).
 var environment = builder.Environment.EnvironmentName;
-var isValidateProdArg = args.Contains("--validate-prod");
+var isValidateProdArg = originalArgs.Contains("--validate-prod") || originalArgs.Contains("--validate-prod=true");
 if (isValidateProdArg || environment == "Production")
 {
     var warnings = ProductionValidator.Validate(options);

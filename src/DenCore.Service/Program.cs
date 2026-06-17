@@ -24,32 +24,13 @@ var llmConfig = ConfigMerger.BuildLlmConfig(builder.Configuration);
 var trustedPublisherOptions = ConfigMerger.BuildTrustedPublisherOptions(builder.Configuration);
 var denPublishFacadeOptions = ConfigMerger.BuildDenPublishFacadeOptions(builder.Configuration);
 
-// Production startup validation — warn on dangerous default config
-if (args.Contains("--validate-prod"))
-{
-    var warnings = ProductionValidator.Validate(options);
-    if (warnings.Count > 0)
-    {
-        Console.Error.WriteLine("=== Production config validation FAILED ===");
-        foreach (var w in warnings)
-            Console.Error.WriteLine(w);
-        Environment.Exit(1);
-    }
-    Console.WriteLine("Production config validation: PASSED");
-}
-
-// CLI overrides: --port and --db-path
+// CLI overrides: --port and --db-path (highest precedence)
 if (builder.Configuration["port"] is { } port)
     options.ListenUrl = $"http://localhost:{port}";
 if (builder.Configuration["db-path"] is { } dbPathOverride)
     options.DatabasePath = dbPathOverride;
 
-builder.Services.AddSingleton(options);
-builder.Services.AddSingleton(options.BlockedTaskEscalation);
-builder.Services.AddSingleton(trustedPublisherOptions);
-builder.Services.AddSingleton(denPublishFacadeOptions);
-
-// LLM (librarian) — built via ConfigMerger, with CLI overrides
+// LLM CLI overrides
 if (builder.Configuration["llm-endpoint"] is { } llmEndpoint)
     llmConfig.Endpoint = llmEndpoint;
 if (builder.Configuration["llm-api-key"] is { } llmApiKey)
@@ -62,6 +43,38 @@ if (builder.Configuration["llm-max-tokens"] is { } llmMaxTokens &&
 if (builder.Configuration["llm-context-token-budget"] is { } llmContextTokenBudget &&
     int.TryParse(llmContextTokenBudget, out var parsedContextTokenBudget))
     llmConfig.ContextTokenBudget = parsedContextTokenBudget;
+
+// Production startup validation — fail closed on dangerous default config.
+// Two modes:
+//   1. Production environment (ASPNETCORE_ENVIRONMENT=Production): auto-validates
+//      and exits with code 1 on failure, preventing startup with wrong port/DB.
+//   2. Explicit --validate-prod: validates and exits regardless of result
+//      (preflight command for CI/deploy scripts).
+var environment = builder.Environment.EnvironmentName;
+var isValidateProdArg = args.Contains("--validate-prod");
+if (isValidateProdArg || environment == "Production")
+{
+    var warnings = ProductionValidator.Validate(options);
+    if (warnings.Count > 0)
+    {
+        Console.Error.WriteLine("=== Production config validation FAILED ===");
+        foreach (var w in warnings)
+            Console.Error.WriteLine(w);
+        Console.Error.WriteLine($"Environment: {environment}");
+        Environment.Exit(1);
+    }
+
+    if (isValidateProdArg)
+    {
+        Console.WriteLine("Production config validation: PASSED");
+        Environment.Exit(0);
+    }
+}
+
+builder.Services.AddSingleton(options);
+builder.Services.AddSingleton(options.BlockedTaskEscalation);
+builder.Services.AddSingleton(trustedPublisherOptions);
+builder.Services.AddSingleton(denPublishFacadeOptions);
 builder.Services.AddSingleton(llmConfig);
 builder.Services.AddSingleton<ILlmClient, OpenAiCompatibleLlmClient>();
 

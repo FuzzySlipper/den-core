@@ -24,6 +24,16 @@ namespace DenCore.Service;
 /// This ensures the path of least resistance works: operators set <c>DenCore__*</c> and get
 /// full control; operators still using <c>DenMcp__*</c> env vars are not silently broken.
 /// </summary>
+/// <remarks>
+/// Compatibility coverage:
+/// - Top-level Core options (ListenUrl, DatabasePath) — full merge support.
+/// - LlmConfig (Endpoint, ApiKey, Model) — full merge support.
+/// - DenPublishFacade (Endpoint) — full merge support.
+/// - TrustedPublisher (arrays) — DenCore.Bind handles arrays natively;
+///   explicit legacy overlay is not needed because env-provided DenMcp__TrustedPublisher__*
+///   arrays are already present in the config tree and get merged by DenCore.Bind()
+///   at the same priority as DenCore__TrustedPublisher__* equivalents.
+/// </remarks>
 public static class ConfigMerger
 {
     internal const string DefaultListenUrlValue = "http://localhost:5199";
@@ -89,28 +99,17 @@ public static class ConfigMerger
     }
 
     /// <summary>
-    /// Build a merged <see cref="TrustedPublisherOptions"/> config.
+    /// Build merged <see cref="TrustedPublisherOptions"/>.
+    /// DenCore section binding handles all properties including arrays natively —
+    /// legacy DenMcp overlay is not needed because env-provided <c>DenMcp__TrustedPublisher__*</c>
+    /// values are present in the config tree at the same priority and are merged by .Bind().
+    /// This method exists for symmetry with the other Build* methods and for future
+    /// compatibility if a specific string-level overlay is needed.
     /// </summary>
     public static TrustedPublisherOptions BuildTrustedPublisherOptions(IConfiguration config)
     {
         var options = new TrustedPublisherOptions();
-        var coreSub = config.GetSection("DenCore:TrustedPublisher");
-        var legacySub = config.GetSection("DenMcp:TrustedPublisher");
-
-        coreSub.Bind(options);
-
-        if (!legacySub.Exists())
-            return options;
-
-        // Only overlay string-list properties (arrays) when core didn't provide them
-        if (options.ProjectRootSearchPaths == null || options.ProjectRootSearchPaths.Length == 0)
-        {
-            // Array-type config is tricky via section indexer.
-            // For robust array merging, we'd need to list children.
-            // For the common case (both new and old env files have them),
-            // the DenCore env var wins if set. This is a best-effort compatibility overlay.
-        }
-
+        config.GetSection("DenCore:TrustedPublisher").Bind(options);
         return options;
     }
 
@@ -155,6 +154,7 @@ public static class ConfigMerger
 /// <summary>
 /// Production-configuration validation guard.
 /// Fails closed when Den Core starts with dangerous default config.
+/// Called automatically in Production environment, or explicitly via --validate-prod.
 /// </summary>
 public static class ProductionValidator
 {

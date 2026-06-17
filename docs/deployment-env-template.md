@@ -4,11 +4,7 @@
 
 Location: `/data/services/den-core/env/server.env`
 
-### Current state (as of #2560 fix)
-
-The production env already has both `DenCore__*` and `DenMcp__*` (legacy) keys.
-With the `ConfigMerger` fix, `DenMcp__*` env vars are no longer required — they
-are merged as a compatibility fallback when no `DenCore__*` env override exists.
+Systemd override: `deploy/systemd-override.conf` in this repo.
 
 ### Required keys
 
@@ -50,17 +46,22 @@ keys until the next deploy cycle. `ConfigMerger` handles both.
 
 ## Production validation
 
-Den Core supports `--validate-prod` CLI flag for startup validation:
+Den Core validates config **automatically** when running in the `Production`
+environment (`ASPNETCORE_ENVIRONMENT=Production`). The startup guard checks:
+
+- **ListenUrl** is NOT on port 5199 (facade-owned)
+- **DatabasePath** resolves under `/data/services/den-core/data/`
+
+If validation fails, the process exits with code 1 before Kestrel binds or
+the database initializes.
+
+For CI/deploy preflight checks:
 
 ```bash
-dotnet DenCore.Service.dll --validate-prod
+ASPNETCORE_ENVIRONMENT=Staging dotnet DenCore.Service.dll --validate-prod
 ```
 
-This checks:
-- ListenUrl is NOT on port 5199 (facade-owned)
-- DatabasePath resolves under `/data/services/den-core/data/`
-
-If validation fails, the process exits with code 1.
+`--validate-prod` validates and exits (0 on success, 1 on failure).
 
 ## Deploy smoke check
 
@@ -71,8 +72,12 @@ bash scripts/den-core-deploy-smoke.sh
 ```
 
 This verifies:
-- ✅ Core private health at `127.0.0.1:5299`
+- ✅ `den-core` process owns `127.0.0.1:5299`
+- ✅ `den-mcp` process owns `:5199` (facade)
+- ✅ Private Core health at `127.0.0.1:5299`
 - ✅ Facade health at `192.168.1.10:5199`
-- ✅ Projects endpoint returns real data (not empty DB)
+- ✅ Facade response shape differs from Core (not accidental direct proxy)
+- ✅ Projects endpoint returns real data (≥1 project, not empty DB)
 - ✅ Knowledge routes accessible (where deployed)
 - ✅ Static UI serves at root
+- ✅ `den-core.service` systemd unit is active

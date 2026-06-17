@@ -16,13 +16,27 @@ using ModelContextProtocol.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Configuration (appsettings.json + environment variables + CLI args)
-// DenCore is the primary config section; DenMcp is checked as a legacy fallback
-// so existing appsettings.json files continue to work without changes.
-var options = new DenCoreOptions();
-var coreSection = builder.Configuration.GetSection("DenCore");
-var legacySection = builder.Configuration.GetSection("DenMcp");
-var activeConfigSection = coreSection.Exists() ? coreSection : legacySection;
-activeConfigSection.Bind(options);
+// DenCore is the primary config section; DenMcp legacy env vars are merged
+// via ConfigMerger for backward compatibility, so production env doesn't
+// need to duplicate DenCore__* keys.
+var options = ConfigMerger.BuildOptions(builder.Configuration);
+var llmConfig = ConfigMerger.BuildLlmConfig(builder.Configuration);
+var trustedPublisherOptions = ConfigMerger.BuildTrustedPublisherOptions(builder.Configuration);
+var denPublishFacadeOptions = ConfigMerger.BuildDenPublishFacadeOptions(builder.Configuration);
+
+// Production startup validation — warn on dangerous default config
+if (args.Contains("--validate-prod"))
+{
+    var warnings = ProductionValidator.Validate(options);
+    if (warnings.Count > 0)
+    {
+        Console.Error.WriteLine("=== Production config validation FAILED ===");
+        foreach (var w in warnings)
+            Console.Error.WriteLine(w);
+        Environment.Exit(1);
+    }
+    Console.WriteLine("Production config validation: PASSED");
+}
 
 // CLI overrides: --port and --db-path
 if (builder.Configuration["port"] is { } port)
@@ -32,16 +46,10 @@ if (builder.Configuration["db-path"] is { } dbPathOverride)
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(options.BlockedTaskEscalation);
-var trustedPublisherOptions = new TrustedPublisherOptions();
-activeConfigSection.GetSection("TrustedPublisher").Bind(trustedPublisherOptions);
 builder.Services.AddSingleton(trustedPublisherOptions);
-var denPublishFacadeOptions = new DenPublishFacadeOptions();
-activeConfigSection.GetSection("DenPublishFacade").Bind(denPublishFacadeOptions);
 builder.Services.AddSingleton(denPublishFacadeOptions);
 
-// LLM (librarian)
-var llmConfig = new LlmConfig();
-activeConfigSection.GetSection("Llm").Bind(llmConfig);
+// LLM (librarian) — built via ConfigMerger, with CLI overrides
 if (builder.Configuration["llm-endpoint"] is { } llmEndpoint)
     llmConfig.Endpoint = llmEndpoint;
 if (builder.Configuration["llm-api-key"] is { } llmApiKey)

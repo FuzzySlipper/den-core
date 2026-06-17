@@ -197,6 +197,7 @@ public class PacketToolsTests
     {
         private readonly Message? _message;
         private readonly List<Message> _created = new();
+        public IReadOnlyList<Message> Created => _created;
 
         public FakeMessageRepository(Message? message) => _message = message;
 

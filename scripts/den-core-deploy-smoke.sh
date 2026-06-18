@@ -4,7 +4,7 @@
 # Some checks (systemctl MainPID, ss PID visibility) require root/sudo.
 # Usage: ./den-core-deploy-smoke.sh [--verbose]
 
-set -euo pipefail
+set -uo pipefail
 VERBOSE=false
 for arg in "$@"; do [ "$arg" = "--verbose" ] && VERBOSE=true; done
 

@@ -63,6 +63,11 @@ ASPNETCORE_ENVIRONMENT=Staging dotnet DenCore.Service.dll --validate-prod
 
 `--validate-prod` validates and exits (0 on success, 1 on failure).
 
+> **⚠️ WARNING:** Do NOT add `--validate-prod` to the systemd service `ExecStart` line. 
+> It causes the process to validate and exit 0 instead of staying up. Production
+> validation runs automatically via the `ASPNETCORE_ENVIRONMENT` check — no CLI
+> flag needed in the unit file.
+
 ## Deploy smoke check
 
 After deploy, run:
@@ -72,12 +77,11 @@ bash scripts/den-core-deploy-smoke.sh
 ```
 
 This verifies:
-- ✅ `den-core` process owns `127.0.0.1:5299`
-- ✅ `den-mcp` process owns `:5199` (facade)
+- ✅ `den-core.service` unit owns `127.0.0.1:5299` (via systemctl MainPID)
+- ✅ `den-mcp.service` unit owns `:5199` (via systemctl MainPID)
 - ✅ Private Core health at `127.0.0.1:5299`
 - ✅ Facade health at `192.168.1.10:5199`
-- ✅ Facade response shape differs from Core (not accidental direct proxy)
+- ✅ Facade response shape differs from Core signature (not accidental back-proxy)
 - ✅ Projects endpoint returns real data (≥1 project, not empty DB)
 - ✅ Knowledge routes accessible (where deployed)
 - ✅ Static UI serves at root
-- ✅ `den-core.service` systemd unit is active

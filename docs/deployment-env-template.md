@@ -63,7 +63,7 @@ ASPNETCORE_ENVIRONMENT=Staging dotnet DenCore.Service.dll --validate-prod
 
 `--validate-prod` validates and exits (0 on success, 1 on failure).
 
-> **⚠️ WARNING:** Do NOT add `--validate-prod` to the systemd service `ExecStart` line. 
+> **⚠️ WARNING:** Do NOT add `--validate-prod` to the systemd service `ExecStart` line.
 > It causes the process to validate and exit 0 instead of staying up. Production
 > validation runs automatically via the `ASPNETCORE_ENVIRONMENT` check — no CLI
 > flag needed in the unit file.

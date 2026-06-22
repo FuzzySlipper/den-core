@@ -17,7 +17,7 @@ Den APIs intentionally expose several different communication surfaces. The word
 | Legacy direct-agent transcript/readback evidence | Channels compatibility/archive | `legacy_direct_agent_event` / `legacy_direct_conversation_entry` | legacy `GET /api/direct-agent-events`, `GET /api/direct-agent-events/{eventId}`, direct conversation routes, backing `channel_messages.source_kind=wake_event` | Readback/display only where retained for old evidence; no new green-path wake production | No new workflow use; old rows may describe historical wakes |
 | Retired Gateway delivery control record | Historical Gateway seam | `delivery_request` / `delivery_attempt` | historical delivery/wake records only | Archived Gateway evidence and compatibility readback where retained | Not a green-path producer |
 | Final visible delivery reply | Conversation successor | `gateway_delivery_final_message` | legacy Channels final `channel_message`; `sourceKind=gateway_delivery`, `dedupeKey=gateway-delivery:{id}:final`; retired Gateway-shaped alias `POST /api/gateway/system-messages` | A normal Conversation successor message with terminal delivery metadata; legacy channel-message alias only where retained for migration/readback | No additional wake for peer-agent fanout; it terminalizes a delivery |
-| Interim delivery progress | Channels | `delivery_activity_event` / `channel_activity_event` | `channel_activity_events` table; retired Gateway-shaped alias `POST /api/gateway/channel-activity-events` | Canonical scoped route `POST /api/channels/{channelId}/activity-events`; supported resolver route `POST /api/channel-activity-events` | No; explicitly non-waking and non-terminal |
+| Interim delivery progress | Observation successor | `delivery_activity_event` / `agent_activity_event` | legacy Channels `channel_activity_events` table; legacy `POST /api/channels/{channelId}/activity-events`; retired Gateway-shaped alias `POST /api/gateway/channel-activity-events` | Green path: `POST /v1/observation/activity-events`; legacy Channels activity routes are archival/readback-only during retirement | No; explicitly non-waking and non-terminal |
 | Legacy dispatch archive | Core/MCP compatibility | `legacy_dispatch_*` | old dispatch route/tool names only in archives | read-only archive/debug where retained | No new workflow use |
 
 ## Scenario-to-API examples
@@ -101,39 +101,46 @@ Legacy den-channels `POST /api/direct-agent-events` and `POST /api/direct-conver
 
 ### Append delivery progress
 
-Use Channels activity events. These are observability records, not transcript messages and not final replies. Prefer the channel-scoped canonical route `POST /api/channels/{channelId}/activity-events`; the resolver route `POST /api/channel-activity-events` is also supported when the caller supplies enough project/channel context for Channels to resolve the target. Do not use the retired Gateway-shaped `/api/gateway/channel-activity-events` alias in new examples.
+Use the Observation successor for non-waking progress/activity. These records are observability breadcrumbs, not transcript messages and not final replies. Legacy Channels activity routes (`POST /api/channels/{channelId}/activity-events`, `POST /api/channel-activity-events`) are archival/readback-only during retirement; do not use them in new examples.
 
 ```http
-POST /api/channels/3/activity-events
+POST /v1/observation/activity-events
 Content-Type: application/json
 
 {
-  "agentIdentity": "den-mcp-runner",
-  "deliveryRequestId": "90",
-  "eventType": "tool_call",
-  "deliveryStage": "tool",
-  "terminal": false,
-  "summary": "Read Core/Channels contract docs"
+  "agent_identity": {
+    "profile": "den-mcp-runner",
+    "instance_id": "den-mcp-runner@den-k8"
+  },
+  "source_domain": "delivery",
+  "source_ref": "delivery-intent:90",
+  "event_type": "tool_call",
+  "summary": "Read Core/Conversation/Observation contract docs",
+  "display_only": true
 }
 ```
 
 ### Post final delivery reply
 
-The final visible response is a `channel_message` with terminal delivery metadata. Reserve the final dedupe key for the true terminal response only. Gateway-shaped `system-messages` wording is historical; new docs should describe the artifact, not a Gateway-owned producer.
+The final visible response is a Conversation successor `channel_message` with terminal delivery metadata. Reserve the final dedupe key for the true terminal response only. Gateway-shaped `system-messages` wording and legacy Channels `POST /api/channels/{channelId}/messages` examples are historical; new docs should describe the artifact, not a Gateway- or Channels-owned producer.
 
 ```http
-POST /api/channels/3/messages
+POST /v1/conversation/channels/3/messages
 Content-Type: application/json
+Idempotency-Key: gateway-delivery:90:final
 
 {
-  "senderType": "system",
-  "senderIdentity": "den-channels",
-  "messageKind": "agent_text",
+  "sender_type": "system",
+  "sender_identity": "den-mcp-runner",
+  "message_kind": "agent_text",
   "body": "Done: contract names aligned and linked from task #1555.",
-  "sourceKind": "gateway_delivery",
-  "sourceId": "90",
-  "deliveryRequestId": "90",
-  "dedupeKey": "gateway-delivery:90:final"
+  "source_kind": "gateway_delivery",
+  "source_id": "90",
+  "metadata": {
+    "delivery_request_id": 90,
+    "delivery_stage": "final",
+    "terminal_delivery": true
+  }
 }
 ```
 
@@ -145,6 +152,6 @@ Content-Type: application/json
 - Conversation successor owns new human-facing channel transcript rows. Legacy Channels `PostChannelMessageRequest` and `POST /api/channels/{channelId}/messages` are compatibility names/routes during the den-channels slimming wave, not the preferred contract for new guidance.
 - Delivery successor owns direct-agent executable wake intent lifecycle. Legacy Channels `direct_agent_event` / `direct_agent_message`, `POST /api/direct-agent-events`, and `POST /api/direct-conversations/{conversationId}/send` are compatibility/history routes until active producers migrate and den-channels tombstone tasks can complete. Legacy readback routes such as `GET /api/direct-agent-events` and `GET /api/direct-agent-events/{eventId}` may remain for old evidence only.
 - Gateway-shaped `system-messages` is a retired historical route name. Docs should describe its final-reply artifact as `gateway_delivery_final_message` when `sourceKind=gateway_delivery`/`dedupeKey=gateway-delivery:{id}:final` are present, and should route new final visible replies through the Conversation successor where available.
-- `channel_activity_event` / `delivery_activity_event` is the canonical non-waking progress vocabulary. The preferred long-term owner is Observation/Timeline successor surfaces; while legacy Channels compatibility remains, prefer the channel-scoped route `POST /api/channels/{channelId}/activity-events` or supported resolver route `POST /api/channel-activity-events` over retired Gateway-shaped `/api/gateway/channel-activity-events`. Progress must never use `gateway-delivery:{id}:final`.
+- `delivery_activity_event` / `agent_activity_event` is the canonical non-waking progress vocabulary. Observation/Timeline successor surfaces own new progress records; legacy Channels activity routes (`POST /api/channels/{channelId}/activity-events`, `POST /api/channel-activity-events`) and retired Gateway-shaped `/api/gateway/channel-activity-events` are archival/readback-only. Progress must never use `gateway-delivery:{id}:final`.
 - Retired `/api/gateway/events`, `/api/gateway/direct-agent-messages`, and `/api/gateway/test-wakes` references are historical/tombstone aliases for old den-channels direct-agent/event readback or controlled wake-test recording. New public examples should use Delivery successor for executable wakes and Conversation successor for transcript rows, or explicitly label Gateway-shaped names as retired.
 - Legacy dispatch and Pi/publisher MCP tools are quarantined under `legacy_*` in the live Core MCP schema after #1610; do not use them in new contract examples.

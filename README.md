@@ -77,7 +77,7 @@ scripts/deploy-live-server.sh --dry-run
 scripts/deploy-live-server.sh
 ```
 
-The helper publishes `src/DenCore.Service/DenCore.Service.csproj`, stages the output into `/data/services/den-core/app`, restarts `den-core.service`, and smokes `/health` plus MCP `tools/list` through both the Core proxy (`http://192.168.1.10:18080/den-core-api/mcp`) and LAN MCP facade (`http://192.168.1.10:5199/mcp`). During the app-tree swap it preserves live-local `appsettings*.json`, `env/`, `data/`, and `.net/` paths from the previous app tree.
+The helper publishes `src/DenCore.Service/DenCore.Service.csproj`, stages the output into `/data/services/den-core/app`, restarts `den-core.service`, and smokes `/health` plus MCP `tools/list` through Core's explicit loopback service boundary (`http://127.0.0.1:5299`). The LAN MCP facade (`http://192.168.1.10:5199/mcp`) remains the agent-facing MCP entrypoint but is no longer used as the deploy correctness oracle, and the old Den Web `/den-core-api/*` proxy is not a green-path Core smoke. During the app-tree swap it preserves live-local `appsettings*.json`, `env/`, `data/`, and `.net/` paths from the previous app tree.
 
 Deployment trust boundaries:
 

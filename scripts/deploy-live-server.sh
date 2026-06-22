@@ -13,8 +13,9 @@ REMOTE_APP_DIR="${REMOTE_APP_DIR:-$REMOTE_SERVICE_ROOT/app}"
 REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/den-core-live-publish}"
 REMOTE_SERVICE_USER="${REMOTE_SERVICE_USER:-den-core}"
 REMOTE_SERVICE_GROUP="${REMOTE_SERVICE_GROUP:-den-core}"
-HEALTH_URL="${HEALTH_URL:-http://192.168.1.10:18080/den-core-api/health}"
-MCP_CORE_URL="${MCP_CORE_URL:-http://192.168.1.10:18080/den-core-api/mcp}"
+CORE_LOOPBACK_URL="${CORE_LOOPBACK_URL:-http://127.0.0.1:5299}"
+HEALTH_URL="${HEALTH_URL:-$CORE_LOOPBACK_URL/health}"
+MCP_LOOPBACK_URL="${MCP_LOOPBACK_URL:-$CORE_LOOPBACK_URL/mcp}"
 MCP_LAN_URL="${MCP_LAN_URL:-http://192.168.1.10:5199/mcp}"
 SKIP_RESTART=0
 SKIP_SMOKE=0
@@ -28,8 +29,9 @@ Usage: scripts/deploy-live-server.sh [options]
 
 Build and publish Den Core's DenCore.Service, stage it into the live
 /data/services/den-core/app tree, restart den-core.service, and run small live
-smoke checks for /health plus MCP tools/list through both the Core proxy and the
-LAN MCP facade.
+smoke checks for /health plus MCP tools/list through Core's explicit loopback
+service boundary. The LAN MCP facade URL is printed for operator reference but
+is not the deployment correctness oracle.
 
 Modes:
   local   Run on den-srv from /data/dev/den-core and install directly.
@@ -59,15 +61,16 @@ Options:
 Environment overrides:
   DEPLOY_MODE, SSH_TARGET, SERVICE_NAME, PROJECT_FILE, PUBLISH_DIR,
   BUILD_ARTIFACTS_DIR, REMOTE_SERVICE_ROOT, REMOTE_APP_DIR, REMOTE_STAGE_DIR,
-  REMOTE_SERVICE_USER, REMOTE_SERVICE_GROUP, HEALTH_URL, MCP_CORE_URL,
-  MCP_LAN_URL
+  REMOTE_SERVICE_USER, REMOTE_SERVICE_GROUP, CORE_LOOPBACK_URL, HEALTH_URL,
+  MCP_LOOPBACK_URL, MCP_LAN_URL
 
 Live defaults:
   REMOTE_SERVICE_ROOT=/data/services/den-core
   REMOTE_APP_DIR=/data/services/den-core/app
   SERVICE_NAME=den-core.service
-  HEALTH_URL=http://192.168.1.10:18080/den-core-api/health
-  MCP_CORE_URL=http://192.168.1.10:18080/den-core-api/mcp
+  CORE_LOOPBACK_URL=http://127.0.0.1:5299
+  HEALTH_URL=http://127.0.0.1:5299/health
+  MCP_LOOPBACK_URL=http://127.0.0.1:5299/mcp
   MCP_LAN_URL=http://192.168.1.10:5199/mcp
 EOF_USAGE
 }
@@ -147,8 +150,9 @@ Resolved deploy configuration:
   REMOTE_STAGE_DIR=$REMOTE_STAGE_DIR
   REMOTE_SERVICE_USER=$REMOTE_SERVICE_USER
   REMOTE_SERVICE_GROUP=$REMOTE_SERVICE_GROUP
+  CORE_LOOPBACK_URL=$CORE_LOOPBACK_URL
   HEALTH_URL=$HEALTH_URL
-  MCP_CORE_URL=$MCP_CORE_URL
+  MCP_LOOPBACK_URL=$MCP_LOOPBACK_URL
   MCP_LAN_URL=$MCP_LAN_URL
   SKIP_RESTART=$SKIP_RESTART
   SKIP_SMOKE=$SKIP_SMOKE
@@ -387,11 +391,15 @@ smoke_http_and_mcp() {
     return
   fi
 
-  echo "Running health smoke against $HEALTH_URL ..."
-  curl --retry 20 --retry-delay 1 --retry-connrefused -fsS "$HEALTH_URL" >/dev/null
+  echo "Running Core service-boundary health smoke against $HEALTH_URL ..."
+  if [[ "$DEPLOY_MODE" == "remote" ]]; then
+    ssh "$SSH_TARGET" "curl --retry 20 --retry-delay 1 --retry-connrefused -fsS $(shell_quote "$HEALTH_URL") >/dev/null"
+  else
+    curl --retry 20 --retry-delay 1 --retry-connrefused -fsS "$HEALTH_URL" >/dev/null
+  fi
 
-  echo "Running MCP tools/list smoke against live loopback MCP endpoint ..."
-  local smoke_url="${MCP_LOOPBACK_URL:-http://127.0.0.1:5299/mcp}"
+  echo "Running MCP tools/list smoke against live Core loopback MCP endpoint ..."
+  local smoke_url="$MCP_LOOPBACK_URL"
   if [[ "$DEPLOY_MODE" == "remote" ]]; then
     ssh "$SSH_TARGET" "MCP_LOOPBACK_URL=$(shell_quote "$smoke_url") python3 -" <<'PY'
 import json

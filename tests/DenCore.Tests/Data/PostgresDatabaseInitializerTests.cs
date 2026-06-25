@@ -1,11 +1,48 @@
 using DenCore.Data;
 using DenCore.Models;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 
 namespace DenCore.Tests.Data;
 
 public class PostgresDatabaseInitializerTests
 {
+    [Fact]
+    public void InitialSchema_IncludesRouteFacingRepositoryColumns()
+    {
+        var schema = PostgresDatabaseInitializer.InitialSchema;
+
+        foreach (var column in new[]
+        {
+            "instance_id",
+            "agent_family",
+            "transport_kind",
+            "session_id",
+            "thread_id",
+            "delivery_mode",
+            "body",
+            "dedup_key",
+            "target_agent",
+            "trigger_type",
+            "trigger_id",
+            "summary",
+            "context_prompt",
+            "context_json",
+            "expires_at",
+            "decided_at",
+            "completed_at",
+            "decided_by",
+            "completed_by"
+        })
+        {
+            Assert.Contains(column, schema);
+        }
+
+        Assert.DoesNotContain("content               TEXT", schema);
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_stream_dedup", schema);
+        Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_dedup", schema);
+    }
+
     [Fact]
     [Trait("Category", "PostgresProvider")]
     public async Task Initialize_WhenConfigured_SupportsRepresentativeNonFtsRepositories()
@@ -28,6 +65,9 @@ public class PostgresDatabaseInitializerTests
             var documents = new DocumentRepository(testDb.Db);
             var usage = new UsageCostRepository(testDb.Db);
             var workerPool = new WorkerPoolRepository(testDb.Db);
+            var bindings = new AgentInstanceBindingRepository(testDb.Db);
+            var dispatch = new DispatchRepository(testDb.Db);
+            var stream = new AgentStreamRepository(testDb.Db);
 
             var project = await projects.CreateAsync(new Project
             {
@@ -107,6 +147,66 @@ public class PostgresDatabaseInitializerTests
                 ProfileIdentity = "postgres-profile"
             });
             Assert.Single(members);
+
+            var binding = await bindings.UpsertAsync(new AgentInstanceBinding
+            {
+                InstanceId = "pg-instance-1",
+                ProjectId = project.Id,
+                AgentIdentity = "pg-agent",
+                AgentFamily = "codex",
+                Role = "coder",
+                TransportKind = "direct",
+                SessionId = "pg-session-1",
+                Status = AgentInstanceBindingStatus.Active,
+                Metadata = "{\"provider\":\"postgres-test\"}"
+            });
+            Assert.Equal("pg-instance-1", binding.InstanceId);
+            Assert.NotNull(await bindings.GetActiveByInstanceIdAsync(binding.InstanceId));
+
+            var dispatchEntry = new DispatchEntry
+            {
+                ProjectId = project.Id,
+                TargetAgent = "pg-agent",
+                Status = DispatchStatus.Pending,
+                TriggerType = DispatchTriggerType.Message,
+                TriggerId = message.Id,
+                TaskId = task.Id,
+                Summary = "Postgres dispatch",
+                ContextPrompt = "context",
+                ContextJson = "{\"ok\":true}",
+                DedupKey = DispatchEntry.BuildDedupKey(DispatchTriggerType.Message, message.Id, "pg-agent"),
+                ExpiresAt = DateTime.UtcNow.AddMinutes(5)
+            };
+            var (createdDispatch, created) = await dispatch.CreateIfAbsentAsync(dispatchEntry);
+            Assert.True(created);
+            Assert.Equal("pg-agent", createdDispatch.TargetAgent);
+
+            var streamEntry = await stream.AppendAsync(new AgentStreamEntry
+            {
+                StreamKind = AgentStreamKind.Message,
+                EventType = "review_requested",
+                ProjectId = project.Id,
+                TaskId = task.Id,
+                ThreadId = message.Id,
+                DispatchId = createdDispatch.Id,
+                Sender = "pg-agent",
+                SenderInstanceId = binding.InstanceId,
+                RecipientAgent = "pg-reviewer",
+                RecipientRole = "reviewer",
+                DeliveryMode = AgentStreamDeliveryMode.RecordOnly,
+                Body = "please review",
+                Metadata = JsonSerializer.Deserialize<JsonElement>("{\"run_id\":\"pg-run-1\"}"),
+                DedupKey = "pg-stream-dedup"
+            });
+            Assert.True(streamEntry.Id > 0);
+
+            var streamResults = await stream.ListAsync(new AgentStreamListOptions
+            {
+                ProjectId = project.Id,
+                MetadataRunId = "pg-run-1",
+                IncludeDebug = true
+            });
+            Assert.Single(streamResults);
         }
         finally
         {

@@ -7,8 +7,8 @@ Postgres FTS replacement owned by #3324.
 
 ## Startup path
 
-When `DenCore:Provider=Postgres`, `Program.cs` now creates a
-`PostgresDatabaseInitializer` beside the existing SQLite initializer. The
+When `DenCore:Provider=Postgres`, `Program.cs` creates a
+`PostgresDatabaseInitializer`. The
 Postgres initializer:
 
 - opens only the configured `DenCore:ConnectionString`;
@@ -17,8 +17,9 @@ Postgres initializer:
   retry helper;
 - seeds the `_global` project idempotently.
 
-The SQLite initializer remains the only path that runs PRAGMA statements, WAL
-setup, SQLite table rebuild migrations, and default channel trigger setup.
+The SQLite initializer is retained only for legacy tests and rollback
+archaeology after the #3326 cutover. Production validation now fails closed on
+any non-Postgres provider.
 
 ## Phase 0C schema coverage
 

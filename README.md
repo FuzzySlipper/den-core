@@ -30,7 +30,7 @@ For the detailed as-built service/port/runtime inventory, see the Den document `
 
 ## Owns
 
-- SQLite database path/config, schema initialization, repositories, and domain services.
+- Postgres-backed canonical state in the temporary `den_core` schema, repositories, and domain services.
 - REST APIs for projects, spaces, topics, tasks, messages, documents, reviews, agent stream, worker/session records, librarian/search, guidance, and related Den state.
 - Static Den web/admin assets for the Core API surface.
 - `/health` reporting version/commit and Core service status.
@@ -59,10 +59,12 @@ npm --prefix src/DenCore.Service/ClientApp run build
 ## Run
 
 ```bash
-dotnet run --project src/DenCore.Service -- --port 5199 --db-path /tmp/den-core/dev.db
+DenCore__Provider=Postgres \
+DenCore__ConnectionString='Host=localhost;Database=den_core;Username=den;Search Path=den_core' \
+dotnet run --project src/DenCore.Service -- --port 5299
 ```
 
-Default server URL remains `http://localhost:5199` for compatibility during extraction. Production cutover should assign a dedicated Den Core URL/port and point the slim `den-mcp` adapter at it through `DenCore:BaseUrl`.
+Default local server URL remains `http://localhost:5199` for older development tests, but live Core runs on the internal `127.0.0.1:5299` URL behind the `den-mcp` facade. Production must set `DenCore__Provider=Postgres` and `DenCore__ConnectionString`; `DatabasePath` is no longer the live database selector.
 
 ## Configuration
 

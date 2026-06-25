@@ -14,7 +14,8 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
-            DatabasePath = "/data/services/den-core/data/den.db",
+            Provider = "Postgres",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den",
         };
         var warnings = ProductionValidator.Validate(opts);
         Assert.Empty(warnings);
@@ -27,23 +28,24 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://localhost:5199",
-            DatabasePath = "/data/services/den-core/data/den.db",
+            Provider = "Postgres",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den",
         };
         var warnings = ProductionValidator.Validate(opts);
         Assert.Contains(warnings, w => w.Contains("5199"));
     }
 
     [Fact]
-    public void Validate_FallbackDbPath_Detected()
+    public void Validate_DefaultSqliteProvider_FailsClosed()
     {
-        // Default fallback path ~/.den-core/den.db should be flagged
+        // Empty Provider still resolves to the legacy SQLite default for local
+        // tests, but production must fail closed after the Postgres cutover.
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
-            DatabasePath = "",  // triggers GetResolvedDatabasePath fallback
         };
         var warnings = ProductionValidator.Validate(opts);
-        Assert.Contains(warnings, w => w.Contains("DatabasePath"));
+        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
     }
 
     [Fact]
@@ -52,10 +54,11 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://localhost:5199",
-            DatabasePath = "",
         };
         var warnings = ProductionValidator.Validate(opts);
         Assert.Equal(2, warnings.Count);
+        Assert.Contains(warnings, w => w.Contains("5199"));
+        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
     }
 
     [Fact]
@@ -65,22 +68,24 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
-            DatabasePath = "/data/services/den-core/data/den.db",
+            Provider = "Postgres",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den",
         };
         var warnings = ProductionValidator.Validate(opts);
-        Assert.DoesNotContain(warnings, w => w.Contains("5199"));
+        Assert.Empty(warnings);
     }
 
     [Fact]
-    public void Validate_CustomDbPathInProduction_Passes()
+    public void Validate_SqliteProviderWithProductionDbPath_FailsClosed()
     {
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
+            Provider = "Sqlite",
             DatabasePath = "/data/services/den-core/data/den.db",
         };
         var warnings = ProductionValidator.Validate(opts);
-        Assert.DoesNotContain(warnings, w => w.Contains("DatabasePath"));
+        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
     }
 
     [Fact]
@@ -89,10 +94,12 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = null!,  // shouldn't happen but guard against crash
-            DatabasePath = "/data/services/den-core/data/den.db",
+            Provider = "Postgres",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den",
         };
         var warnings = ProductionValidator.Validate(opts);
         Assert.DoesNotContain(warnings, w => w.Contains("5199"));
+        Assert.Empty(warnings);
     }
 
     [Fact]
@@ -101,11 +108,13 @@ public sealed class ProductionValidatorTests
         var opts = new DenCoreOptions
         {
             ListenUrl = "not-a-valid-uri",
-            DatabasePath = "/data/services/den-core/data/den.db",
+            Provider = "Postgres",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den",
         };
         // Should not throw
         var warnings = ProductionValidator.Validate(opts);
         Assert.DoesNotContain(warnings, w => w.Contains("5199"));
+        Assert.Empty(warnings);
     }
 
     [Fact]
@@ -161,7 +170,6 @@ public sealed class ProductionValidatorTests
         {
             Provider = "mysql",
             ListenUrl = "http://127.0.0.1:5299",
-            DatabasePath = "/data/services/den-core/data/den.db",
         };
 
         var warnings = ProductionValidator.Validate(opts);

@@ -1,6 +1,9 @@
 # Den Core SQL Dialect Deferred Runtime SQL
 
-Task #3321 introduced provider-neutral SQL dialect helpers and database exception translation while keeping SQLite as the only active runtime provider. This note records the raw SQL forms that remain intentionally deferred instead of being swept inside #3321.
+Task #3321 introduced provider-neutral SQL dialect helpers and database
+exception translation while SQLite was still the only active runtime provider.
+After the #3326 cutover, Postgres is live; this note is historical evidence for
+what #3323/#3324 had to finish or quarantine.
 
 ## Deferred To #3323
 
@@ -10,7 +13,7 @@ Task #3321 introduced provider-neutral SQL dialect helpers and database exceptio
 
 ## Deferred To #3324
 
-- SQLite FTS command text remains available through `DbSqlDialect.KnowledgeFtsUpsertCommandText` for the current runtime. The Postgres branch is only a transitional placeholder until the dedicated FTS replacement task lands.
+- SQLite FTS command text remains available through `DbSqlDialect.KnowledgeFtsUpsertCommandText` for legacy tests. #3324 replaced the live Postgres document/knowledge search path.
 
 ## Converted In #3321
 

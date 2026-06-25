@@ -173,8 +173,8 @@ builder.Services.AddSingleton<LibrarianGatherer>();
 builder.Services.AddSingleton<LibrarianService>();
 
 // MCP endpoint hosted by Core. den-mcp adapter mode proxies public /mcp here so
-// Core remains the sole SQLite owner/writer while preserving the existing MCP
-// tool surface for Hermes clients.
+// Core remains the sole den_core Postgres writer while preserving the existing
+// MCP tool surface for Hermes clients.
 builder.Services.AddSingleton(McpToolProfileRegistry.CreateDefault());
 builder.Services.AddMcpServer()
     .WithHttpTransport(options =>

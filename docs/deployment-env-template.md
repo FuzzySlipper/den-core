@@ -11,7 +11,8 @@ Systemd override: `deploy/systemd-override.conf` in this repo.
 | Key | Value | Purpose |
 |-----|-------|---------|
 | `DenCore__ListenUrl` | `http://127.0.0.1:5299` | Internal listen port. Den Core MUST NOT listen on 5199 (owned by den-mcp facade). |
-| `DenCore__DatabasePath` | `/data/services/den-core/data/den.db` | Production DB path. Not under `~/.den-core/`. |
+| `DenCore__Provider` | `Postgres` | Live production provider after the #3326 cutover. Production validation fails closed on any other provider. |
+| `DenCore__ConnectionString` | loaded from approved secret/env source | Postgres connection string for the shared cluster, including `Search Path=den_core`. Do not commit or paste the value. |
 
 ### Optional / nested keys
 
@@ -29,16 +30,20 @@ Systemd override: `deploy/systemd-override.conf` in this repo.
 `DenMcp__*` keys still work via `ConfigMerger` fallback. Remove them as part
 of routine cleanup after verifying `DenCore__*` equivalents are set.
 
+`DenCore__DatabasePath` may remain in an env backup as rollback evidence for the
+Phase 0D cutover, but it is not the live production database selector after
+#3326.
+
 ### Migration from DenMcp__* to DenCore__*
 
 ```
 # Old (still supported):
 DenMcp__ListenUrl=http://127.0.0.1:5299
-DenMcp__DatabasePath=/data/services/den-core/data/den.db
 
 # New (preferred):
 DenCore__ListenUrl=http://127.0.0.1:5299
-DenCore__DatabasePath=/data/services/den-core/data/den.db
+DenCore__Provider=Postgres
+DenCore__ConnectionString=<secret>;Search Path=den_core
 ```
 
 Simply add the `DenCore__*` keys to `server.env` and keep the legacy `DenMcp__*`
@@ -50,7 +55,8 @@ Den Core validates config **automatically** when running in the `Production`
 environment (`ASPNETCORE_ENVIRONMENT=Production`). The startup guard checks:
 
 - **ListenUrl** is NOT on port 5199 (facade-owned)
-- **DatabasePath** resolves under `/data/services/den-core/data/`
+- **Provider** is `Postgres`
+- **ConnectionString** is present and parses as an Npgsql connection string
 
 If validation fails, the process exits with code 1 before Kestrel binds or
 the database initializes.

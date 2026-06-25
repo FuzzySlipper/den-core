@@ -241,7 +241,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                        CHECK (doc_type IN ('prd', 'spec', 'adr', 'convention', 'reference', 'note', 'memory')),
             visibility TEXT NOT NULL DEFAULT 'normal'
                        CHECK (visibility IN ('normal', 'hidden', 'archived')),
-            tags       TEXT,
+            tags       JSONB,
             summary    TEXT,
             created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
             updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),

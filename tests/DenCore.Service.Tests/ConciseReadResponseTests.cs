@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DenCore.Models;
 using DenCore.Service.Tools;
 
 namespace DenCore.Service.Tests;
@@ -221,6 +222,43 @@ public sealed class ConciseReadResponseTests
         Assert.Equal("test-doc", first.GetProperty("slug").GetString());
         Assert.True(first.TryGetProperty("deep_read_hint", out _));
         Assert.False(first.TryGetProperty("full_content", out _));
+    }
+
+    [Fact]
+    public void Shrink_DocumentLists_PreserveMetadataFromPascalCaseModels()
+    {
+        var docs = new[]
+        {
+            new DocumentSummary
+            {
+                Id = 7,
+                ProjectId = "proj",
+                Slug = "doc-slug",
+                Title = "Document Slug",
+                DocType = DocType.Reference,
+                Visibility = DocumentVisibility.Normal,
+                Summary = "Visible summary",
+                Tags = ["postgres", "documents"],
+                UpdatedAt = new DateTime(2026, 6, 25, 12, 0, 0, DateTimeKind.Utc)
+            },
+        };
+
+        var payload = new { documents = docs, count = docs.Length };
+        var shrunk = ConciseReadResponse.Shrink(payload);
+        var json = JsonSerializer.Serialize(shrunk);
+
+        using var doc = JsonDocument.Parse(json);
+        var documents = doc.RootElement.GetProperty("documents");
+        var first = documents[0];
+
+        Assert.Equal("proj", first.GetProperty("project_id").GetString());
+        Assert.Equal("doc-slug", first.GetProperty("slug").GetString());
+        Assert.Equal("Document Slug", first.GetProperty("title").GetString());
+        Assert.Equal("reference", first.GetProperty("doc_type").GetString());
+        Assert.Equal("normal", first.GetProperty("visibility").GetString());
+        Assert.Equal("Visible summary", first.GetProperty("summary").GetString());
+        Assert.Equal("postgres", first.GetProperty("tags")[0].GetString());
+        Assert.True(first.TryGetProperty("deep_read_hint", out _));
     }
 
     [Fact]

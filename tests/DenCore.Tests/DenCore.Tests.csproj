@@ -4,4 +4,8 @@
     <ProjectReference Include="..\..\src\DenCore\DenCore.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
 </Project>

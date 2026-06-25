@@ -19,13 +19,17 @@ public sealed class ConfigMergerTests
     {
         var config = BuildConfig(new Dictionary<string, string?>
         {
+            ["DenCore:Provider"] = "Sqlite",
             ["DenCore:ListenUrl"] = "http://localhost:5199",
             ["DenCore:DatabasePath"] = "",
+            ["DenCore:ConnectionString"] = "",
         });
         var opts = ConfigMerger.BuildOptions(config);
 
+        Assert.Equal("Sqlite", opts.Provider);
         Assert.Equal("http://localhost:5199", opts.ListenUrl);
         Assert.Equal("", opts.DatabasePath);
+        Assert.Equal("", opts.ConnectionString);
     }
 
     [Fact]
@@ -120,6 +124,24 @@ public sealed class ConfigMergerTests
         Assert.Equal("http://localhost:5299", opts.ListenUrl);
         // DatabasePath: core is empty (appsettings default) → legacy wins
         Assert.Equal("/data/legacy/den.db", opts.DatabasePath);
+    }
+
+    [Fact]
+    public void BuildOptions_ExplicitPostgresConfig_BindsProviderAndConnectionString()
+    {
+        var config = BuildConfig(new Dictionary<string, string?>
+        {
+            ["DenCore:Provider"] = "Postgres",
+            ["DenCore:ConnectionString"] = "Host=localhost;Database=den_core;Username=den",
+            ["DenCore:ListenUrl"] = "http://localhost:5199",
+            ["DenCore:DatabasePath"] = "/ignored/when/postgres.db",
+        });
+
+        var opts = ConfigMerger.BuildOptions(config);
+
+        Assert.Equal("Postgres", opts.Provider);
+        Assert.Equal("Host=localhost;Database=den_core;Username=den", opts.ConnectionString);
+        Assert.Equal("/ignored/when/postgres.db", opts.DatabasePath);
     }
 
     // =========================================================================

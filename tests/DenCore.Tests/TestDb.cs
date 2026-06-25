@@ -5,6 +5,7 @@ namespace DenCore.Tests;
 
 /// <summary>
 /// Creates an isolated temp SQLite database for each test.
+/// Use <see cref="PostgresTestDb"/> for explicit Postgres provider harness tests.
 /// </summary>
 public sealed class TestDb : IAsyncLifetime
 {

@@ -1,3 +1,4 @@
+using DenCore.Data;
 using DenCore.Llm;
 using DenCore.Models;
 using DenCore.Services;
@@ -182,6 +183,32 @@ public static class ProductionValidator
             catch (UriFormatException)
             {
             }
+        }
+
+        DatabaseProviderKind provider;
+        try
+        {
+            provider = options.GetDatabaseProvider();
+        }
+        catch (InvalidOperationException ex)
+        {
+            warnings.Add($"PRODUCTION GUARD: {ex.Message}");
+            return warnings;
+        }
+
+        if (provider == DatabaseProviderKind.Postgres)
+        {
+            try
+            {
+                DbConnectionFactory.ValidateConnectionString(provider, options.ConnectionString);
+            }
+            catch (ArgumentException ex)
+            {
+                warnings.Add(
+                    $"PRODUCTION GUARD: {ex.Message}");
+            }
+
+            return warnings;
         }
 
         var resolvedDb = options.GetResolvedDatabasePath();

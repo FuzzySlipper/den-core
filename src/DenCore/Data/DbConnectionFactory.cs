@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 
 namespace DenCore.Data;
 
@@ -9,6 +10,8 @@ public sealed class DbConnectionFactory
 
     public DbConnectionFactory(string connectionString, DatabaseProviderKind provider = DatabaseProviderKind.Sqlite)
     {
+        ValidateConnectionString(provider, connectionString);
+
         _connectionString = connectionString;
         Provider = provider;
         Sql = provider switch
@@ -24,16 +27,57 @@ public sealed class DbConnectionFactory
 
     public async Task<DbConnection> CreateConnectionAsync()
     {
-        if (Provider != DatabaseProviderKind.Sqlite)
-            throw new NotSupportedException("Only the SQLite runtime provider is available before task #3322.");
-
-        var connection = new SqliteConnection(_connectionString);
+        DbConnection connection = Provider switch
+        {
+            DatabaseProviderKind.Sqlite => new SqliteConnection(_connectionString),
+            DatabaseProviderKind.Postgres => new NpgsqlConnection(_connectionString),
+            _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
+        };
         await connection.OpenAsync();
 
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "PRAGMA foreign_keys = ON;";
-        await cmd.ExecuteNonQueryAsync();
+        if (Provider == DatabaseProviderKind.Sqlite)
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.CommandText = "PRAGMA foreign_keys = ON;";
+            await cmd.ExecuteNonQueryAsync();
+        }
 
         return connection;
+    }
+
+    public static void ValidateConnectionString(DatabaseProviderKind provider, string connectionString)
+    {
+        switch (provider)
+        {
+            case DatabaseProviderKind.Sqlite:
+                return;
+            case DatabaseProviderKind.Postgres:
+                ValidatePostgresConnectionString(connectionString);
+                return;
+            default:
+                throw new NotSupportedException($"Unsupported database provider: {provider}");
+        }
+    }
+
+    private static void ValidatePostgresConnectionString(string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new ArgumentException(
+                "DenCore:Provider=Postgres requires DenCore:ConnectionString to be set.",
+                nameof(connectionString));
+        }
+
+        try
+        {
+            _ = new NpgsqlConnectionStringBuilder(connectionString);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ArgumentException(
+                "DenCore:Provider=Postgres has an invalid DenCore:ConnectionString.",
+                nameof(connectionString),
+                ex);
+        }
     }
 }

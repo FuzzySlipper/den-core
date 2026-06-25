@@ -107,4 +107,65 @@ public sealed class ProductionValidatorTests
         var warnings = ProductionValidator.Validate(opts);
         Assert.DoesNotContain(warnings, w => w.Contains("5199"));
     }
+
+    [Fact]
+    public void Validate_PostgresWithoutConnectionString_FailsClosed()
+    {
+        var opts = new DenCoreOptions
+        {
+            Provider = "Postgres",
+            ListenUrl = "http://127.0.0.1:5299",
+            ConnectionString = ""
+        };
+
+        var warnings = ProductionValidator.Validate(opts);
+
+        Assert.Contains(warnings, w => w.Contains("DenCore:Provider=Postgres"));
+        Assert.DoesNotContain(warnings, w => w.Contains("DatabasePath"));
+    }
+
+    [Fact]
+    public void Validate_PostgresWithConnectionString_DoesNotRequireSqlitePath()
+    {
+        var opts = new DenCoreOptions
+        {
+            Provider = "Postgres",
+            ListenUrl = "http://127.0.0.1:5299",
+            ConnectionString = "Host=localhost;Database=den_core;Username=den"
+        };
+
+        var warnings = ProductionValidator.Validate(opts);
+
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void Validate_PostgresWithInvalidConnectionString_FailsClosed()
+    {
+        var opts = new DenCoreOptions
+        {
+            Provider = "Postgres",
+            ListenUrl = "http://127.0.0.1:5299",
+            ConnectionString = "not a connection string"
+        };
+
+        var warnings = ProductionValidator.Validate(opts);
+
+        Assert.Contains(warnings, w => w.Contains("invalid DenCore:ConnectionString"));
+    }
+
+    [Fact]
+    public void Validate_InvalidProvider_FailsClosed()
+    {
+        var opts = new DenCoreOptions
+        {
+            Provider = "mysql",
+            ListenUrl = "http://127.0.0.1:5299",
+            DatabasePath = "/data/services/den-core/data/den.db",
+        };
+
+        var warnings = ProductionValidator.Validate(opts);
+
+        Assert.Contains(warnings, w => w.Contains("Unsupported DenCore:Provider"));
+    }
 }

@@ -96,9 +96,17 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 // Database
-var dbPath = options.GetResolvedDatabasePath();
-var initializer = new DatabaseInitializer(dbPath, NullLogger<DatabaseInitializer>.Instance);
-builder.Services.AddSingleton(new DbConnectionFactory(initializer.ConnectionString));
+var databaseProvider = options.GetDatabaseProvider();
+DatabaseInitializer? initializer = null;
+var dbConnectionFactory = databaseProvider switch
+{
+    DatabaseProviderKind.Sqlite => CreateSqliteConnectionFactory(options, out initializer),
+    DatabaseProviderKind.Postgres => new DbConnectionFactory(
+        options.GetRequiredPostgresConnectionString(),
+        DatabaseProviderKind.Postgres),
+    _ => throw new NotSupportedException($"Unsupported database provider: {databaseProvider}")
+};
+builder.Services.AddSingleton(dbConnectionFactory);
 
 // Repositories
 builder.Services.AddSingleton<IProjectRepository, ProjectRepository>();
@@ -185,7 +193,8 @@ builder.Services.AddMcpServer()
 var app = builder.Build();
 
 // Initialize database on startup
-await initializer.InitializeAsync();
+if (initializer is not null)
+    await initializer.InitializeAsync();
 
 // Static files (web frontend)
 app.UseDefaultFiles();
@@ -235,6 +244,13 @@ app.MapMcp("/mcp");
 
 // SPA fallback — serves index.html for unmatched routes
 app.MapFallbackToFile("index.html");
+
+static DbConnectionFactory CreateSqliteConnectionFactory(DenCoreOptions options, out DatabaseInitializer initializer)
+{
+    var dbPath = options.GetResolvedDatabasePath();
+    initializer = new DatabaseInitializer(dbPath, NullLogger<DatabaseInitializer>.Instance);
+    return new DbConnectionFactory(initializer.ConnectionString);
+}
 
 app.Run();
 

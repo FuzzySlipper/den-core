@@ -93,8 +93,8 @@ public sealed class BlackboardApiTests : IAsyncLifetime
             await using var conn = await db.CreateConnectionAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE blackboard_entries SET last_accessed_at = @lastAccessed WHERE slug = @slug";
-            cmd.Parameters.AddWithValue("@slug", slug);
-            cmd.Parameters.AddWithValue("@lastAccessed", DateTime.UtcNow.AddMinutes(-1).ToString("yyyy-MM-dd HH:mm:ss"));
+            cmd.AddParameterWithValue("@slug", slug);
+            cmd.AddParameterWithValue("@lastAccessed", DateTime.UtcNow.AddMinutes(-1).ToString("yyyy-MM-dd HH:mm:ss"));
             await cmd.ExecuteNonQueryAsync();
         }
 

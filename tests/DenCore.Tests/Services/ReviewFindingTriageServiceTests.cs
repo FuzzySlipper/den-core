@@ -284,7 +284,7 @@ public class ReviewFindingTriageServiceTests : IAsyncLifetime
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM review_findings WHERE id = @id";
-            cmd.Parameters.AddWithValue("@id", f1.Id);
+            cmd.AddParameterWithValue("@id", f1.Id);
             await cmd.ExecuteNonQueryAsync();
         }
 

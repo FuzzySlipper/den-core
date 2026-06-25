@@ -1,7 +1,7 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
 using DenCore.Services;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -102,17 +102,17 @@ public sealed class CollaborationRepository : ICollaborationRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId.Trim());
+            cmd.AddParameterWithValue("@projectId", options.ProjectId.Trim());
         }
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
         if (options.Status is not null)
         {
             where.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", options.Status.Value.ToDbValue());
+            cmd.AddParameterWithValue("@status", options.Status.Value.ToDbValue());
         }
 
         var whereClause = where.Count == 0 ? string.Empty : $"WHERE {string.Join(" AND ", where)}";
@@ -123,7 +123,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
             ORDER BY updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var sessions = new List<CollaborationSession>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -168,14 +168,14 @@ public sealed class CollaborationRepository : ICollaborationRepository
             )
             RETURNING {AnnotationColumns}
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@turnId", turnId);
-        cmd.Parameters.AddWithValue("@segmentId", segmentId);
-        cmd.Parameters.AddWithValue("@segmentHash", segment.SegmentHash);
-        cmd.Parameters.AddWithValue("@annotationType", annotationType.ToDbValue());
-        cmd.Parameters.AddWithValue("@body", NullIfWhiteSpace(body));
-        cmd.Parameters.AddWithValue("@createdBy", NullIfWhiteSpace(createdBy));
-        cmd.Parameters.AddWithValue("@updatedBy", NullIfWhiteSpace(createdBy));
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@turnId", turnId);
+        cmd.AddParameterWithValue("@segmentId", segmentId);
+        cmd.AddParameterWithValue("@segmentHash", segment.SegmentHash);
+        cmd.AddParameterWithValue("@annotationType", annotationType.ToDbValue());
+        cmd.AddParameterWithValue("@body", NullIfWhiteSpace(body));
+        cmd.AddParameterWithValue("@createdBy", NullIfWhiteSpace(createdBy));
+        cmd.AddParameterWithValue("@updatedBy", NullIfWhiteSpace(createdBy));
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
         var annotation = ReadAnnotation(reader);
@@ -207,12 +207,12 @@ public sealed class CollaborationRepository : ICollaborationRepository
               AND revision = @expectedRevision
             RETURNING {AnnotationColumns}
             """;
-        cmd.Parameters.AddWithValue("@annotationId", annotationId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@expectedRevision", expectedRevision);
-        cmd.Parameters.AddWithValue("@annotationType", annotationType.ToDbValue());
-        cmd.Parameters.AddWithValue("@body", NullIfWhiteSpace(body));
-        cmd.Parameters.AddWithValue("@updatedBy", NullIfWhiteSpace(updatedBy));
+        cmd.AddParameterWithValue("@annotationId", annotationId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@expectedRevision", expectedRevision);
+        cmd.AddParameterWithValue("@annotationType", annotationType.ToDbValue());
+        cmd.AddParameterWithValue("@body", NullIfWhiteSpace(body));
+        cmd.AddParameterWithValue("@updatedBy", NullIfWhiteSpace(updatedBy));
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
         {
@@ -244,11 +244,11 @@ public sealed class CollaborationRepository : ICollaborationRepository
             VALUES (@sessionId, @turnId, @content, @createdBy, @updatedBy)
             RETURNING {DraftColumns}
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@turnId", (object?)turnId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@content", content);
-        cmd.Parameters.AddWithValue("@createdBy", NullIfWhiteSpace(createdBy));
-        cmd.Parameters.AddWithValue("@updatedBy", NullIfWhiteSpace(createdBy));
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@turnId", (object?)turnId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@content", content);
+        cmd.AddParameterWithValue("@createdBy", NullIfWhiteSpace(createdBy));
+        cmd.AddParameterWithValue("@updatedBy", NullIfWhiteSpace(createdBy));
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
         var draft = ReadDraft(reader);
@@ -280,11 +280,11 @@ public sealed class CollaborationRepository : ICollaborationRepository
               AND revision = @expectedRevision
             RETURNING {DraftColumns}
             """;
-        cmd.Parameters.AddWithValue("@draftId", draftId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@expectedRevision", expectedRevision);
-        cmd.Parameters.AddWithValue("@content", content);
-        cmd.Parameters.AddWithValue("@updatedBy", NullIfWhiteSpace(updatedBy));
+        cmd.AddParameterWithValue("@draftId", draftId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@expectedRevision", expectedRevision);
+        cmd.AddParameterWithValue("@content", content);
+        cmd.AddParameterWithValue("@updatedBy", NullIfWhiteSpace(updatedBy));
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
         {
@@ -325,9 +325,9 @@ public sealed class CollaborationRepository : ICollaborationRepository
               AND project_id = @projectId
             RETURNING {SessionColumns}
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@projectId", projectId.Trim());
-        cmd.Parameters.AddWithValue("@status", status.ToDbValue());
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@projectId", projectId.Trim());
+        cmd.AddParameterWithValue("@status", status.ToDbValue());
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -344,17 +344,17 @@ public sealed class CollaborationRepository : ICollaborationRepository
 
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "session_id = @sessionId" };
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
 
         if (options.TurnId is not null)
         {
             where.Add("turn_id = @turnId");
-            cmd.Parameters.AddWithValue("@turnId", options.TurnId.Value);
+            cmd.AddParameterWithValue("@turnId", options.TurnId.Value);
         }
         if (options.SegmentId is not null)
         {
             where.Add("segment_id = @segmentId");
-            cmd.Parameters.AddWithValue("@segmentId", options.SegmentId.Value);
+            cmd.AddParameterWithValue("@segmentId", options.SegmentId.Value);
         }
 
         var whereClause = string.Join(" AND ", where);
@@ -365,7 +365,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
             ORDER BY updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var annotations = new List<CollaborationAnnotation>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -391,9 +391,9 @@ public sealed class CollaborationRepository : ICollaborationRepository
               AND revision = @expectedRevision
             RETURNING {AnnotationColumns}
             """;
-        cmd.Parameters.AddWithValue("@annotationId", annotationId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@expectedRevision", expectedRevision);
+        cmd.AddParameterWithValue("@annotationId", annotationId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@expectedRevision", expectedRevision);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -411,7 +411,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         throw new CollaborationConflictException($"Annotation {annotationId} has changed since revision {expectedRevision}.");
     }
 
-    private static async Task<CollaborationTurn> InsertTurnAsync(SqliteConnection conn, long sessionId, CreateCollaborationTurnRequestModel request)
+    private static async Task<CollaborationTurn> InsertTurnAsync(DbConnection conn, long sessionId, CreateCollaborationTurnRequestModel request)
     {
         ValidateTurnRequest(request);
         var sourceContentHash = HashText(request.RawMarkdown);
@@ -422,7 +422,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
 
         await using var orderCmd = conn.CreateCommand();
         orderCmd.CommandText = "SELECT COALESCE(MAX(turn_order), 0) + 1 FROM collaboration_turns WHERE session_id = @sessionId";
-        orderCmd.Parameters.AddWithValue("@sessionId", sessionId);
+        orderCmd.AddParameterWithValue("@sessionId", sessionId);
         var turnOrder = Convert.ToInt32(await orderCmd.ExecuteScalarAsync());
 
         await using var cmd = conn.CreateCommand();
@@ -436,17 +436,17 @@ public sealed class CollaborationRepository : ICollaborationRepository
             )
             RETURNING {TurnColumns}
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
-        cmd.Parameters.AddWithValue("@turnOrder", turnOrder);
-        cmd.Parameters.AddWithValue("@role", NullIfWhiteSpace(request.Role));
-        cmd.Parameters.AddWithValue("@sourceKind", NullIfWhiteSpace(request.SourceKind));
-        cmd.Parameters.AddWithValue("@sourceRef", NullIfWhiteSpace(request.SourceRef));
-        cmd.Parameters.AddWithValue("@sourceLabel", NullIfWhiteSpace(request.SourceLabel));
-        cmd.Parameters.AddWithValue("@sourceUri", NullIfWhiteSpace(request.SourceUri));
-        cmd.Parameters.AddWithValue("@sourceContext", request.SourceContext is null ? DBNull.Value : JsonSerializer.Serialize(request.SourceContext.Value));
-        cmd.Parameters.AddWithValue("@rawMarkdown", request.RawMarkdown);
-        cmd.Parameters.AddWithValue("@sourceContentHash", sourceContentHash);
-        cmd.Parameters.AddWithValue("@segmenterVersion", SegmenterVersion);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@turnOrder", turnOrder);
+        cmd.AddParameterWithValue("@role", NullIfWhiteSpace(request.Role));
+        cmd.AddParameterWithValue("@sourceKind", NullIfWhiteSpace(request.SourceKind));
+        cmd.AddParameterWithValue("@sourceRef", NullIfWhiteSpace(request.SourceRef));
+        cmd.AddParameterWithValue("@sourceLabel", NullIfWhiteSpace(request.SourceLabel));
+        cmd.AddParameterWithValue("@sourceUri", NullIfWhiteSpace(request.SourceUri));
+        cmd.AddParameterWithValue("@sourceContext", request.SourceContext is null ? DBNull.Value : JsonSerializer.Serialize(request.SourceContext.Value));
+        cmd.AddParameterWithValue("@rawMarkdown", request.RawMarkdown);
+        cmd.AddParameterWithValue("@sourceContentHash", sourceContentHash);
+        cmd.AddParameterWithValue("@segmenterVersion", SegmenterVersion);
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
         var turn = ReadTurn(reader);
@@ -465,14 +465,14 @@ public sealed class CollaborationRepository : ICollaborationRepository
                 )
                 RETURNING {SegmentColumns}
                 """;
-            segmentCmd.Parameters.AddWithValue("@turnId", turn.Id);
-            segmentCmd.Parameters.AddWithValue("@sequenceNumber", segment.SequenceNumber);
-            segmentCmd.Parameters.AddWithValue("@segmentHash", segment.SegmentHash);
-            segmentCmd.Parameters.AddWithValue("@segmentType", segment.SegmentType.ToDbValue());
-            segmentCmd.Parameters.AddWithValue("@rawMarkdown", segment.RawMarkdown);
-            segmentCmd.Parameters.AddWithValue("@text", NullIfWhiteSpace(segment.Text));
-            segmentCmd.Parameters.AddWithValue("@headingLevel", (object?)segment.HeadingLevel ?? DBNull.Value);
-            segmentCmd.Parameters.AddWithValue("@codeLanguage", NullIfWhiteSpace(segment.CodeLanguage));
+            segmentCmd.AddParameterWithValue("@turnId", turn.Id);
+            segmentCmd.AddParameterWithValue("@sequenceNumber", segment.SequenceNumber);
+            segmentCmd.AddParameterWithValue("@segmentHash", segment.SegmentHash);
+            segmentCmd.AddParameterWithValue("@segmentType", segment.SegmentType.ToDbValue());
+            segmentCmd.AddParameterWithValue("@rawMarkdown", segment.RawMarkdown);
+            segmentCmd.AddParameterWithValue("@text", NullIfWhiteSpace(segment.Text));
+            segmentCmd.AddParameterWithValue("@headingLevel", (object?)segment.HeadingLevel ?? DBNull.Value);
+            segmentCmd.AddParameterWithValue("@codeLanguage", NullIfWhiteSpace(segment.CodeLanguage));
             await using var segmentReader = await segmentCmd.ExecuteReaderAsync();
             await segmentReader.ReadAsync();
             turn.Segments.Add(ReadSegment(segmentReader));
@@ -481,27 +481,27 @@ public sealed class CollaborationRepository : ICollaborationRepository
         return turn;
     }
 
-    private static async Task<CollaborationSession?> GetSessionHeaderAsync(SqliteConnection conn, string projectId, long sessionId)
+    private static async Task<CollaborationSession?> GetSessionHeaderAsync(DbConnection conn, string projectId, long sessionId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {SessionColumns} FROM collaboration_sessions WHERE id = @id AND project_id = @projectId";
-        cmd.Parameters.AddWithValue("@id", sessionId);
-        cmd.Parameters.AddWithValue("@projectId", projectId.Trim());
+        cmd.AddParameterWithValue("@id", sessionId);
+        cmd.AddParameterWithValue("@projectId", projectId.Trim());
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadSession(reader) : null;
     }
 
-    private static async Task EnsureSessionExistsAsync(SqliteConnection conn, string projectId, long sessionId)
+    private static async Task EnsureSessionExistsAsync(DbConnection conn, string projectId, long sessionId)
     {
         if (await GetSessionHeaderAsync(conn, projectId, sessionId) is null)
             throw new KeyNotFoundException($"Collaboration session {sessionId} was not found in project '{projectId}'.");
     }
 
-    private static async Task<List<CollaborationTurn>> LoadTurnsAsync(SqliteConnection conn, long sessionId)
+    private static async Task<List<CollaborationTurn>> LoadTurnsAsync(DbConnection conn, long sessionId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {TurnColumns} FROM collaboration_turns WHERE session_id = @sessionId ORDER BY turn_order, id";
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         var turns = new List<CollaborationTurn>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -513,11 +513,11 @@ public sealed class CollaborationRepository : ICollaborationRepository
         return turns;
     }
 
-    private static async Task<List<CollaborationSegment>> LoadSegmentsAsync(SqliteConnection conn, long turnId)
+    private static async Task<List<CollaborationSegment>> LoadSegmentsAsync(DbConnection conn, long turnId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {SegmentColumns} FROM collaboration_segments WHERE turn_id = @turnId ORDER BY sequence_number, id";
-        cmd.Parameters.AddWithValue("@turnId", turnId);
+        cmd.AddParameterWithValue("@turnId", turnId);
         var segments = new List<CollaborationSegment>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -525,11 +525,11 @@ public sealed class CollaborationRepository : ICollaborationRepository
         return segments;
     }
 
-    private static async Task<List<CollaborationAnnotation>> LoadAnnotationsAsync(SqliteConnection conn, long sessionId)
+    private static async Task<List<CollaborationAnnotation>> LoadAnnotationsAsync(DbConnection conn, long sessionId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {AnnotationColumns} FROM collaboration_annotations WHERE session_id = @sessionId ORDER BY updated_at DESC, id DESC";
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         var annotations = new List<CollaborationAnnotation>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -537,11 +537,11 @@ public sealed class CollaborationRepository : ICollaborationRepository
         return annotations;
     }
 
-    private static async Task<List<CollaborationResponseDraft>> LoadDraftsAsync(SqliteConnection conn, long sessionId)
+    private static async Task<List<CollaborationResponseDraft>> LoadDraftsAsync(DbConnection conn, long sessionId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"SELECT {DraftColumns} FROM collaboration_response_drafts WHERE session_id = @sessionId ORDER BY updated_at DESC, id DESC";
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         var drafts = new List<CollaborationResponseDraft>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -549,7 +549,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         return drafts;
     }
 
-    private static async Task<CollaborationSegment?> GetSegmentAsync(SqliteConnection conn, long sessionId, long turnId, long segmentId)
+    private static async Task<CollaborationSegment?> GetSegmentAsync(DbConnection conn, long sessionId, long turnId, long segmentId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -560,62 +560,62 @@ public sealed class CollaborationRepository : ICollaborationRepository
               AND s.turn_id = @turnId
               AND t.session_id = @sessionId
             """;
-        cmd.Parameters.AddWithValue("@segmentId", segmentId);
-        cmd.Parameters.AddWithValue("@turnId", turnId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@segmentId", segmentId);
+        cmd.AddParameterWithValue("@turnId", turnId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadSegment(reader) : null;
     }
 
-    private static async Task<bool> TurnBelongsToSessionAsync(SqliteConnection conn, long sessionId, long turnId)
+    private static async Task<bool> TurnBelongsToSessionAsync(DbConnection conn, long sessionId, long turnId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT 1 FROM collaboration_turns WHERE id = @turnId AND session_id = @sessionId";
-        cmd.Parameters.AddWithValue("@turnId", turnId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@turnId", turnId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         return await cmd.ExecuteScalarAsync() is not null;
     }
 
-    private static async Task<bool> AnnotationExistsAsync(SqliteConnection conn, long sessionId, long annotationId)
+    private static async Task<bool> AnnotationExistsAsync(DbConnection conn, long sessionId, long annotationId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT 1 FROM collaboration_annotations WHERE id = @annotationId AND session_id = @sessionId";
-        cmd.Parameters.AddWithValue("@annotationId", annotationId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@annotationId", annotationId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         return await cmd.ExecuteScalarAsync() is not null;
     }
 
-    private static async Task<bool> DraftExistsAsync(SqliteConnection conn, long sessionId, long draftId)
+    private static async Task<bool> DraftExistsAsync(DbConnection conn, long sessionId, long draftId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT 1 FROM collaboration_response_drafts WHERE id = @draftId AND session_id = @sessionId";
-        cmd.Parameters.AddWithValue("@draftId", draftId);
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@draftId", draftId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         return await cmd.ExecuteScalarAsync() is not null;
     }
 
-    private static async Task TouchSessionAsync(SqliteConnection conn, long sessionId)
+    private static async Task TouchSessionAsync(DbConnection conn, long sessionId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE collaboration_sessions SET updated_at = datetime('now') WHERE id = @sessionId";
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static void AddSessionParameters(SqliteCommand cmd, CreateCollaborationSessionRequestModel request)
+    private static void AddSessionParameters(DbCommand cmd, CreateCollaborationSessionRequestModel request)
     {
-        cmd.Parameters.AddWithValue("@projectId", request.ProjectId.Trim());
-        cmd.Parameters.AddWithValue("@taskId", (object?)request.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@messageId", (object?)request.MessageId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@agentStreamEntryId", (object?)request.AgentStreamEntryId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@piRunId", NullIfWhiteSpace(request.PiRunId));
-        cmd.Parameters.AddWithValue("@piSessionId", NullIfWhiteSpace(request.PiSessionId));
-        cmd.Parameters.AddWithValue("@desktopOperatorSessionId", NullIfWhiteSpace(request.DesktopOperatorSessionId));
-        cmd.Parameters.AddWithValue("@title", NullIfWhiteSpace(request.Title));
-        cmd.Parameters.AddWithValue("@createdBy", NullIfWhiteSpace(request.CreatedBy));
+        cmd.AddParameterWithValue("@projectId", request.ProjectId.Trim());
+        cmd.AddParameterWithValue("@taskId", (object?)request.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@messageId", (object?)request.MessageId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agentStreamEntryId", (object?)request.AgentStreamEntryId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@piRunId", NullIfWhiteSpace(request.PiRunId));
+        cmd.AddParameterWithValue("@piSessionId", NullIfWhiteSpace(request.PiSessionId));
+        cmd.AddParameterWithValue("@desktopOperatorSessionId", NullIfWhiteSpace(request.DesktopOperatorSessionId));
+        cmd.AddParameterWithValue("@title", NullIfWhiteSpace(request.Title));
+        cmd.AddParameterWithValue("@createdBy", NullIfWhiteSpace(request.CreatedBy));
     }
 
-    private static CollaborationSession ReadSession(SqliteDataReader reader) => new()
+    private static CollaborationSession ReadSession(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         ProjectId = reader.GetString(1),
@@ -632,7 +632,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         UpdatedAt = DateTime.Parse(reader.GetString(12))
     };
 
-    private static CollaborationTurn ReadTurn(SqliteDataReader reader) => new()
+    private static CollaborationTurn ReadTurn(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         SessionId = reader.GetInt64(1),
@@ -649,7 +649,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         CreatedAt = DateTime.Parse(reader.GetString(12))
     };
 
-    private static CollaborationSegment ReadSegment(SqliteDataReader reader) => new()
+    private static CollaborationSegment ReadSegment(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         TurnId = reader.GetInt64(1),
@@ -663,7 +663,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         CreatedAt = DateTime.Parse(reader.GetString(9))
     };
 
-    private static CollaborationAnnotation ReadAnnotation(SqliteDataReader reader) => new()
+    private static CollaborationAnnotation ReadAnnotation(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         SessionId = reader.GetInt64(1),
@@ -679,7 +679,7 @@ public sealed class CollaborationRepository : ICollaborationRepository
         UpdatedAt = DateTime.Parse(reader.GetString(11))
     };
 
-    private static CollaborationResponseDraft ReadDraft(SqliteDataReader reader) => new()
+    private static CollaborationResponseDraft ReadDraft(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         SessionId = reader.GetInt64(1),

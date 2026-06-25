@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -60,8 +60,8 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
             WHERE id = @id
               AND (@projectId IS NULL OR project_id = @projectId)
             """;
-        cmd.Parameters.AddWithValue("@id", id.Trim());
-        cmd.Parameters.AddWithValue("@projectId", (object?)projectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@id", id.Trim());
+        cmd.AddParameterWithValue("@projectId", (object?)projectId ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadWorkspace(reader) : null;
@@ -76,19 +76,19 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
 
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
 
         if (options.State is not null)
         {
             where.Add("state = @state");
-            cmd.Parameters.AddWithValue("@state", options.State.Value.ToDbValue());
+            cmd.AddParameterWithValue("@state", options.State.Value.ToDbValue());
         }
 
         var whereClause = where.Count == 0 ? string.Empty : $"WHERE {string.Join(" AND ", where)}";
@@ -99,7 +99,7 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
             ORDER BY updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var result = new List<AgentWorkspace>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -108,11 +108,11 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
         return result;
     }
 
-    private static async Task EnsureTaskBelongsToProjectAsync(SqliteConnection conn, int taskId, string projectId)
+    private static async Task EnsureTaskBelongsToProjectAsync(DbConnection conn, int taskId, string projectId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT project_id FROM tasks WHERE id = @taskId";
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         var result = await cmd.ExecuteScalarAsync();
         if (result is not string taskProjectId)
             throw new InvalidOperationException($"Task {taskId} was not found.");
@@ -120,11 +120,11 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
             throw new InvalidOperationException($"Task {taskId} belongs to project '{taskProjectId}', not '{projectId.Trim()}'.");
     }
 
-    private static async Task<string?> FindExistingIdAsync(SqliteConnection conn, AgentWorkspace workspace)
+    private static async Task<string?> FindExistingIdAsync(DbConnection conn, AgentWorkspace workspace)
     {
         await using var byId = conn.CreateCommand();
         byId.CommandText = "SELECT id, project_id FROM agent_workspaces WHERE id = @id";
-        byId.Parameters.AddWithValue("@id", workspace.Id.Trim());
+        byId.AddParameterWithValue("@id", workspace.Id.Trim());
         await using (var idReader = await byId.ExecuteReaderAsync())
         {
             if (await idReader.ReadAsync())
@@ -141,14 +141,14 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
             SELECT id FROM agent_workspaces
             WHERE project_id = @projectId AND task_id = @taskId AND branch = @branch
             """;
-        byTuple.Parameters.AddWithValue("@projectId", workspace.ProjectId.Trim());
-        byTuple.Parameters.AddWithValue("@taskId", workspace.TaskId);
-        byTuple.Parameters.AddWithValue("@branch", workspace.Branch.Trim());
+        byTuple.AddParameterWithValue("@projectId", workspace.ProjectId.Trim());
+        byTuple.AddParameterWithValue("@taskId", workspace.TaskId);
+        byTuple.AddParameterWithValue("@branch", workspace.Branch.Trim());
         var tupleResult = await byTuple.ExecuteScalarAsync();
         return tupleResult as string;
     }
 
-    private static async Task<AgentWorkspace> InsertAsync(SqliteConnection conn, AgentWorkspace workspace)
+    private static async Task<AgentWorkspace> InsertAsync(DbConnection conn, AgentWorkspace workspace)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -169,7 +169,7 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
         return ReadWorkspace(reader);
     }
 
-    private static async Task<AgentWorkspace> UpdateAsync(SqliteConnection conn, AgentWorkspace workspace)
+    private static async Task<AgentWorkspace> UpdateAsync(DbConnection conn, AgentWorkspace workspace)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -197,29 +197,29 @@ public sealed class AgentWorkspaceRepository : IAgentWorkspaceRepository
         return ReadWorkspace(reader);
     }
 
-    private static void AddParameters(SqliteCommand cmd, AgentWorkspace workspace)
+    private static void AddParameters(DbCommand cmd, AgentWorkspace workspace)
     {
-        cmd.Parameters.AddWithValue("@id", workspace.Id.Trim());
-        cmd.Parameters.AddWithValue("@projectId", workspace.ProjectId.Trim());
-        cmd.Parameters.AddWithValue("@taskId", workspace.TaskId);
-        cmd.Parameters.AddWithValue("@branch", workspace.Branch.Trim());
-        cmd.Parameters.AddWithValue("@worktreePath", workspace.WorktreePath.Trim());
-        cmd.Parameters.AddWithValue("@baseBranch", workspace.BaseBranch.Trim());
-        cmd.Parameters.AddWithValue("@baseCommit", NullIfWhiteSpace(workspace.BaseCommit));
-        cmd.Parameters.AddWithValue("@headCommit", NullIfWhiteSpace(workspace.HeadCommit));
-        cmd.Parameters.AddWithValue("@state", workspace.State.ToDbValue());
-        cmd.Parameters.AddWithValue("@createdByRunId", NullIfWhiteSpace(workspace.CreatedByRunId));
-        cmd.Parameters.AddWithValue("@devServerUrl", NullIfWhiteSpace(workspace.DevServerUrl));
-        cmd.Parameters.AddWithValue("@previewUrl", NullIfWhiteSpace(workspace.PreviewUrl));
-        cmd.Parameters.AddWithValue("@cleanupPolicy", workspace.CleanupPolicy.ToDbValue());
-        cmd.Parameters.AddWithValue("@changedFileSummary", workspace.ChangedFileSummary is null
+        cmd.AddParameterWithValue("@id", workspace.Id.Trim());
+        cmd.AddParameterWithValue("@projectId", workspace.ProjectId.Trim());
+        cmd.AddParameterWithValue("@taskId", workspace.TaskId);
+        cmd.AddParameterWithValue("@branch", workspace.Branch.Trim());
+        cmd.AddParameterWithValue("@worktreePath", workspace.WorktreePath.Trim());
+        cmd.AddParameterWithValue("@baseBranch", workspace.BaseBranch.Trim());
+        cmd.AddParameterWithValue("@baseCommit", NullIfWhiteSpace(workspace.BaseCommit));
+        cmd.AddParameterWithValue("@headCommit", NullIfWhiteSpace(workspace.HeadCommit));
+        cmd.AddParameterWithValue("@state", workspace.State.ToDbValue());
+        cmd.AddParameterWithValue("@createdByRunId", NullIfWhiteSpace(workspace.CreatedByRunId));
+        cmd.AddParameterWithValue("@devServerUrl", NullIfWhiteSpace(workspace.DevServerUrl));
+        cmd.AddParameterWithValue("@previewUrl", NullIfWhiteSpace(workspace.PreviewUrl));
+        cmd.AddParameterWithValue("@cleanupPolicy", workspace.CleanupPolicy.ToDbValue());
+        cmd.AddParameterWithValue("@changedFileSummary", workspace.ChangedFileSummary is null
             ? DBNull.Value
             : JsonSerializer.Serialize(workspace.ChangedFileSummary.Value));
     }
 
     private static object NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
 
-    private static AgentWorkspace ReadWorkspace(SqliteDataReader reader) => new()
+    private static AgentWorkspace ReadWorkspace(DbDataReader reader) => new()
     {
         Id = reader.GetString(0),
         ProjectId = reader.GetString(1),

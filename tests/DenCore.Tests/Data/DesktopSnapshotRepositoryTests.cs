@@ -475,11 +475,11 @@ public class DesktopSnapshotRepositoryTests : IAsyncLifetime
             )
             RETURNING created_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", "proj");
-        cmd.Parameters.AddWithValue("@sourceInstanceId", "desktop-a");
-        cmd.Parameters.AddWithValue("@sessionId", "pty-default-created");
-        cmd.Parameters.AddWithValue("@eventType", "created");
-        cmd.Parameters.AddWithValue("@observedAt", _now.ToString("O"));
+        cmd.AddParameterWithValue("@projectId", "proj");
+        cmd.AddParameterWithValue("@sourceInstanceId", "desktop-a");
+        cmd.AddParameterWithValue("@sessionId", "pty-default-created");
+        cmd.AddParameterWithValue("@eventType", "created");
+        cmd.AddParameterWithValue("@observedAt", _now.ToString("O"));
 
         var createdAt = Assert.IsType<string>(await cmd.ExecuteScalarAsync());
         Assert.Contains('T', createdAt);

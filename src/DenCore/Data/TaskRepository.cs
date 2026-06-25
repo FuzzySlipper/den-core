@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 using TaskStatus = DenCore.Models.TaskStatus;
 
 namespace DenCore.Data;
@@ -37,14 +37,14 @@ public sealed class TaskRepository : ITaskRepository
             VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, @tags)
             RETURNING id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", task.ProjectId);
-        cmd.Parameters.AddWithValue("@parentId", (object?)task.ParentId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@title", task.Title);
-        cmd.Parameters.AddWithValue("@description", (object?)task.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", task.Status.ToDbValue());
-        cmd.Parameters.AddWithValue("@priority", task.Priority);
-        cmd.Parameters.AddWithValue("@assignedTo", (object?)task.AssignedTo ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@tags", task.Tags is { Count: > 0 } ? JsonSerializer.Serialize(task.Tags) : DBNull.Value);
+        cmd.AddParameterWithValue("@projectId", task.ProjectId);
+        cmd.AddParameterWithValue("@parentId", (object?)task.ParentId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@title", task.Title);
+        cmd.AddParameterWithValue("@description", (object?)task.Description ?? DBNull.Value);
+        cmd.AddParameterWithValue("@status", task.Status.ToDbValue());
+        cmd.AddParameterWithValue("@priority", task.Priority);
+        cmd.AddParameterWithValue("@assignedTo", (object?)task.AssignedTo ?? DBNull.Value);
+        cmd.AddParameterWithValue("@tags", task.Tags is { Count: > 0 } ? JsonSerializer.Serialize(task.Tags) : DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -57,8 +57,8 @@ public sealed class TaskRepository : ITaskRepository
             {
                 await using var depCmd = conn.CreateCommand();
                 depCmd.CommandText = "INSERT INTO task_dependencies (task_id, depends_on) VALUES (@taskId, @dependsOn)";
-                depCmd.Parameters.AddWithValue("@taskId", created.Id);
-                depCmd.Parameters.AddWithValue("@dependsOn", depId);
+                depCmd.AddParameterWithValue("@taskId", created.Id);
+                depCmd.AddParameterWithValue("@dependsOn", depId);
                 await depCmd.ExecuteNonQueryAsync();
             }
         }
@@ -72,7 +72,7 @@ public sealed class TaskRepository : ITaskRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at FROM tasks WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadTask(reader) : null;
@@ -85,7 +85,7 @@ public sealed class TaskRepository : ITaskRepository
         // Main task
         await using var taskCmd = conn.CreateCommand();
         taskCmd.CommandText = "SELECT id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at FROM tasks WHERE id = @id";
-        taskCmd.Parameters.AddWithValue("@id", id);
+        taskCmd.AddParameterWithValue("@id", id);
         await using var taskReader = await taskCmd.ExecuteReaderAsync();
         if (!await taskReader.ReadAsync())
             throw new KeyNotFoundException($"Task {id} not found");
@@ -100,7 +100,7 @@ public sealed class TaskRepository : ITaskRepository
             JOIN tasks t ON t.id = td.depends_on
             WHERE td.task_id = @id
             """;
-        depCmd.Parameters.AddWithValue("@id", id);
+        depCmd.AddParameterWithValue("@id", id);
         var deps = new List<TaskDependencyInfo>();
         await using var depReader = await depCmd.ExecuteReaderAsync();
         while (await depReader.ReadAsync())
@@ -123,7 +123,7 @@ public sealed class TaskRepository : ITaskRepository
                    (SELECT COUNT(*) FROM tasks WHERE parent_id = t.id) as sub_count
             FROM tasks t WHERE t.parent_id = @id ORDER BY t.priority, t.id
             """;
-        subCmd.Parameters.AddWithValue("@id", id);
+        subCmd.AddParameterWithValue("@id", id);
         var subtasks = new List<TaskSummary>();
         await using var subReader = await subCmd.ExecuteReaderAsync();
         while (await subReader.ReadAsync())
@@ -137,7 +137,7 @@ public sealed class TaskRepository : ITaskRepository
             FROM messages WHERE task_id = @id
             ORDER BY created_at DESC LIMIT 10
             """;
-        msgCmd.Parameters.AddWithValue("@id", id);
+        msgCmd.AddParameterWithValue("@id", id);
         var messages = new List<Message>();
         await using var msgReader = await msgCmd.ExecuteReaderAsync();
         while (await msgReader.ReadAsync())
@@ -157,7 +157,7 @@ public sealed class TaskRepository : ITaskRepository
             FROM review_rounds WHERE task_id = @id
             ORDER BY round_number ASC
             """;
-        reviewCmd.Parameters.AddWithValue("@id", id);
+        reviewCmd.AddParameterWithValue("@id", id);
         var reviewRounds = new List<ReviewRound>();
         await using var reviewReader = await reviewCmd.ExecuteReaderAsync();
         while (await reviewReader.ReadAsync())
@@ -177,7 +177,7 @@ public sealed class TaskRepository : ITaskRepository
             WHERE rf.task_id = @id
             ORDER BY rf.finding_number ASC
             """;
-        findingCmd.Parameters.AddWithValue("@id", id);
+        findingCmd.AddParameterWithValue("@id", id);
         var openReviewFindings = new List<ReviewFinding>();
         var resolvedReviewFindings = new List<ReviewFinding>();
         await using var findingReader = await findingCmd.ExecuteReaderAsync();
@@ -214,7 +214,7 @@ public sealed class TaskRepository : ITaskRepository
         // Main task
         await using var taskCmd = conn.CreateCommand();
         taskCmd.CommandText = "SELECT id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at FROM tasks WHERE id = @id";
-        taskCmd.Parameters.AddWithValue("@id", id);
+        taskCmd.AddParameterWithValue("@id", id);
         await using var taskReader = await taskCmd.ExecuteReaderAsync();
         if (!await taskReader.ReadAsync())
             throw new KeyNotFoundException($"Task {id} not found");
@@ -229,7 +229,7 @@ public sealed class TaskRepository : ITaskRepository
             JOIN tasks t ON t.id = td.depends_on
             WHERE td.task_id = @id
             """;
-        depCmd.Parameters.AddWithValue("@id", id);
+        depCmd.AddParameterWithValue("@id", id);
         var deps = new List<TaskDependencyInfo>();
         await using var depReader = await depCmd.ExecuteReaderAsync();
         while (await depReader.ReadAsync())
@@ -249,7 +249,7 @@ public sealed class TaskRepository : ITaskRepository
             SELECT t.id, t.title, t.status, t.priority
             FROM tasks t WHERE t.parent_id = @id ORDER BY t.priority, t.id
             """;
-        subCmd.Parameters.AddWithValue("@id", id);
+        subCmd.AddParameterWithValue("@id", id);
         var subtasks = new List<CompactSubtaskEntry>();
         await using var subReader = await subCmd.ExecuteReaderAsync();
         while (await subReader.ReadAsync())
@@ -271,7 +271,7 @@ public sealed class TaskRepository : ITaskRepository
             FROM messages WHERE task_id = @id
             ORDER BY created_at DESC LIMIT 10
             """;
-        msgCmd.Parameters.AddWithValue("@id", id);
+        msgCmd.AddParameterWithValue("@id", id);
         var messageHeaders = new List<CompactMessageHeader>();
         await using var msgReader = await msgCmd.ExecuteReaderAsync();
         while (await msgReader.ReadAsync())
@@ -326,7 +326,7 @@ public sealed class TaskRepository : ITaskRepository
             FROM review_rounds WHERE task_id = @id
             ORDER BY round_number ASC
             """;
-        reviewCmd.Parameters.AddWithValue("@id", id);
+        reviewCmd.AddParameterWithValue("@id", id);
         var reviewRounds = new List<ReviewRound>();
         await using var reviewReader = await reviewCmd.ExecuteReaderAsync();
         while (await reviewReader.ReadAsync())
@@ -346,7 +346,7 @@ public sealed class TaskRepository : ITaskRepository
             WHERE rf.task_id = @id
             ORDER BY rf.finding_number ASC
             """;
-        findingCmd.Parameters.AddWithValue("@id", id);
+        findingCmd.AddParameterWithValue("@id", id);
         var openFindings = new List<ReviewFinding>();
         var resolvedFindings = new List<ReviewFinding>();
         await using var findingReader = await findingCmd.ExecuteReaderAsync();
@@ -470,7 +470,7 @@ public sealed class TaskRepository : ITaskRepository
         await using var cmd = conn.CreateCommand();
 
         var where = new List<string> { "t.project_id = @projectId" };
-        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@projectId", projectId);
 
         if (statuses is { Length: > 0 })
         {
@@ -479,7 +479,7 @@ public sealed class TaskRepository : ITaskRepository
             {
                 var p = $"@status{i}";
                 placeholders.Add(p);
-                cmd.Parameters.AddWithValue(p, statuses[i].ToDbValue());
+                cmd.AddParameterWithValue(p, statuses[i].ToDbValue());
             }
             where.Add($"t.status IN ({string.Join(", ", placeholders)})");
         }
@@ -487,19 +487,19 @@ public sealed class TaskRepository : ITaskRepository
         if (assignedTo is not null)
         {
             where.Add("t.assigned_to = @assignedTo");
-            cmd.Parameters.AddWithValue("@assignedTo", assignedTo);
+            cmd.AddParameterWithValue("@assignedTo", assignedTo);
         }
 
         if (maxPriority is not null)
         {
             where.Add("t.priority <= @maxPriority");
-            cmd.Parameters.AddWithValue("@maxPriority", maxPriority.Value);
+            cmd.AddParameterWithValue("@maxPriority", maxPriority.Value);
         }
 
         if (parentId is not null)
         {
             where.Add("t.parent_id = @parentId");
-            cmd.Parameters.AddWithValue("@parentId", parentId.Value);
+            cmd.AddParameterWithValue("@parentId", parentId.Value);
         }
         else if (!includeAll)
         {
@@ -513,7 +513,7 @@ public sealed class TaskRepository : ITaskRepository
             {
                 var p = $"@tag{i}";
                 where.Add($"EXISTS (SELECT 1 FROM json_each(t.tags) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, tags[i]);
+                cmd.AddParameterWithValue(p, tags[i]);
             }
         }
 
@@ -564,7 +564,7 @@ public sealed class TaskRepository : ITaskRepository
 
             var p = $"@p{paramIdx++}";
             sets.Add($"{column} = {p}");
-            cmd.Parameters.AddWithValue(p, newDbVal ?? DBNull.Value);
+            cmd.AddParameterWithValue(p, newDbVal ?? DBNull.Value);
 
             // Write history
             await using var histCmd = conn.CreateCommand();
@@ -572,11 +572,11 @@ public sealed class TaskRepository : ITaskRepository
                 INSERT INTO task_history (task_id, field, old_value, new_value, changed_by)
                 VALUES (@taskId, @field, @oldValue, @newValue, @agent)
                 """;
-            histCmd.Parameters.AddWithValue("@taskId", id);
-            histCmd.Parameters.AddWithValue("@field", field);
-            histCmd.Parameters.AddWithValue("@oldValue", oldDbVal?.ToString() ?? (object)DBNull.Value);
-            histCmd.Parameters.AddWithValue("@newValue", newDbVal?.ToString() ?? (object)DBNull.Value);
-            histCmd.Parameters.AddWithValue("@agent", agent);
+            histCmd.AddParameterWithValue("@taskId", id);
+            histCmd.AddParameterWithValue("@field", field);
+            histCmd.AddParameterWithValue("@oldValue", oldDbVal?.ToString() ?? (object)DBNull.Value);
+            histCmd.AddParameterWithValue("@newValue", newDbVal?.ToString() ?? (object)DBNull.Value);
+            histCmd.AddParameterWithValue("@agent", agent);
             await histCmd.ExecuteNonQueryAsync();
         }
 
@@ -585,7 +585,7 @@ public sealed class TaskRepository : ITaskRepository
             UPDATE tasks SET {string.Join(", ", sets)} WHERE id = @id
             RETURNING id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -606,8 +606,8 @@ public sealed class TaskRepository : ITaskRepository
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT INTO task_dependencies (task_id, depends_on) VALUES (@taskId, @dependsOn)";
-        cmd.Parameters.AddWithValue("@taskId", taskId);
-        cmd.Parameters.AddWithValue("@dependsOn", dependsOn);
+        cmd.AddParameterWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@dependsOn", dependsOn);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -616,8 +616,8 @@ public sealed class TaskRepository : ITaskRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM task_dependencies WHERE task_id = @taskId AND depends_on = @dependsOn";
-        cmd.Parameters.AddWithValue("@taskId", taskId);
-        cmd.Parameters.AddWithValue("@dependsOn", dependsOn);
+        cmd.AddParameterWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@dependsOn", dependsOn);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -670,15 +670,15 @@ public sealed class TaskRepository : ITaskRepository
             LIMIT 1
             """;
 
-        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@projectId", projectId);
         if (assignedTo is not null)
-            cmd.Parameters.AddWithValue("@assignedTo", assignedTo);
+            cmd.AddParameterWithValue("@assignedTo", assignedTo);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadTask(reader) : null;
     }
 
-    private static async Task<bool> WouldCreateCycleAsync(SqliteConnection conn, int taskId, int dependsOn)
+    private static async Task<bool> WouldCreateCycleAsync(DbConnection conn, int taskId, int dependsOn)
     {
         // BFS from dependsOn through its dependencies. If we reach taskId, it's a cycle.
         var visited = new HashSet<int>();
@@ -695,7 +695,7 @@ public sealed class TaskRepository : ITaskRepository
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT depends_on FROM task_dependencies WHERE task_id = @id";
-            cmd.Parameters.AddWithValue("@id", current);
+            cmd.AddParameterWithValue("@id", current);
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
                 queue.Enqueue(reader.GetInt32(0));
@@ -704,16 +704,16 @@ public sealed class TaskRepository : ITaskRepository
         return false;
     }
 
-    private static async Task<ProjectTask?> GetByIdWithConnectionAsync(SqliteConnection conn, int id)
+    private static async Task<ProjectTask?> GetByIdWithConnectionAsync(DbConnection conn, int id)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at FROM tasks WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadTask(reader) : null;
     }
 
-    internal static ProjectTask ReadTask(SqliteDataReader reader)
+    internal static ProjectTask ReadTask(DbDataReader reader)
     {
         var tagsJson = reader.IsDBNull(8) ? null : reader.GetString(8);
         return new ProjectTask
@@ -732,7 +732,7 @@ public sealed class TaskRepository : ITaskRepository
         };
     }
 
-    private static TaskSummary ReadTaskSummary(SqliteDataReader reader)
+    private static TaskSummary ReadTaskSummary(DbDataReader reader)
     {
         var tagsJson = reader.IsDBNull(7) ? null : reader.GetString(7);
         var status = EnumExtensions.ParseTaskStatus(reader.GetString(3));
@@ -755,7 +755,7 @@ public sealed class TaskRepository : ITaskRepository
         };
     }
 
-    internal static Message ReadMessage(SqliteDataReader reader)
+    internal static Message ReadMessage(DbDataReader reader)
     {
         var metaJson = reader.IsDBNull(7) ? null : reader.GetString(7);
         return new Message

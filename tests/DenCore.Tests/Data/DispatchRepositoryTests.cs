@@ -51,8 +51,8 @@ public class DispatchRepositoryTests : IAsyncLifetime
             SET status = 'approved', decided_at = datetime('now'), decided_by = @decidedBy
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", dispatchId);
-        cmd.Parameters.AddWithValue("@decidedBy", decidedBy);
+        cmd.AddParameterWithValue("@id", dispatchId);
+        cmd.AddParameterWithValue("@decidedBy", decidedBy);
         await cmd.ExecuteNonQueryAsync();
     }
 

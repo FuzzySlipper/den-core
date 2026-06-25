@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -74,28 +74,28 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
                       inherited_commit_count, task_local_commit_count, verdict, verdict_by, verdict_notes,
                       requested_at, verdict_at
             """;
-        cmd.Parameters.AddWithValue("@taskId", input.TaskId);
-        cmd.Parameters.AddWithValue("@roundNumber", roundNumber);
-        cmd.Parameters.AddWithValue("@requestedBy", input.RequestedBy);
-        cmd.Parameters.AddWithValue("@branch", input.Branch);
-        cmd.Parameters.AddWithValue("@baseBranch", input.BaseBranch);
-        cmd.Parameters.AddWithValue("@baseCommit", input.BaseCommit);
-        cmd.Parameters.AddWithValue("@headCommit", input.HeadCommit);
-        cmd.Parameters.AddWithValue("@lastReviewedHeadCommit", (object?)lastReviewedHead ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@commitsSinceLastReview", (object?)input.CommitsSinceLastReview ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@testsRun", input.TestsRun is { Count: > 0 } ? JsonSerializer.Serialize(input.TestsRun) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@preferredDiffBaseRef", preferredDiffBaseRef);
-        cmd.Parameters.AddWithValue("@preferredDiffBaseCommit", preferredDiffBaseCommit);
-        cmd.Parameters.AddWithValue("@preferredDiffHeadRef", preferredDiffHeadRef);
-        cmd.Parameters.AddWithValue("@preferredDiffHeadCommit", preferredDiffHeadCommit);
-        cmd.Parameters.AddWithValue("@alternateDiffBaseRef", (object?)input.AlternateDiffBaseRef ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@alternateDiffBaseCommit", (object?)input.AlternateDiffBaseCommit ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@alternateDiffHeadRef", (object?)alternateDiffHeadRef ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@alternateDiffHeadCommit", (object?)alternateDiffHeadCommit ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@deltaBaseCommit", (object?)deltaBaseCommit ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@inheritedCommitCount", (object?)input.InheritedCommitCount ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskLocalCommitCount", (object?)input.TaskLocalCommitCount ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", input.TaskId);
+        cmd.AddParameterWithValue("@roundNumber", roundNumber);
+        cmd.AddParameterWithValue("@requestedBy", input.RequestedBy);
+        cmd.AddParameterWithValue("@branch", input.Branch);
+        cmd.AddParameterWithValue("@baseBranch", input.BaseBranch);
+        cmd.AddParameterWithValue("@baseCommit", input.BaseCommit);
+        cmd.AddParameterWithValue("@headCommit", input.HeadCommit);
+        cmd.AddParameterWithValue("@lastReviewedHeadCommit", (object?)lastReviewedHead ?? DBNull.Value);
+        cmd.AddParameterWithValue("@commitsSinceLastReview", (object?)input.CommitsSinceLastReview ?? DBNull.Value);
+        cmd.AddParameterWithValue("@testsRun", input.TestsRun is { Count: > 0 } ? JsonSerializer.Serialize(input.TestsRun) : DBNull.Value);
+        cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@preferredDiffBaseRef", preferredDiffBaseRef);
+        cmd.AddParameterWithValue("@preferredDiffBaseCommit", preferredDiffBaseCommit);
+        cmd.AddParameterWithValue("@preferredDiffHeadRef", preferredDiffHeadRef);
+        cmd.AddParameterWithValue("@preferredDiffHeadCommit", preferredDiffHeadCommit);
+        cmd.AddParameterWithValue("@alternateDiffBaseRef", (object?)input.AlternateDiffBaseRef ?? DBNull.Value);
+        cmd.AddParameterWithValue("@alternateDiffBaseCommit", (object?)input.AlternateDiffBaseCommit ?? DBNull.Value);
+        cmd.AddParameterWithValue("@alternateDiffHeadRef", (object?)alternateDiffHeadRef ?? DBNull.Value);
+        cmd.AddParameterWithValue("@alternateDiffHeadCommit", (object?)alternateDiffHeadCommit ?? DBNull.Value);
+        cmd.AddParameterWithValue("@deltaBaseCommit", (object?)deltaBaseCommit ?? DBNull.Value);
+        cmd.AddParameterWithValue("@inheritedCommitCount", (object?)input.InheritedCommitCount ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskLocalCommitCount", (object?)input.TaskLocalCommitCount ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -120,7 +120,7 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
                    requested_at, verdict_at
             FROM review_rounds WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadReviewRound(reader) : null;
@@ -142,7 +142,7 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
             WHERE task_id = @taskId
             ORDER BY round_number ASC
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
 
         var rounds = new List<ReviewRound>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -176,10 +176,10 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
                       inherited_commit_count, task_local_commit_count, verdict, verdict_by, verdict_notes,
                       requested_at, verdict_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@verdict", verdict.ToDbValue());
-        cmd.Parameters.AddWithValue("@verdictBy", decidedBy);
-        cmd.Parameters.AddWithValue("@verdictNotes", (object?)notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@verdict", verdict.ToDbValue());
+        cmd.AddParameterWithValue("@verdictBy", decidedBy);
+        cmd.AddParameterWithValue("@verdictNotes", (object?)notes ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -187,7 +187,7 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
         return ReadReviewRound(reader);
     }
 
-    private static async Task<ReviewRound?> GetLatestByTaskWithConnectionAsync(SqliteConnection conn, int taskId)
+    private static async Task<ReviewRound?> GetLatestByTaskWithConnectionAsync(DbConnection conn, int taskId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -203,13 +203,13 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
             ORDER BY round_number DESC
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadReviewRound(reader) : null;
     }
 
-    internal static ReviewRound ReadReviewRound(SqliteDataReader reader)
+    internal static ReviewRound ReadReviewRound(DbDataReader reader)
     {
         var testsRunJson = reader.IsDBNull(10) ? null : reader.GetString(10);
         var verdictValue = reader.IsDBNull(23) ? null : reader.GetString(23);

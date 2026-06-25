@@ -1,7 +1,7 @@
 using System.Globalization;
+using System.Data.Common;
 using System.Text.Json;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -72,7 +72,7 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<DesktopSessionEvent>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -81,33 +81,33 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
         return results;
     }
 
-    private string BuildWhere(SqliteCommand cmd, DesktopSessionEventListOptions options)
+    private string BuildWhere(DbCommand cmd, DesktopSessionEventListOptions options)
     {
         var where = new List<string>();
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId.Trim());
+            cmd.AddParameterWithValue("@projectId", options.ProjectId.Trim());
         }
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkspaceId))
         {
             where.Add("workspace_id = @workspaceId");
-            cmd.Parameters.AddWithValue("@workspaceId", options.WorkspaceId.Trim());
+            cmd.AddParameterWithValue("@workspaceId", options.WorkspaceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.SourceInstanceId))
         {
             where.Add("source_instance_id = @sourceInstanceId");
-            cmd.Parameters.AddWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
+            cmd.AddParameterWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.SessionId))
         {
             where.Add("session_id = @sessionId");
-            cmd.Parameters.AddWithValue("@sessionId", options.SessionId.Trim());
+            cmd.AddParameterWithValue("@sessionId", options.SessionId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.EventTypes))
         {
@@ -119,7 +119,7 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
                 {
                     var p = $"@eventType{i}";
                     typeParams.Add(p);
-                    cmd.Parameters.AddWithValue(p, types[i].Trim());
+                    cmd.AddParameterWithValue(p, types[i].Trim());
                 }
                 where.Add($"event_type IN ({string.Join(", ", typeParams)})");
             }
@@ -127,22 +127,22 @@ public sealed class DesktopSessionEventRepository : IDesktopSessionEventReposito
         return where.Count == 0 ? string.Empty : $"WHERE {string.Join(" AND ", where)}";
     }
 
-    private void AddParameters(SqliteCommand cmd, DesktopSessionEvent evt, DateTime now)
+    private void AddParameters(DbCommand cmd, DesktopSessionEvent evt, DateTime now)
     {
-        cmd.Parameters.AddWithValue("@projectId", (object?)evt.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)evt.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(evt.WorkspaceId));
-        cmd.Parameters.AddWithValue("@sourceInstanceId", evt.SourceInstanceId.Trim());
-        cmd.Parameters.AddWithValue("@sessionId", evt.SessionId.Trim());
-        cmd.Parameters.AddWithValue("@eventType", evt.EventType.Trim());
-        cmd.Parameters.AddWithValue("@payload", (object?)evt.Payload ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requestedBy", NullIfWhiteSpace(evt.RequestedBy));
-        cmd.Parameters.AddWithValue("@reason", NullIfWhiteSpace(evt.Reason));
-        cmd.Parameters.AddWithValue("@observedAt", ToDbTime(evt.ObservedAt));
-        cmd.Parameters.AddWithValue("@createdAt", ToDbTime(now));
+        cmd.AddParameterWithValue("@projectId", (object?)evt.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)evt.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workspaceId", NullIfWhiteSpace(evt.WorkspaceId));
+        cmd.AddParameterWithValue("@sourceInstanceId", evt.SourceInstanceId.Trim());
+        cmd.AddParameterWithValue("@sessionId", evt.SessionId.Trim());
+        cmd.AddParameterWithValue("@eventType", evt.EventType.Trim());
+        cmd.AddParameterWithValue("@payload", (object?)evt.Payload ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requestedBy", NullIfWhiteSpace(evt.RequestedBy));
+        cmd.AddParameterWithValue("@reason", NullIfWhiteSpace(evt.Reason));
+        cmd.AddParameterWithValue("@observedAt", ToDbTime(evt.ObservedAt));
+        cmd.AddParameterWithValue("@createdAt", ToDbTime(now));
     }
 
-    private static DesktopSessionEvent ReadEvent(SqliteDataReader reader) => new()
+    private static DesktopSessionEvent ReadEvent(DbDataReader reader) => new()
     {
         Id = reader.GetInt64(0),
         ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),

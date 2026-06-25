@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -45,16 +45,16 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
                       status_updated_by, status_notes, status_updated_at, response_by,
                       response_notes, response_at, follow_up_task_id, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@findingKey", findingKey);
-        cmd.Parameters.AddWithValue("@taskId", round.TaskId);
-        cmd.Parameters.AddWithValue("@reviewRoundId", input.ReviewRoundId);
-        cmd.Parameters.AddWithValue("@findingNumber", findingNumber);
-        cmd.Parameters.AddWithValue("@createdBy", input.CreatedBy);
-        cmd.Parameters.AddWithValue("@category", input.Category.ToDbValue());
-        cmd.Parameters.AddWithValue("@summary", input.Summary);
-        cmd.Parameters.AddWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@fileReferences", SerializeList(input.FileReferences));
-        cmd.Parameters.AddWithValue("@testCommands", SerializeList(input.TestCommands));
+        cmd.AddParameterWithValue("@findingKey", findingKey);
+        cmd.AddParameterWithValue("@taskId", round.TaskId);
+        cmd.AddParameterWithValue("@reviewRoundId", input.ReviewRoundId);
+        cmd.AddParameterWithValue("@findingNumber", findingNumber);
+        cmd.AddParameterWithValue("@createdBy", input.CreatedBy);
+        cmd.AddParameterWithValue("@category", input.Category.ToDbValue());
+        cmd.AddParameterWithValue("@summary", input.Summary);
+        cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@fileReferences", SerializeList(input.FileReferences));
+        cmd.AddParameterWithValue("@testCommands", SerializeList(input.TestCommands));
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -70,7 +70,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = CreateSelectCommand(conn);
         cmd.CommandText += " WHERE rf.id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadReviewFinding(reader) : null;
@@ -81,7 +81,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = CreateSelectCommand(conn);
         cmd.CommandText += " WHERE rf.task_id = @taskId";
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         AppendStatusFilter(cmd, statuses);
         cmd.CommandText += " ORDER BY rf.finding_number ASC";
 
@@ -93,7 +93,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = CreateSelectCommand(conn);
         cmd.CommandText += " WHERE rf.review_round_id = @reviewRoundId";
-        cmd.Parameters.AddWithValue("@reviewRoundId", reviewRoundId);
+        cmd.AddParameterWithValue("@reviewRoundId", reviewRoundId);
         AppendStatusFilter(cmd, statuses);
         cmd.CommandText += " ORDER BY rf.finding_number ASC";
 
@@ -137,13 +137,13 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
                       response_notes, response_at, follow_up_task_id, created_at, updated_at,
                       (SELECT round_number FROM review_rounds WHERE id = review_round_id) AS round_number
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@responseBy", input.RespondedBy);
-        cmd.Parameters.AddWithValue("@responseNotes", (object?)input.ResponseNotes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", input.Status is not null ? input.Status.Value.ToDbValue() : DBNull.Value);
-        cmd.Parameters.AddWithValue("@statusNotes", (object?)input.StatusNotes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@followUpTaskId", (object?)input.FollowUpTaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@splitStatus", ReviewFindingStatus.SplitToFollowUp.ToDbValue());
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@responseBy", input.RespondedBy);
+        cmd.AddParameterWithValue("@responseNotes", (object?)input.ResponseNotes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@status", input.Status is not null ? input.Status.Value.ToDbValue() : DBNull.Value);
+        cmd.AddParameterWithValue("@statusNotes", (object?)input.StatusNotes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@followUpTaskId", (object?)input.FollowUpTaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@splitStatus", ReviewFindingStatus.SplitToFollowUp.ToDbValue());
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -175,12 +175,12 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
                       response_notes, response_at, follow_up_task_id, created_at, updated_at,
                       (SELECT round_number FROM review_rounds WHERE id = review_round_id) AS round_number
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@status", input.Status.ToDbValue());
-        cmd.Parameters.AddWithValue("@updatedBy", input.UpdatedBy);
-        cmd.Parameters.AddWithValue("@statusNotes", (object?)input.Notes ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@followUpTaskId", (object?)input.FollowUpTaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@splitStatus", ReviewFindingStatus.SplitToFollowUp.ToDbValue());
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@status", input.Status.ToDbValue());
+        cmd.AddParameterWithValue("@updatedBy", input.UpdatedBy);
+        cmd.AddParameterWithValue("@statusNotes", (object?)input.Notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@followUpTaskId", (object?)input.FollowUpTaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@splitStatus", ReviewFindingStatus.SplitToFollowUp.ToDbValue());
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -197,7 +197,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
             throw new InvalidOperationException("follow_up_task_id can only be supplied when status is split_to_follow_up.");
     }
 
-    private static async Task<int> GetNextFindingNumberAsync(SqliteConnection conn, int taskId)
+    private static async Task<int> GetNextFindingNumberAsync(DbConnection conn, int taskId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -205,12 +205,12 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
             FROM review_findings
             WHERE task_id = @taskId
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         var max = (long)(await cmd.ExecuteScalarAsync())!;
         return (int)max + 1;
     }
 
-    private static async Task<(int TaskId, int RoundNumber)?> GetRoundContextAsync(SqliteConnection conn, int reviewRoundId)
+    private static async Task<(int TaskId, int RoundNumber)?> GetRoundContextAsync(DbConnection conn, int reviewRoundId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -218,7 +218,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
             FROM review_rounds
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", reviewRoundId);
+        cmd.AddParameterWithValue("@id", reviewRoundId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -227,7 +227,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         return (reader.GetInt32(0), reader.GetInt32(1));
     }
 
-    private static SqliteCommand CreateSelectCommand(SqliteConnection conn)
+    private static DbCommand CreateSelectCommand(DbConnection conn)
     {
         var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -242,7 +242,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         return cmd;
     }
 
-    private static void AppendStatusFilter(SqliteCommand cmd, ReviewFindingStatus[]? statuses)
+    private static void AppendStatusFilter(DbCommand cmd, ReviewFindingStatus[]? statuses)
     {
         if (statuses is not { Length: > 0 })
             return;
@@ -252,13 +252,13 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
         {
             var parameterName = $"@status{i}";
             placeholders.Add(parameterName);
-            cmd.Parameters.AddWithValue(parameterName, statuses[i].ToDbValue());
+            cmd.AddParameterWithValue(parameterName, statuses[i].ToDbValue());
         }
 
         cmd.CommandText += $" AND rf.status IN ({string.Join(", ", placeholders)})";
     }
 
-    private static async Task<List<ReviewFinding>> ReadFindingsAsync(SqliteCommand cmd)
+    private static async Task<List<ReviewFinding>> ReadFindingsAsync(DbCommand cmd)
     {
         var findings = new List<ReviewFinding>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -270,7 +270,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
     private static object SerializeList(List<string>? values) =>
         values is { Count: > 0 } ? JsonSerializer.Serialize(values) : DBNull.Value;
 
-    internal static ReviewFinding ReadReviewFinding(SqliteDataReader reader, int? roundNumberOverride = null)
+    internal static ReviewFinding ReadReviewFinding(DbDataReader reader, int? roundNumberOverride = null)
     {
         var fileReferencesJson = reader.IsDBNull(9) ? null : reader.GetString(9);
         var testCommandsJson = reader.IsDBNull(10) ? null : reader.GetString(10);

@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
@@ -11,7 +12,7 @@ public sealed class DbConnectionFactory
         _connectionString = connectionString;
     }
 
-    public async Task<SqliteConnection> CreateConnectionAsync()
+    public async Task<DbConnection> CreateConnectionAsync()
     {
         var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync();

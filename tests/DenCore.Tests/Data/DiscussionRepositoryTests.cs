@@ -370,7 +370,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             SET status = 'bogus'
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", thread.Id);
+        cmd.AddParameterWithValue("@id", thread.Id);
         var ex = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -463,7 +463,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             INSERT INTO discussion_comments (thread_id, author_identity, body_markdown, comment_kind)
             VALUES (@threadId, 'agent', 'test', 'invalid_kind')
             """;
-        cmd.Parameters.AddWithValue("@threadId", thread.Id);
+        cmd.AddParameterWithValue("@threadId", thread.Id);
         var ex = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);

@@ -1,5 +1,5 @@
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 
 namespace DenCore.Data;
 
@@ -35,10 +35,10 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
                 metadata = COALESCE(@metadata, agent_sessions.metadata)
             RETURNING agent, project_id, session_id, status, checked_in_at, last_heartbeat, metadata
             """;
-        cmd.Parameters.AddWithValue("@agent", agent);
-        cmd.Parameters.AddWithValue("@projectId", (object?)projectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sessionId", (object?)sessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadata", (object?)metadata ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agent", agent);
+        cmd.AddParameterWithValue("@projectId", (object?)projectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sessionId", (object?)sessionId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@metadata", (object?)metadata ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -56,8 +56,8 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
               AND ((@projectId IS NULL AND project_id IS NULL) OR project_id = @projectId)
               AND status = 'active'
             """;
-        cmd.Parameters.AddWithValue("@agent", agent);
-        cmd.Parameters.AddWithValue("@projectId", (object?)projectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agent", agent);
+        cmd.AddParameterWithValue("@projectId", (object?)projectId ?? DBNull.Value);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -72,8 +72,8 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
               AND ((@projectId IS NULL AND project_id IS NULL) OR project_id = @projectId)
               AND status = 'active'
             """;
-        cmd.Parameters.AddWithValue("@agent", agent);
-        cmd.Parameters.AddWithValue("@projectId", (object?)projectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agent", agent);
+        cmd.AddParameterWithValue("@projectId", (object?)projectId ?? DBNull.Value);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -86,7 +86,7 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
             SET status = 'inactive', last_heartbeat = datetime('now')
             WHERE session_id = @sessionId AND status = 'active'
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -101,7 +101,7 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
         if (projectId is not null)
         {
             where += " AND project_id = @projectId";
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         cmd.CommandText = $"""
@@ -128,11 +128,11 @@ public sealed class AgentSessionRepository : IAgentSessionRepository
             WHERE status = 'active'
               AND last_heartbeat < datetime('now', @timeout)
             """;
-        cmd.Parameters.AddWithValue("@timeout", $"-{timeoutMinutes} minutes");
+        cmd.AddParameterWithValue("@timeout", $"-{timeoutMinutes} minutes");
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    private static AgentSession ReadSession(SqliteDataReader reader) => new()
+    private static AgentSession ReadSession(DbDataReader reader) => new()
     {
         Agent = reader.GetString(0),
         ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),

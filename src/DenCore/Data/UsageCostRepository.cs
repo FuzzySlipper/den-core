@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -196,8 +196,8 @@ public sealed class UsageCostRepository : IUsageCostRepository
             """;
 
         foreach (var (name, value) in parameters)
-            cmd.Parameters.AddWithValue(name, value);
-        cmd.Parameters.AddWithValue("@limit", options.Limit);
+            cmd.AddParameterWithValue(name, value);
+        cmd.AddParameterWithValue("@limit", options.Limit);
 
         var results = new List<ModelUsageEvent>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -225,7 +225,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
             FROM usage_events
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -249,12 +249,12 @@ public sealed class UsageCostRepository : IUsageCostRepository
             SELECT last_insert_rowid();
             """;
 
-        cmd.Parameters.AddWithValue("@label", snapshot.SnapshotLabel);
-        cmd.Parameters.AddWithValue("@version", snapshot.SnapshotVersion);
-        cmd.Parameters.AddWithValue("@effectiveAt", (object?)snapshot.EffectiveAt ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@entriesJson", snapshot.EntriesJson);
-        cmd.Parameters.AddWithValue("@createdBy", (object?)snapshot.CreatedBy ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@notes", (object?)snapshot.Notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@label", snapshot.SnapshotLabel);
+        cmd.AddParameterWithValue("@version", snapshot.SnapshotVersion);
+        cmd.AddParameterWithValue("@effectiveAt", (object?)snapshot.EffectiveAt ?? DBNull.Value);
+        cmd.AddParameterWithValue("@entriesJson", snapshot.EntriesJson);
+        cmd.AddParameterWithValue("@createdBy", (object?)snapshot.CreatedBy ?? DBNull.Value);
+        cmd.AddParameterWithValue("@notes", (object?)snapshot.Notes ?? DBNull.Value);
 
         var id = (long)(await cmd.ExecuteScalarAsync())!;
         snapshot.Id = (int)id;
@@ -270,7 +270,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
             SELECT id, snapshot_label, snapshot_version, effective_at, entries_json, created_by, notes, created_at
             FROM pricing_snapshots WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -303,7 +303,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
             SELECT id, snapshot_label, snapshot_version, effective_at, entries_json, created_by, notes, created_at
             FROM pricing_snapshots ORDER BY id DESC LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@limit", limit);
 
         var results = new List<PricingSnapshot>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -404,8 +404,8 @@ public sealed class UsageCostRepository : IUsageCostRepository
             """;
 
         foreach (var (name, value) in parameters)
-            cmd.Parameters.AddWithValue(name, value);
-        cmd.Parameters.AddWithValue("@limit", options.Limit);
+            cmd.AddParameterWithValue(name, value);
+        cmd.AddParameterWithValue("@limit", options.Limit);
 
         var report = new UsageCostReport
         {
@@ -492,7 +492,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
                 FROM usage_events {where}
                 """;
             foreach (var (name, value) in parameters)
-                totCmd.Parameters.AddWithValue(name, value);
+                totCmd.AddParameterWithValue(name, value);
 
             await using var totReader = await totCmd.ExecuteReaderAsync();
             if (await totReader.ReadAsync())
@@ -543,13 +543,13 @@ public sealed class UsageCostRepository : IUsageCostRepository
     }
 
     private static async Task<PricingEntry?> ResolvePricingInTxAsync(
-        SqliteConnection conn, int pricingSnapshotId, string provider, string model)
+        DbConnection conn, int pricingSnapshotId, string provider, string model)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT entries_json FROM pricing_snapshots WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", pricingSnapshotId);
+        cmd.AddParameterWithValue("@id", pricingSnapshotId);
 
         var json = (string?)await cmd.ExecuteScalarAsync();
         if (json is null) return null;
@@ -635,43 +635,43 @@ public sealed class UsageCostRepository : IUsageCostRepository
         return hasAnyData ? cost : null;
     }
 
-    private static void BindEventParams(SqliteCommand cmd, ModelUsageEvent e)
+    private static void BindEventParams(DbCommand cmd, ModelUsageEvent e)
     {
-        cmd.Parameters.AddWithValue("@occurredAt", e.OccurredAt);
-        cmd.Parameters.AddWithValue("@projectId", e.ProjectId);
-        cmd.Parameters.AddWithValue("@taskId", (object?)e.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@assignmentId", (object?)e.AssignmentId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@runId", (object?)e.RunId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sessionId", (object?)e.SessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@agentIdentity", (object?)e.AgentIdentity ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@profileIdentity", (object?)e.ProfileIdentity ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workerRole", (object?)e.WorkerRole ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workerIdentity", (object?)e.WorkerIdentity ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@operationKind", e.OperationKind);
-        cmd.Parameters.AddWithValue("@provider", e.Provider);
-        cmd.Parameters.AddWithValue("@model", e.Model);
-        cmd.Parameters.AddWithValue("@modelAlias", (object?)e.ModelAlias ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@resolvedModel", (object?)e.ResolvedModel ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@endpointKind", (object?)e.EndpointKind ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@inputTokens", (object?)e.InputTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputTokens", (object?)e.OutputTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@cacheReadTokens", (object?)e.CacheReadTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@cacheWriteTokens", (object?)e.CacheWriteTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@reasoningTokens", (object?)e.ReasoningTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@toolResultTokens", (object?)e.ToolResultTokens ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requestCount", e.RequestCount);
-        cmd.Parameters.AddWithValue("@retryCount", e.RetryCount);
-        cmd.Parameters.AddWithValue("@streaming", e.Streaming ? 1 : 0);
-        cmd.Parameters.AddWithValue("@errorKind", (object?)e.ErrorKind ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@pricingSnapshotId", (object?)e.PricingSnapshotId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@approximateCostMicroCents", (object?)e.ApproximateCostMicroCents ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@provenance", (object?)e.Provenance ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@adapterVersion", (object?)e.AdapterVersion ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@rawUsageSource", (object?)e.RawUsageSource ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requestIdHint", (object?)e.RequestIdHint ?? DBNull.Value);
+        cmd.AddParameterWithValue("@occurredAt", e.OccurredAt);
+        cmd.AddParameterWithValue("@projectId", e.ProjectId);
+        cmd.AddParameterWithValue("@taskId", (object?)e.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@assignmentId", (object?)e.AssignmentId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@runId", (object?)e.RunId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sessionId", (object?)e.SessionId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agentIdentity", (object?)e.AgentIdentity ?? DBNull.Value);
+        cmd.AddParameterWithValue("@profileIdentity", (object?)e.ProfileIdentity ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workerRole", (object?)e.WorkerRole ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workerIdentity", (object?)e.WorkerIdentity ?? DBNull.Value);
+        cmd.AddParameterWithValue("@operationKind", e.OperationKind);
+        cmd.AddParameterWithValue("@provider", e.Provider);
+        cmd.AddParameterWithValue("@model", e.Model);
+        cmd.AddParameterWithValue("@modelAlias", (object?)e.ModelAlias ?? DBNull.Value);
+        cmd.AddParameterWithValue("@resolvedModel", (object?)e.ResolvedModel ?? DBNull.Value);
+        cmd.AddParameterWithValue("@endpointKind", (object?)e.EndpointKind ?? DBNull.Value);
+        cmd.AddParameterWithValue("@inputTokens", (object?)e.InputTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputTokens", (object?)e.OutputTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@cacheReadTokens", (object?)e.CacheReadTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@cacheWriteTokens", (object?)e.CacheWriteTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@reasoningTokens", (object?)e.ReasoningTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@toolResultTokens", (object?)e.ToolResultTokens ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requestCount", e.RequestCount);
+        cmd.AddParameterWithValue("@retryCount", e.RetryCount);
+        cmd.AddParameterWithValue("@streaming", e.Streaming ? 1 : 0);
+        cmd.AddParameterWithValue("@errorKind", (object?)e.ErrorKind ?? DBNull.Value);
+        cmd.AddParameterWithValue("@pricingSnapshotId", (object?)e.PricingSnapshotId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@approximateCostMicroCents", (object?)e.ApproximateCostMicroCents ?? DBNull.Value);
+        cmd.AddParameterWithValue("@provenance", (object?)e.Provenance ?? DBNull.Value);
+        cmd.AddParameterWithValue("@adapterVersion", (object?)e.AdapterVersion ?? DBNull.Value);
+        cmd.AddParameterWithValue("@rawUsageSource", (object?)e.RawUsageSource ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requestIdHint", (object?)e.RequestIdHint ?? DBNull.Value);
     }
 
-    private static ModelUsageEvent MapEvent(SqliteDataReader reader)
+    private static ModelUsageEvent MapEvent(DbDataReader reader)
     {
         return new ModelUsageEvent
         {
@@ -712,7 +712,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
         };
     }
 
-    private static PricingSnapshot MapSnapshot(SqliteDataReader reader)
+    private static PricingSnapshot MapSnapshot(DbDataReader reader)
     {
         return new PricingSnapshot
         {

@@ -1,8 +1,8 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Service.Routes;
 
@@ -300,15 +300,16 @@ public static class DirectDeliveryContractRoutes
             checks["database"] = new DirectDeliveryReadinessCheck
             {
                 Status = "ready",
-                Message = "SQLite database is reachable."
+                Message = "Core database is reachable."
             };
         }
-        catch (SqliteException)
+        catch (DbException ex)
         {
             checks["database"] = new DirectDeliveryReadinessCheck
             {
                 Status = "blocked",
-                Message = "SQLite database is not reachable."
+                Message = "Core database is not reachable.",
+                Metadata = new Dictionary<string, object?> { ["provider_exception"] = ex.GetType().Name }
             };
             checks["direct_delivery_contract"] = new DirectDeliveryReadinessCheck
             {

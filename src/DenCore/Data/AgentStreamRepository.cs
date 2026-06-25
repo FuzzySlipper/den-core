@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
 using Microsoft.Data.Sqlite;
 
@@ -120,7 +121,7 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
             FROM agent_stream_entries
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadEntry(reader) : null;
@@ -138,7 +139,7 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
         for (var i = 0; i < ids.Count; i++)
         {
             paramNames[i] = $"@id{i}";
-            cmd.Parameters.AddWithValue(paramNames[i], ids[i]);
+            cmd.AddParameterWithValue(paramNames[i], ids[i]);
         }
 
         cmd.CommandText = $"""
@@ -188,67 +189,67 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
 
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
 
         if (options.DispatchId is not null)
         {
             where.Add("dispatch_id = @dispatchId");
-            cmd.Parameters.AddWithValue("@dispatchId", options.DispatchId.Value);
+            cmd.AddParameterWithValue("@dispatchId", options.DispatchId.Value);
         }
 
         if (options.StreamKind is not null)
         {
             where.Add("stream_kind = @streamKind");
-            cmd.Parameters.AddWithValue("@streamKind", options.StreamKind.Value.ToDbValue());
+            cmd.AddParameterWithValue("@streamKind", options.StreamKind.Value.ToDbValue());
         }
 
         if (!string.IsNullOrWhiteSpace(options.EventType))
         {
             where.Add("event_type = @eventType");
-            cmd.Parameters.AddWithValue("@eventType", options.EventType);
+            cmd.AddParameterWithValue("@eventType", options.EventType);
         }
 
         if (!string.IsNullOrWhiteSpace(options.Sender))
         {
             where.Add("sender = @sender");
-            cmd.Parameters.AddWithValue("@sender", options.Sender);
+            cmd.AddParameterWithValue("@sender", options.Sender);
         }
 
         if (!string.IsNullOrWhiteSpace(options.SenderInstanceId))
         {
             where.Add("sender_instance_id = @senderInstanceId");
-            cmd.Parameters.AddWithValue("@senderInstanceId", options.SenderInstanceId);
+            cmd.AddParameterWithValue("@senderInstanceId", options.SenderInstanceId);
         }
 
         if (!string.IsNullOrWhiteSpace(options.RecipientAgent))
         {
             where.Add("recipient_agent = @recipientAgent");
-            cmd.Parameters.AddWithValue("@recipientAgent", options.RecipientAgent);
+            cmd.AddParameterWithValue("@recipientAgent", options.RecipientAgent);
         }
 
         if (!string.IsNullOrWhiteSpace(options.RecipientRole))
         {
             where.Add("recipient_role = @recipientRole");
-            cmd.Parameters.AddWithValue("@recipientRole", options.RecipientRole);
+            cmd.AddParameterWithValue("@recipientRole", options.RecipientRole);
         }
 
         if (!string.IsNullOrWhiteSpace(options.RecipientInstanceId))
         {
             where.Add("recipient_instance_id = @recipientInstanceId");
-            cmd.Parameters.AddWithValue("@recipientInstanceId", options.RecipientInstanceId);
+            cmd.AddParameterWithValue("@recipientInstanceId", options.RecipientInstanceId);
         }
 
         if (!string.IsNullOrWhiteSpace(options.MetadataRunId))
         {
             where.Add("json_extract(metadata, '$.run_id') = @metadataRunId");
-            cmd.Parameters.AddWithValue("@metadataRunId", options.MetadataRunId);
+            cmd.AddParameterWithValue("@metadataRunId", options.MetadataRunId);
         }
 
         if (!options.IncludeDebug)
@@ -281,7 +282,7 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@limit", limit);
 
         var entries = new List<AgentStreamEntry>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -291,27 +292,27 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
         return entries;
     }
 
-    private static void AddParameters(SqliteCommand cmd, AgentStreamEntry entry)
+    private static void AddParameters(DbCommand cmd, AgentStreamEntry entry)
     {
-        cmd.Parameters.AddWithValue("@streamKind", entry.StreamKind.ToDbValue());
-        cmd.Parameters.AddWithValue("@eventType", entry.EventType);
-        cmd.Parameters.AddWithValue("@projectId", (object?)entry.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)entry.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@threadId", (object?)entry.ThreadId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@dispatchId", (object?)entry.DispatchId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sender", entry.Sender);
-        cmd.Parameters.AddWithValue("@senderInstanceId", (object?)entry.SenderInstanceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@recipientAgent", (object?)entry.RecipientAgent ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@recipientRole", (object?)entry.RecipientRole ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@recipientInstanceId", (object?)entry.RecipientInstanceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@deliveryMode", entry.DeliveryMode.ToDbValue());
-        cmd.Parameters.AddWithValue("@body", (object?)entry.Body ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadata",
+        cmd.AddParameterWithValue("@streamKind", entry.StreamKind.ToDbValue());
+        cmd.AddParameterWithValue("@eventType", entry.EventType);
+        cmd.AddParameterWithValue("@projectId", (object?)entry.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)entry.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@threadId", (object?)entry.ThreadId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@dispatchId", (object?)entry.DispatchId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sender", entry.Sender);
+        cmd.AddParameterWithValue("@senderInstanceId", (object?)entry.SenderInstanceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@recipientAgent", (object?)entry.RecipientAgent ?? DBNull.Value);
+        cmd.AddParameterWithValue("@recipientRole", (object?)entry.RecipientRole ?? DBNull.Value);
+        cmd.AddParameterWithValue("@recipientInstanceId", (object?)entry.RecipientInstanceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@deliveryMode", entry.DeliveryMode.ToDbValue());
+        cmd.AddParameterWithValue("@body", (object?)entry.Body ?? DBNull.Value);
+        cmd.AddParameterWithValue("@metadata",
             entry.Metadata.HasValue ? entry.Metadata.Value.GetRawText() : DBNull.Value);
-        cmd.Parameters.AddWithValue("@dedupKey", (object?)entry.DedupKey ?? DBNull.Value);
+        cmd.AddParameterWithValue("@dedupKey", (object?)entry.DedupKey ?? DBNull.Value);
     }
 
-    private static async Task<AgentStreamEntry?> GetByDedupKeyAsync(SqliteConnection conn, string dedupKey)
+    private static async Task<AgentStreamEntry?> GetByDedupKeyAsync(DbConnection conn, string dedupKey)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -338,13 +339,13 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
             ORDER BY id ASC
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@dedupKey", dedupKey);
+        cmd.AddParameterWithValue("@dedupKey", dedupKey);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadEntry(reader) : null;
     }
 
-    private static AgentStreamEntry ReadEntry(SqliteDataReader reader)
+    private static AgentStreamEntry ReadEntry(DbDataReader reader)
     {
         var metadataJson = reader.IsDBNull(14) ? null : reader.GetString(14);
         return new AgentStreamEntry

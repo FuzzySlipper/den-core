@@ -126,8 +126,8 @@ public sealed class BlackboardRepositoryTests : IClassFixture<TestDb>
         await using var conn = await _db.Db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE blackboard_entries SET last_accessed_at = @lastAccessed WHERE slug = @slug";
-        cmd.Parameters.AddWithValue("@slug", slug);
-        cmd.Parameters.AddWithValue("@lastAccessed", value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.AddParameterWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@lastAccessed", value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         await cmd.ExecuteNonQueryAsync();
     }
 }

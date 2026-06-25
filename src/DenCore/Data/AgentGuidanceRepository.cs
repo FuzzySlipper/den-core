@@ -1,7 +1,7 @@
 using System.Text;
+using System.Data.Common;
 using System.Text.Json;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -68,7 +68,7 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
             where = includeGlobal && projectId != "_global"
                 ? "WHERE project_id IN ('_global', @projectId)"
                 : "WHERE project_id = @projectId";
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         cmd.CommandText = $"""
@@ -98,9 +98,9 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
         cmd.CommandText = projectId is null
             ? "DELETE FROM agent_guidance_entries WHERE id = @id"
             : "DELETE FROM agent_guidance_entries WHERE id = @id AND project_id = @projectId";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
         if (projectId is not null)
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -129,7 +129,7 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
                 g.document_slug ASC,
                 g.id ASC
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@projectId", projectId);
 
         var items = new List<AgentGuidanceEntryWithDocument>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -166,19 +166,19 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
         };
     }
 
-    private static void AddEntryParameters(SqliteCommand cmd, AgentGuidanceEntry entry)
+    private static void AddEntryParameters(DbCommand cmd, AgentGuidanceEntry entry)
     {
-        cmd.Parameters.AddWithValue("@projectId", entry.ProjectId);
-        cmd.Parameters.AddWithValue("@documentProjectId", entry.DocumentProjectId);
-        cmd.Parameters.AddWithValue("@documentSlug", entry.DocumentSlug);
-        cmd.Parameters.AddWithValue("@importance", entry.Importance.ToDbValue());
-        cmd.Parameters.AddWithValue("@audience",
+        cmd.AddParameterWithValue("@projectId", entry.ProjectId);
+        cmd.AddParameterWithValue("@documentProjectId", entry.DocumentProjectId);
+        cmd.AddParameterWithValue("@documentSlug", entry.DocumentSlug);
+        cmd.AddParameterWithValue("@importance", entry.Importance.ToDbValue());
+        cmd.AddParameterWithValue("@audience",
             entry.Audience is { Count: > 0 } ? JsonSerializer.Serialize(entry.Audience) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@sortOrder", entry.SortOrder);
-        cmd.Parameters.AddWithValue("@notes", (object?)entry.Notes ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sortOrder", entry.SortOrder);
+        cmd.AddParameterWithValue("@notes", (object?)entry.Notes ?? DBNull.Value);
     }
 
-    private static AgentGuidanceEntry ReadEntry(SqliteDataReader reader, int offset = 0)
+    private static AgentGuidanceEntry ReadEntry(DbDataReader reader, int offset = 0)
     {
         var audienceJson = reader.IsDBNull(offset + 5) ? null : reader.GetString(offset + 5);
         return new AgentGuidanceEntry
@@ -196,7 +196,7 @@ public sealed class AgentGuidanceRepository : IAgentGuidanceRepository
         };
     }
 
-    private static Document ReadDocument(SqliteDataReader reader, int offset)
+    private static Document ReadDocument(DbDataReader reader, int offset)
     {
         var tagsJson = reader.IsDBNull(offset + 7) ? null : reader.GetString(offset + 7);
         return new Document

@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -125,15 +125,15 @@ public sealed class DiscussionRepository : IDiscussionRepository
                       summary, resolution_summary, metadata_json, last_comment_at,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@targetType", "document");
-        cmd.Parameters.AddWithValue("@targetProjectId", projectId);
-        cmd.Parameters.AddWithValue("@targetSlug", slug);
-        cmd.Parameters.AddWithValue("@threadKey", threadKey);
-        cmd.Parameters.AddWithValue("@title", title);
-        cmd.Parameters.AddWithValue("@status", DiscussionThreadStatus.Open);
-        cmd.Parameters.AddWithValue("@createdBy", createdBy);
-        cmd.Parameters.AddWithValue("@summary", summary ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@targetType", "document");
+        cmd.AddParameterWithValue("@targetProjectId", projectId);
+        cmd.AddParameterWithValue("@targetSlug", slug);
+        cmd.AddParameterWithValue("@threadKey", threadKey);
+        cmd.AddParameterWithValue("@title", title);
+        cmd.AddParameterWithValue("@status", DiscussionThreadStatus.Open);
+        cmd.AddParameterWithValue("@createdBy", createdBy);
+        cmd.AddParameterWithValue("@summary", summary ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -158,8 +158,8 @@ public sealed class DiscussionRepository : IDiscussionRepository
               AND target_slug = @targetSlug
               AND thread_key = 'default'
             """;
-        cmd.Parameters.AddWithValue("@targetProjectId", projectId);
-        cmd.Parameters.AddWithValue("@targetSlug", slug);
+        cmd.AddParameterWithValue("@targetProjectId", projectId);
+        cmd.AddParameterWithValue("@targetSlug", slug);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -182,7 +182,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
             FROM discussion_threads
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", threadId);
+        cmd.AddParameterWithValue("@id", threadId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadThread(reader) : null;
@@ -203,13 +203,13 @@ public sealed class DiscussionRepository : IDiscussionRepository
               AND target_project_id = @targetProjectId
               AND target_slug = @targetSlug
             """;
-        cmd.Parameters.AddWithValue("@targetProjectId", projectId);
-        cmd.Parameters.AddWithValue("@targetSlug", slug);
+        cmd.AddParameterWithValue("@targetProjectId", projectId);
+        cmd.AddParameterWithValue("@targetSlug", slug);
 
         if (status is not null)
         {
             sql += " AND status = @status\n";
-            cmd.Parameters.AddWithValue("@status", status);
+            cmd.AddParameterWithValue("@status", status);
         }
 
         sql += " ORDER BY updated_at DESC\n";
@@ -243,12 +243,12 @@ public sealed class DiscussionRepository : IDiscussionRepository
                       summary, resolution_summary, metadata_json, last_comment_at,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", thread.Id);
-        cmd.Parameters.AddWithValue("@status", thread.Status);
-        cmd.Parameters.AddWithValue("@title", thread.Title ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@summary", thread.Summary ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@resolutionSummary", thread.ResolutionSummary ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", thread.MetadataJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@id", thread.Id);
+        cmd.AddParameterWithValue("@status", thread.Status);
+        cmd.AddParameterWithValue("@title", thread.Title ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@summary", thread.Summary ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@resolutionSummary", thread.ResolutionSummary ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", thread.MetadataJson ?? (object)DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -291,14 +291,14 @@ public sealed class DiscussionRepository : IDiscussionRepository
                       comment_kind, status, mentions_json, source_refs_json, metadata_json,
                       created_at, edited_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@threadId", threadId);
-        cmd.Parameters.AddWithValue("@authorIdentity", authorIdentity);
-        cmd.Parameters.AddWithValue("@bodyMarkdown", bodyMarkdown);
-        cmd.Parameters.AddWithValue("@commentKind", kind);
-        cmd.Parameters.AddWithValue("@status", DiscussionCommentStatus.Active);
-        cmd.Parameters.AddWithValue("@mentionsJson", mentionsJson ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@sourceRefsJson", sourceRefsJson ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@threadId", threadId);
+        cmd.AddParameterWithValue("@authorIdentity", authorIdentity);
+        cmd.AddParameterWithValue("@bodyMarkdown", bodyMarkdown);
+        cmd.AddParameterWithValue("@commentKind", kind);
+        cmd.AddParameterWithValue("@status", DiscussionCommentStatus.Active);
+        cmd.AddParameterWithValue("@mentionsJson", mentionsJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@sourceRefsJson", sourceRefsJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -355,15 +355,15 @@ public sealed class DiscussionRepository : IDiscussionRepository
                       comment_kind, status, mentions_json, source_refs_json, metadata_json,
                       created_at, edited_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@threadId", threadId);
-        cmd.Parameters.AddWithValue("@parentCommentId", parentCommentId);
-        cmd.Parameters.AddWithValue("@authorIdentity", authorIdentity);
-        cmd.Parameters.AddWithValue("@bodyMarkdown", bodyMarkdown);
-        cmd.Parameters.AddWithValue("@commentKind", kind);
-        cmd.Parameters.AddWithValue("@status", DiscussionCommentStatus.Active);
-        cmd.Parameters.AddWithValue("@mentionsJson", mentionsJson ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@sourceRefsJson", sourceRefsJson ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@threadId", threadId);
+        cmd.AddParameterWithValue("@parentCommentId", parentCommentId);
+        cmd.AddParameterWithValue("@authorIdentity", authorIdentity);
+        cmd.AddParameterWithValue("@bodyMarkdown", bodyMarkdown);
+        cmd.AddParameterWithValue("@commentKind", kind);
+        cmd.AddParameterWithValue("@status", DiscussionCommentStatus.Active);
+        cmd.AddParameterWithValue("@mentionsJson", mentionsJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@sourceRefsJson", sourceRefsJson ?? (object)DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", metadataJson ?? (object)DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -387,7 +387,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
             WHERE thread_id = @threadId
             ORDER BY created_at ASC, id ASC
             """;
-        cmd.Parameters.AddWithValue("@threadId", threadId);
+        cmd.AddParameterWithValue("@threadId", threadId);
 
         var results = new List<DiscussionCommentSummary>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -420,7 +420,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
 
     // ---- Internal helpers ----
 
-    private static async Task<DiscussionThread?> GetThreadByIdInternalAsync(SqliteConnection conn, int threadId)
+    private static async Task<DiscussionThread?> GetThreadByIdInternalAsync(DbConnection conn, int threadId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -431,12 +431,12 @@ public sealed class DiscussionRepository : IDiscussionRepository
             FROM discussion_threads
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", threadId);
+        cmd.AddParameterWithValue("@id", threadId);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadThread(reader) : null;
     }
 
-    private static async Task<DiscussionComment?> GetCommentByIdInternalAsync(SqliteConnection conn, int commentId)
+    private static async Task<DiscussionComment?> GetCommentByIdInternalAsync(DbConnection conn, int commentId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -446,12 +446,12 @@ public sealed class DiscussionRepository : IDiscussionRepository
             FROM discussion_comments
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", commentId);
+        cmd.AddParameterWithValue("@id", commentId);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadComment(reader) : null;
     }
 
-    private static async Task TouchThreadLastCommentAsync(SqliteConnection conn, int threadId)
+    private static async Task TouchThreadLastCommentAsync(DbConnection conn, int threadId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -459,11 +459,11 @@ public sealed class DiscussionRepository : IDiscussionRepository
             SET last_comment_at = datetime('now'), updated_at = datetime('now')
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", threadId);
+        cmd.AddParameterWithValue("@id", threadId);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static DiscussionThread ReadThread(SqliteDataReader reader)
+    private static DiscussionThread ReadThread(DbDataReader reader)
     {
         return new DiscussionThread
         {
@@ -486,7 +486,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
         };
     }
 
-    private static DiscussionComment ReadComment(SqliteDataReader reader)
+    private static DiscussionComment ReadComment(DbDataReader reader)
     {
         return new DiscussionComment
         {

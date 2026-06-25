@@ -1,6 +1,6 @@
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Tests.Data;
 
@@ -22,7 +22,7 @@ public class InfrastructureNullableProjectIdTests : IAsyncLifetime
 
     public Task DisposeAsync() => _testDb.DisposeAsync();
 
-    private async Task<SqliteConnection> OpenConnectionAsync()
+    private async Task<DbConnection> OpenConnectionAsync()
         => await _testDb.Db.CreateConnectionAsync();
 
     // ── RED phase tests: these should FAIL because NOT NULL is still in the schema ──

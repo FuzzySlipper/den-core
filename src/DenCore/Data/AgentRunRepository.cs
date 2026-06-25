@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -63,13 +63,13 @@ public sealed class AgentRunRepository : IAgentRunRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
 
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
 
         AddStateFilter(where, cmd, options.State);
@@ -85,7 +85,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
                 run_id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 50));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 50));
 
         var records = new List<AgentRunRecord>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -94,7 +94,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
         return records;
     }
 
-    private async Task<AgentRunRecord?> RebuildFromStreamAsync(SqliteConnection conn, string runId)
+    private async Task<AgentRunRecord?> RebuildFromStreamAsync(DbConnection conn, string runId)
     {
         var events = await LoadRunEventsAsync(conn, runId);
         if (events.Count == 0)
@@ -268,7 +268,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
         UpdatedAt = source.UpdatedAt
     };
 
-    private static async Task<List<RunStreamEvent>> LoadRunEventsAsync(SqliteConnection conn, string runId)
+    private static async Task<List<RunStreamEvent>> LoadRunEventsAsync(DbConnection conn, string runId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -286,7 +286,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
               AND json_extract(metadata, '$.run_id') = @runId
             ORDER BY id ASC
             """;
-        cmd.Parameters.AddWithValue("@runId", runId);
+        cmd.AddParameterWithValue("@runId", runId);
 
         var events = new List<RunStreamEvent>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -306,7 +306,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
         return events;
     }
 
-    private static async Task SaveAsync(SqliteConnection conn, AgentRunRecord record)
+    private static async Task SaveAsync(DbConnection conn, AgentRunRecord record)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -438,51 +438,51 @@ public sealed class AgentRunRepository : IAgentRunRepository
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static void AddParameters(SqliteCommand cmd, AgentRunRecord record)
+    private static void AddParameters(DbCommand cmd, AgentRunRecord record)
     {
-        cmd.Parameters.AddWithValue("@runId", record.RunId);
-        cmd.Parameters.AddWithValue("@projectId", (object?)record.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)record.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@reviewRoundId", (object?)record.ReviewRoundId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workspaceId", (object?)record.WorkspaceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@role", (object?)record.Role ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@backend", (object?)record.Backend ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@model", (object?)record.Model ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@senderInstanceId", (object?)record.SenderInstanceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@state", record.State);
-        cmd.Parameters.AddWithValue("@startedAt", DateDb(record.StartedAt));
-        cmd.Parameters.AddWithValue("@endedAt", DateDb(record.EndedAt));
-        cmd.Parameters.AddWithValue("@durationMs", (object?)record.DurationMs ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@pid", (object?)record.Pid ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@exitCode", (object?)record.ExitCode ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@signal", (object?)record.Signal ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@timeoutKind", (object?)record.TimeoutKind ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputStatus", (object?)record.OutputStatus ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@infrastructureFailureReason", (object?)record.InfrastructureFailureReason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@infrastructureWarningReason", (object?)record.InfrastructureWarningReason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@artifactDir", (object?)record.ArtifactDir ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@stdoutJsonlPath", (object?)record.StdoutJsonlPath ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@stderrLogPath", (object?)record.StderrLogPath ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@statusJsonPath", (object?)record.StatusJsonPath ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@eventsJsonlPath", (object?)record.EventsJsonlPath ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@rerunOfRunId", (object?)record.RerunOfRunId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@fallbackModel", (object?)record.FallbackModel ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@fallbackFromModel", (object?)record.FallbackFromModel ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@fallbackFromExitCode", (object?)record.FallbackFromExitCode ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@latestStreamEntryId", (object?)record.LatestStreamEntryId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@startedStreamEntryId", (object?)record.StartedStreamEntryId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@heartbeatCount", record.HeartbeatCount);
-        cmd.Parameters.AddWithValue("@assistantOutputCount", record.AssistantOutputCount);
-        cmd.Parameters.AddWithValue("@eventCount", record.EventCount);
-        cmd.Parameters.AddWithValue("@rawWorkEventCount", record.RawWorkEventCount);
-        cmd.Parameters.AddWithValue("@operatorEventsJson", (object?)record.OperatorEventsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@lastHeartbeatAt", DateDb(record.LastHeartbeatAt));
-        cmd.Parameters.AddWithValue("@lastAssistantOutputAt", DateDb(record.LastAssistantOutputAt));
-        cmd.Parameters.AddWithValue("@createdAt", DateDb(record.CreatedAt));
-        cmd.Parameters.AddWithValue("@updatedAt", DateDb(record.UpdatedAt));
+        cmd.AddParameterWithValue("@runId", record.RunId);
+        cmd.AddParameterWithValue("@projectId", (object?)record.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)record.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@reviewRoundId", (object?)record.ReviewRoundId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workspaceId", (object?)record.WorkspaceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@role", (object?)record.Role ?? DBNull.Value);
+        cmd.AddParameterWithValue("@backend", (object?)record.Backend ?? DBNull.Value);
+        cmd.AddParameterWithValue("@model", (object?)record.Model ?? DBNull.Value);
+        cmd.AddParameterWithValue("@senderInstanceId", (object?)record.SenderInstanceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@state", record.State);
+        cmd.AddParameterWithValue("@startedAt", DateDb(record.StartedAt));
+        cmd.AddParameterWithValue("@endedAt", DateDb(record.EndedAt));
+        cmd.AddParameterWithValue("@durationMs", (object?)record.DurationMs ?? DBNull.Value);
+        cmd.AddParameterWithValue("@pid", (object?)record.Pid ?? DBNull.Value);
+        cmd.AddParameterWithValue("@exitCode", (object?)record.ExitCode ?? DBNull.Value);
+        cmd.AddParameterWithValue("@signal", (object?)record.Signal ?? DBNull.Value);
+        cmd.AddParameterWithValue("@timeoutKind", (object?)record.TimeoutKind ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputStatus", (object?)record.OutputStatus ?? DBNull.Value);
+        cmd.AddParameterWithValue("@infrastructureFailureReason", (object?)record.InfrastructureFailureReason ?? DBNull.Value);
+        cmd.AddParameterWithValue("@infrastructureWarningReason", (object?)record.InfrastructureWarningReason ?? DBNull.Value);
+        cmd.AddParameterWithValue("@artifactDir", (object?)record.ArtifactDir ?? DBNull.Value);
+        cmd.AddParameterWithValue("@stdoutJsonlPath", (object?)record.StdoutJsonlPath ?? DBNull.Value);
+        cmd.AddParameterWithValue("@stderrLogPath", (object?)record.StderrLogPath ?? DBNull.Value);
+        cmd.AddParameterWithValue("@statusJsonPath", (object?)record.StatusJsonPath ?? DBNull.Value);
+        cmd.AddParameterWithValue("@eventsJsonlPath", (object?)record.EventsJsonlPath ?? DBNull.Value);
+        cmd.AddParameterWithValue("@rerunOfRunId", (object?)record.RerunOfRunId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@fallbackModel", (object?)record.FallbackModel ?? DBNull.Value);
+        cmd.AddParameterWithValue("@fallbackFromModel", (object?)record.FallbackFromModel ?? DBNull.Value);
+        cmd.AddParameterWithValue("@fallbackFromExitCode", (object?)record.FallbackFromExitCode ?? DBNull.Value);
+        cmd.AddParameterWithValue("@latestStreamEntryId", (object?)record.LatestStreamEntryId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@startedStreamEntryId", (object?)record.StartedStreamEntryId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@heartbeatCount", record.HeartbeatCount);
+        cmd.AddParameterWithValue("@assistantOutputCount", record.AssistantOutputCount);
+        cmd.AddParameterWithValue("@eventCount", record.EventCount);
+        cmd.AddParameterWithValue("@rawWorkEventCount", record.RawWorkEventCount);
+        cmd.AddParameterWithValue("@operatorEventsJson", (object?)record.OperatorEventsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@lastHeartbeatAt", DateDb(record.LastHeartbeatAt));
+        cmd.AddParameterWithValue("@lastAssistantOutputAt", DateDb(record.LastAssistantOutputAt));
+        cmd.AddParameterWithValue("@createdAt", DateDb(record.CreatedAt));
+        cmd.AddParameterWithValue("@updatedAt", DateDb(record.UpdatedAt));
     }
 
-    private static async Task<AgentRunRecord?> GetByRunIdAsync(SqliteConnection conn, string runId)
+    private static async Task<AgentRunRecord?> GetByRunIdAsync(DbConnection conn, string runId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -490,13 +490,13 @@ public sealed class AgentRunRepository : IAgentRunRepository
             FROM agent_runs
             WHERE run_id = @runId
             """;
-        cmd.Parameters.AddWithValue("@runId", runId);
+        cmd.AddParameterWithValue("@runId", runId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadRecord(reader) : null;
     }
 
-    private static AgentRunRecord ReadRecord(SqliteDataReader reader) => new()
+    private static AgentRunRecord ReadRecord(DbDataReader reader) => new()
     {
         RunId = reader.GetString(0),
         ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),
@@ -549,7 +549,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
         return MatchesStateFilter(record.State, options.State);
     }
 
-    private static void AddStateFilter(List<string> where, SqliteCommand cmd, string? filter)
+    private static void AddStateFilter(List<string> where, DbCommand cmd, string? filter)
     {
         if (string.IsNullOrWhiteSpace(filter) || filter.Equals("all", StringComparison.OrdinalIgnoreCase))
             return;
@@ -567,7 +567,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
                 break;
             default:
                 where.Add("state = @state");
-                cmd.Parameters.AddWithValue("@state", filter.ToLowerInvariant());
+                cmd.AddParameterWithValue("@state", filter.ToLowerInvariant());
                 break;
         }
     }

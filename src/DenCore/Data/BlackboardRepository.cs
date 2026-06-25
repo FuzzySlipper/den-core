@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -40,12 +40,12 @@ public sealed class BlackboardRepository : IBlackboardRepository
                 updated_at = @now
             RETURNING id, slug, title, content, tags, idle_ttl_seconds, created_at, updated_at, last_accessed_at
             """;
-        cmd.Parameters.AddWithValue("@slug", entry.Slug);
-        cmd.Parameters.AddWithValue("@title", entry.Title);
-        cmd.Parameters.AddWithValue("@content", entry.Content);
-        cmd.Parameters.AddWithValue("@tags", entry.Tags is { Count: > 0 } ? JsonSerializer.Serialize(entry.Tags) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@idleTtlSeconds", entry.IdleTtlSeconds is not null ? entry.IdleTtlSeconds.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@now", ToDbString(now));
+        cmd.AddParameterWithValue("@slug", entry.Slug);
+        cmd.AddParameterWithValue("@title", entry.Title);
+        cmd.AddParameterWithValue("@content", entry.Content);
+        cmd.AddParameterWithValue("@tags", entry.Tags is { Count: > 0 } ? JsonSerializer.Serialize(entry.Tags) : DBNull.Value);
+        cmd.AddParameterWithValue("@idleTtlSeconds", entry.IdleTtlSeconds is not null ? entry.IdleTtlSeconds.Value : DBNull.Value);
+        cmd.AddParameterWithValue("@now", ToDbString(now));
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -65,8 +65,8 @@ public sealed class BlackboardRepository : IBlackboardRepository
             WHERE slug = @slug
             RETURNING id, slug, title, content, tags, idle_ttl_seconds, created_at, updated_at, last_accessed_at
             """;
-        cmd.Parameters.AddWithValue("@slug", slug);
-        cmd.Parameters.AddWithValue("@now", ToDbString(now));
+        cmd.AddParameterWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@now", ToDbString(now));
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadEntry(reader) : null;
@@ -85,7 +85,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
             {
                 var p = $"@tag{i}";
                 where.Add($"EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, tags[i]);
+                cmd.AddParameterWithValue(p, tags[i]);
             }
         }
 
@@ -119,7 +119,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM blackboard_entries WHERE slug = @slug";
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@slug", slug);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -129,7 +129,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
         return await DeleteExpiredAsync(conn);
     }
 
-    private static async Task<int> DeleteExpiredAsync(SqliteConnection conn)
+    private static async Task<int> DeleteExpiredAsync(DbConnection conn)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -137,11 +137,11 @@ public sealed class BlackboardRepository : IBlackboardRepository
             WHERE idle_ttl_seconds IS NOT NULL
               AND datetime(last_accessed_at, '+' || idle_ttl_seconds || ' seconds') <= @now
             """;
-        cmd.Parameters.AddWithValue("@now", ToDbString(DateTime.UtcNow));
+        cmd.AddParameterWithValue("@now", ToDbString(DateTime.UtcNow));
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    private static async Task TouchIdleTtlEntriesAsync(SqliteConnection conn, IEnumerable<string> slugs, DateTime touchedAt)
+    private static async Task TouchIdleTtlEntriesAsync(DbConnection conn, IEnumerable<string> slugs, DateTime touchedAt)
     {
         var slugList = slugs.Distinct(StringComparer.Ordinal).ToList();
         if (slugList.Count == 0) return;
@@ -152,7 +152,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
         {
             var p = $"@slug{i}";
             parameters.Add(p);
-            cmd.Parameters.AddWithValue(p, slugList[i]);
+            cmd.AddParameterWithValue(p, slugList[i]);
         }
 
         cmd.CommandText = $"""
@@ -160,7 +160,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
             SET last_accessed_at = @now
             WHERE idle_ttl_seconds IS NOT NULL AND slug IN ({string.Join(", ", parameters)})
             """;
-        cmd.Parameters.AddWithValue("@now", ToDbString(touchedAt));
+        cmd.AddParameterWithValue("@now", ToDbString(touchedAt));
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -170,7 +170,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
             throw new ArgumentException("Idle TTL must be a positive number of seconds when provided.", nameof(idleTtlSeconds));
     }
 
-    private static BlackboardEntry ReadEntry(SqliteDataReader reader)
+    private static BlackboardEntry ReadEntry(DbDataReader reader)
     {
         var tagsJson = reader.IsDBNull(4) ? null : reader.GetString(4);
         return new BlackboardEntry
@@ -187,7 +187,7 @@ public sealed class BlackboardRepository : IBlackboardRepository
         };
     }
 
-    private static BlackboardEntrySummary ReadSummary(SqliteDataReader reader)
+    private static BlackboardEntrySummary ReadSummary(DbDataReader reader)
     {
         var tagsJson = reader.IsDBNull(3) ? null : reader.GetString(3);
         return new BlackboardEntrySummary

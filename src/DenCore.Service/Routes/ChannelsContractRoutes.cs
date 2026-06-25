@@ -1,7 +1,7 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Service.Routes;
 
@@ -266,13 +266,13 @@ public static class ChannelsContractRoutes
             "id > @after",
             "(COALESCE(json_extract(metadata, '$.event_visibility'), '') <> 'debug' AND event_type NOT LIKE 'subagent_work_%')"
         };
-        cmd.Parameters.AddWithValue("@after", after);
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@after", after);
+        cmd.AddParameterWithValue("@limit", limit);
 
         if (!string.IsNullOrWhiteSpace(projectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         cmd.CommandText = $"""

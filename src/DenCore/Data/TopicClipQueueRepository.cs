@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -100,13 +100,13 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
                       owning_space, canonical_topic_slugs, raw_content, status, claim_key, claimed_at,
                       claim_expires_at, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@sourceAgent", sourceAgent);
-        cmd.Parameters.AddWithValue("@sourceSessionId", (object?)sourceSessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sourceConversationId", (object?)sourceConversationId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sourceMessageId", (object?)sourceMessageId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@owningSpace", (object?)owningSpace ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@canonicalTopicSlugs", JsonSerializer.Serialize(canonicalSlugs));
-        cmd.Parameters.AddWithValue("@rawContent", rawContent);
+        cmd.AddParameterWithValue("@sourceAgent", sourceAgent);
+        cmd.AddParameterWithValue("@sourceSessionId", (object?)sourceSessionId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sourceConversationId", (object?)sourceConversationId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sourceMessageId", (object?)sourceMessageId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@owningSpace", (object?)owningSpace ?? DBNull.Value);
+        cmd.AddParameterWithValue("@canonicalTopicSlugs", JsonSerializer.Serialize(canonicalSlugs));
+        cmd.AddParameterWithValue("@rawContent", rawContent);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -134,23 +134,23 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
         if (status is not null)
         {
             conditions.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", status);
+            cmd.AddParameterWithValue("@status", status);
         }
         if (owningSpace is not null)
         {
             conditions.Add("owning_space = @owningSpace");
-            cmd.Parameters.AddWithValue("@owningSpace", owningSpace);
+            cmd.AddParameterWithValue("@owningSpace", owningSpace);
         }
         if (claimKey is not null)
         {
             conditions.Add("claim_key = @claimKey");
-            cmd.Parameters.AddWithValue("@claimKey", claimKey);
+            cmd.AddParameterWithValue("@claimKey", claimKey);
         }
 
         var whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
         var limitClause = limit is not null ? "LIMIT @limit" : "";
         if (limit is not null)
-            cmd.Parameters.AddWithValue("@limit", limit.Value);
+            cmd.AddParameterWithValue("@limit", limit.Value);
 
         cmd.CommandText = $"""
             SELECT id, source_agent, source_session_id, source_conversation_id, source_message_id,
@@ -183,12 +183,12 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
 
         // Find pending items to claim
         await using var selectCmd = conn.CreateCommand();
-        selectCmd.Transaction = (SqliteTransaction)tx;
+        selectCmd.Transaction = (DbTransaction)tx;
         var conditions = new List<string> { "status = 'pending'" };
         if (owningSpace is not null)
         {
             conditions.Add("owning_space = @owningSpace");
-            selectCmd.Parameters.AddWithValue("@owningSpace", owningSpace);
+            selectCmd.AddParameterWithValue("@owningSpace", owningSpace);
         }
         var whereClause = "WHERE " + string.Join(" AND ", conditions);
         selectCmd.CommandText = $"""
@@ -197,7 +197,7 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
             ORDER BY created_at ASC
             LIMIT @batchSize
             """;
-        selectCmd.Parameters.AddWithValue("@batchSize", batchSize);
+        selectCmd.AddParameterWithValue("@batchSize", batchSize);
 
         var ids = new List<int>();
         await using (var reader = await selectCmd.ExecuteReaderAsync())
@@ -214,13 +214,13 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
 
         // Update claimed items
         await using var updateCmd = conn.CreateCommand();
-        updateCmd.Transaction = (SqliteTransaction)tx;
+        updateCmd.Transaction = (DbTransaction)tx;
         var idParams = string.Join(",", ids.Select((_, i) => $"@id{i}"));
         for (var i = 0; i < ids.Count; i++)
-            updateCmd.Parameters.AddWithValue($"@id{i}", ids[i]);
-        updateCmd.Parameters.AddWithValue("@claimKey", claimKey);
-        updateCmd.Parameters.AddWithValue("@claimedAt", now.ToString("O"));
-        updateCmd.Parameters.AddWithValue("@claimExpiresAt", expiresAt.ToString("O"));
+            updateCmd.AddParameterWithValue($"@id{i}", ids[i]);
+        updateCmd.AddParameterWithValue("@claimKey", claimKey);
+        updateCmd.AddParameterWithValue("@claimedAt", now.ToString("O"));
+        updateCmd.AddParameterWithValue("@claimExpiresAt", expiresAt.ToString("O"));
         updateCmd.CommandText = $"""
             UPDATE topic_clip_queue_items
             SET status = 'claimed',
@@ -296,9 +296,9 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
         {
             // Check current status and lock the row
             await using var checkCmd = conn.CreateCommand();
-            checkCmd.Transaction = (SqliteTransaction)tx;
+            checkCmd.Transaction = (DbTransaction)tx;
             checkCmd.CommandText = "SELECT status FROM topic_clip_queue_items WHERE id = @id";
-            checkCmd.Parameters.AddWithValue("@id", id);
+            checkCmd.AddParameterWithValue("@id", id);
             var currentStatus = await checkCmd.ExecuteScalarAsync();
 
             if (currentStatus is null)
@@ -315,29 +315,29 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
             }
 
             await using var updateCmd = conn.CreateCommand();
-            updateCmd.Transaction = (SqliteTransaction)tx;
+            updateCmd.Transaction = (DbTransaction)tx;
             updateCmd.CommandText = """
                 UPDATE topic_clip_queue_items
                 SET status = @newStatus,
                     updated_at = datetime('now')
                 WHERE id = @id
                 """;
-            updateCmd.Parameters.AddWithValue("@newStatus", newStatus);
-            updateCmd.Parameters.AddWithValue("@id", id);
+            updateCmd.AddParameterWithValue("@newStatus", newStatus);
+            updateCmd.AddParameterWithValue("@id", id);
             await updateCmd.ExecuteNonQueryAsync();
             updatedIds.Add(id);
 
             // Record audit decision
             await using var decisionCmd = conn.CreateCommand();
-            decisionCmd.Transaction = (SqliteTransaction)tx;
+            decisionCmd.Transaction = (DbTransaction)tx;
             decisionCmd.CommandText = """
                 INSERT INTO curation_decisions (clip_id, decision, reason, decided_by)
                 VALUES (@clipId, @decision, @reason, @decidedBy)
                 """;
-            decisionCmd.Parameters.AddWithValue("@clipId", id);
-            decisionCmd.Parameters.AddWithValue("@decision", newStatus);
-            decisionCmd.Parameters.AddWithValue("@reason", (object?)reason ?? DBNull.Value);
-            decisionCmd.Parameters.AddWithValue("@decidedBy", decidedBy);
+            decisionCmd.AddParameterWithValue("@clipId", id);
+            decisionCmd.AddParameterWithValue("@decision", newStatus);
+            decisionCmd.AddParameterWithValue("@reason", (object?)reason ?? DBNull.Value);
+            decisionCmd.AddParameterWithValue("@decidedBy", decidedBy);
             await decisionCmd.ExecuteNonQueryAsync();
         }
 
@@ -361,13 +361,13 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
         if (clipId is not null)
         {
             conditions.Add("clip_id = @clipId");
-            cmd.Parameters.AddWithValue("@clipId", clipId.Value);
+            cmd.AddParameterWithValue("@clipId", clipId.Value);
         }
 
         var whereClause = conditions.Count > 0 ? "WHERE " + string.Join(" AND ", conditions) : "";
         var limitClause = limit is not null ? "LIMIT @limit" : "";
         if (limit is not null)
-            cmd.Parameters.AddWithValue("@limit", limit.Value);
+            cmd.AddParameterWithValue("@limit", limit.Value);
 
         cmd.CommandText = $"""
             SELECT id, clip_id, decision, reason, decided_by, decided_at
@@ -405,7 +405,7 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
               AND updated_at < @cutoff
               AND raw_content != '[REDACTED]'
             """;
-        cmd.Parameters.AddWithValue("@cutoff", cutoff.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.AddParameterWithValue("@cutoff", cutoff.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss"));
         var count = await cmd.ExecuteNonQueryAsync();
 
         return new TopicClipCleanupResult
@@ -415,7 +415,7 @@ public sealed class TopicClipQueueRepository : ITopicClipQueueRepository
         };
     }
 
-    private static TopicClipQueueItem ReadItem(SqliteDataReader reader)
+    private static TopicClipQueueItem ReadItem(DbDataReader reader)
     {
         var slugsJson = reader.GetString(6);
         return new TopicClipQueueItem

@@ -348,8 +348,8 @@ public class MessageRepositoryTests : IAsyncLifetime
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE messages SET created_at = @createdAt WHERE id = @id";
-            cmd.Parameters.AddWithValue("@createdAt", "2026-06-08 12:00:00");
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParameterWithValue("@createdAt", "2026-06-08 12:00:00");
+            cmd.AddParameterWithValue("@id", id);
             await cmd.ExecuteNonQueryAsync();
         }
     }

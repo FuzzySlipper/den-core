@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
 using Microsoft.Data.Sqlite;
 
@@ -32,12 +33,12 @@ public sealed class TopicRepository : ITopicRepository
             VALUES (@slug, @displayName, @description, @aliases, @status, @owningSpace)
             RETURNING id, slug, display_name, description, aliases, status, owning_space, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@slug", topic.Slug);
-        cmd.Parameters.AddWithValue("@displayName", topic.DisplayName);
-        cmd.Parameters.AddWithValue("@description", (object?)topic.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@aliases", topic.Aliases is { Count: > 0 } ? JsonSerializer.Serialize(topic.Aliases) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", topic.Status);
-        cmd.Parameters.AddWithValue("@owningSpace", (object?)topic.OwningSpace ?? DBNull.Value);
+        cmd.AddParameterWithValue("@slug", topic.Slug);
+        cmd.AddParameterWithValue("@displayName", topic.DisplayName);
+        cmd.AddParameterWithValue("@description", (object?)topic.Description ?? DBNull.Value);
+        cmd.AddParameterWithValue("@aliases", topic.Aliases is { Count: > 0 } ? JsonSerializer.Serialize(topic.Aliases) : DBNull.Value);
+        cmd.AddParameterWithValue("@status", topic.Status);
+        cmd.AddParameterWithValue("@owningSpace", (object?)topic.OwningSpace ?? DBNull.Value);
 
         try
         {
@@ -62,7 +63,7 @@ public sealed class TopicRepository : ITopicRepository
             SELECT id, slug, display_name, description, aliases, status, owning_space, created_at, updated_at
             FROM consolidation_topics WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadTopic(reader) : null;
@@ -76,7 +77,7 @@ public sealed class TopicRepository : ITopicRepository
             SELECT id, slug, display_name, description, aliases, status, owning_space, created_at, updated_at
             FROM consolidation_topics WHERE slug = @slug
             """;
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@slug", slug);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadTopic(reader) : null;
@@ -91,7 +92,7 @@ public sealed class TopicRepository : ITopicRepository
         if (owningSpace is not null)
         {
             conditions.Add("owning_space = @owningSpace");
-            cmd.Parameters.AddWithValue("@owningSpace", owningSpace);
+            cmd.AddParameterWithValue("@owningSpace", owningSpace);
         }
         if (!includeInactive)
         {
@@ -133,13 +134,13 @@ public sealed class TopicRepository : ITopicRepository
             WHERE id = @id
             RETURNING id, slug, display_name, description, aliases, status, owning_space, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@slug", topic.Slug);
-        cmd.Parameters.AddWithValue("@displayName", topic.DisplayName);
-        cmd.Parameters.AddWithValue("@description", (object?)topic.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@aliases", topic.Aliases is { Count: > 0 } ? JsonSerializer.Serialize(topic.Aliases) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", topic.Status);
-        cmd.Parameters.AddWithValue("@owningSpace", (object?)topic.OwningSpace ?? DBNull.Value);
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@slug", topic.Slug);
+        cmd.AddParameterWithValue("@displayName", topic.DisplayName);
+        cmd.AddParameterWithValue("@description", (object?)topic.Description ?? DBNull.Value);
+        cmd.AddParameterWithValue("@aliases", topic.Aliases is { Count: > 0 } ? JsonSerializer.Serialize(topic.Aliases) : DBNull.Value);
+        cmd.AddParameterWithValue("@status", topic.Status);
+        cmd.AddParameterWithValue("@owningSpace", (object?)topic.OwningSpace ?? DBNull.Value);
 
         try
         {
@@ -162,7 +163,7 @@ public sealed class TopicRepository : ITopicRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM consolidation_topics WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -180,7 +181,7 @@ public sealed class TopicRepository : ITopicRepository
             ORDER BY status = 'active' DESC, slug
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@tag", tag);
+        cmd.AddParameterWithValue("@tag", tag);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
@@ -223,7 +224,7 @@ public sealed class TopicRepository : ITopicRepository
         return results;
     }
 
-    private static ConsolidationTopic ReadTopic(SqliteDataReader reader)
+    private static ConsolidationTopic ReadTopic(DbDataReader reader)
     {
         var aliasesJson = reader.IsDBNull(4) ? null : reader.GetString(4);
         return new ConsolidationTopic
@@ -240,7 +241,7 @@ public sealed class TopicRepository : ITopicRepository
         };
     }
 
-    private static ConsolidationTopicSummary ReadSummary(SqliteDataReader reader)
+    private static ConsolidationTopicSummary ReadSummary(DbDataReader reader)
     {
         var aliasesJson = reader.IsDBNull(4) ? null : reader.GetString(4);
         return new ConsolidationTopicSummary

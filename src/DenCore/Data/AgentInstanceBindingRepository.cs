@@ -1,5 +1,5 @@
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 
 namespace DenCore.Data;
 
@@ -91,7 +91,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             SET last_heartbeat = datetime('now')
             WHERE instance_id = @instanceId AND status IN ('active', 'degraded')
             """;
-        cmd.Parameters.AddWithValue("@instanceId", instanceId);
+        cmd.AddParameterWithValue("@instanceId", instanceId);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -104,7 +104,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             SET status = 'inactive', last_heartbeat = datetime('now')
             WHERE instance_id = @instanceId AND status IN ('active', 'degraded')
             """;
-        cmd.Parameters.AddWithValue("@instanceId", instanceId);
+        cmd.AddParameterWithValue("@instanceId", instanceId);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -117,7 +117,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             SET status = 'inactive', last_heartbeat = datetime('now')
             WHERE session_id = @sessionId AND status IN ('active', 'degraded')
             """;
-        cmd.Parameters.AddWithValue("@sessionId", sessionId);
+        cmd.AddParameterWithValue("@sessionId", sessionId);
         return await cmd.ExecuteNonQueryAsync();
     }
 
@@ -143,7 +143,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             FROM agent_instance_bindings
             WHERE instance_id = @instanceId AND status IN ('active', 'degraded')
             """;
-        cmd.Parameters.AddWithValue("@instanceId", instanceId);
+        cmd.AddParameterWithValue("@instanceId", instanceId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadBinding(reader) : null;
@@ -162,25 +162,25 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
 
         if (!string.IsNullOrWhiteSpace(options.AgentIdentity))
         {
             where.Add("agent_identity = @agentIdentity");
-            cmd.Parameters.AddWithValue("@agentIdentity", options.AgentIdentity);
+            cmd.AddParameterWithValue("@agentIdentity", options.AgentIdentity);
         }
 
         if (!string.IsNullOrWhiteSpace(options.Role))
         {
             where.Add("role = @role");
-            cmd.Parameters.AddWithValue("@role", options.Role);
+            cmd.AddParameterWithValue("@role", options.Role);
         }
 
         if (!string.IsNullOrWhiteSpace(options.TransportKind))
         {
             where.Add("transport_kind = @transportKind");
-            cmd.Parameters.AddWithValue("@transportKind", options.TransportKind);
+            cmd.AddParameterWithValue("@transportKind", options.TransportKind);
         }
 
         if (options.Statuses is { Length: > 0 })
@@ -190,7 +190,7 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             {
                 var name = $"@status{i}";
                 placeholders.Add(name);
-                cmd.Parameters.AddWithValue(name, options.Statuses[i].ToDbValue());
+                cmd.AddParameterWithValue(name, options.Statuses[i].ToDbValue());
             }
 
             where.Add($"status IN ({string.Join(", ", placeholders)})");
@@ -232,24 +232,24 @@ public sealed class AgentInstanceBindingRepository : IAgentInstanceBindingReposi
             WHERE status IN ('active', 'degraded')
               AND last_heartbeat < datetime('now', @timeout)
             """;
-        cmd.Parameters.AddWithValue("@timeout", $"-{timeoutMinutes} minutes");
+        cmd.AddParameterWithValue("@timeout", $"-{timeoutMinutes} minutes");
         return await cmd.ExecuteNonQueryAsync();
     }
 
-    private static void AddParameters(SqliteCommand cmd, AgentInstanceBinding binding)
+    private static void AddParameters(DbCommand cmd, AgentInstanceBinding binding)
     {
-        cmd.Parameters.AddWithValue("@instanceId", binding.InstanceId);
-        cmd.Parameters.AddWithValue("@projectId", (object?)binding.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@agentIdentity", binding.AgentIdentity);
-        cmd.Parameters.AddWithValue("@agentFamily", binding.AgentFamily);
-        cmd.Parameters.AddWithValue("@role", (object?)binding.Role ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@transportKind", binding.TransportKind);
-        cmd.Parameters.AddWithValue("@sessionId", (object?)binding.SessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", binding.Status.ToDbValue());
-        cmd.Parameters.AddWithValue("@metadata", (object?)binding.Metadata ?? DBNull.Value);
+        cmd.AddParameterWithValue("@instanceId", binding.InstanceId);
+        cmd.AddParameterWithValue("@projectId", (object?)binding.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agentIdentity", binding.AgentIdentity);
+        cmd.AddParameterWithValue("@agentFamily", binding.AgentFamily);
+        cmd.AddParameterWithValue("@role", (object?)binding.Role ?? DBNull.Value);
+        cmd.AddParameterWithValue("@transportKind", binding.TransportKind);
+        cmd.AddParameterWithValue("@sessionId", (object?)binding.SessionId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@status", binding.Status.ToDbValue());
+        cmd.AddParameterWithValue("@metadata", (object?)binding.Metadata ?? DBNull.Value);
     }
 
-    private static AgentInstanceBinding ReadBinding(SqliteDataReader reader) => new()
+    private static AgentInstanceBinding ReadBinding(DbDataReader reader) => new()
     {
         InstanceId = reader.GetString(0),
         ProjectId = reader.IsDBNull(1) ? null : reader.GetString(1),

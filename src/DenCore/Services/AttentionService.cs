@@ -1,7 +1,7 @@
 using System.Globalization;
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Services;
 
@@ -60,7 +60,7 @@ public sealed class AttentionService : IAttentionService
             .ToList();
     }
 
-    private async Task AddPendingDispatchesAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddPendingDispatchesAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "status = 'pending'" };
@@ -101,7 +101,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddProblemRunsAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddProblemRunsAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>();
@@ -152,7 +152,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddStaleActiveRunsAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddStaleActiveRunsAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>();
@@ -201,7 +201,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddRerunUnavailableAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddRerunUnavailableAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "stream_kind = 'ops'", "event_type = 'subagent_rerun_unavailable'" };
@@ -241,7 +241,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddBlockedTasksAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddBlockedTasksAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "status = 'blocked'" };
@@ -274,7 +274,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddQuestionMessagesAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddQuestionMessagesAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "q.intent = 'question'" };
@@ -322,7 +322,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddOpenReviewFindingsAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddOpenReviewFindingsAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string> { "rf.status IN ('open', 'claimed_fixed', 'not_fixed')" };
@@ -362,7 +362,7 @@ public sealed class AttentionService : IAttentionService
         }
     }
 
-    private async Task AddPendingReviewsWithFailedReviewerRunsAsync(SqliteConnection conn, AttentionListOptions options, List<AttentionItem> items)
+    private async Task AddPendingReviewsWithFailedReviewerRunsAsync(DbConnection conn, AttentionListOptions options, List<AttentionItem> items)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>
@@ -438,7 +438,7 @@ public sealed class AttentionService : IAttentionService
         (options.Severity is null || string.Equals(item.Severity, options.Severity, StringComparison.Ordinal));
 
     private static void AddProjectTaskFilter(
-        SqliteCommand cmd,
+        DbCommand cmd,
         List<string> where,
         string projectExpression,
         string taskExpression,
@@ -447,18 +447,18 @@ public sealed class AttentionService : IAttentionService
         if (options.ProjectId is not null)
         {
             where.Add($"{projectExpression} = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
 
         if (options.TaskId is not null)
         {
             where.Add($"{taskExpression} = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
     }
 
     private static void AddInFilter(
-        SqliteCommand cmd,
+        DbCommand cmd,
         List<string> where,
         string expression,
         IReadOnlyList<string> values,
@@ -469,7 +469,7 @@ public sealed class AttentionService : IAttentionService
         {
             var name = $"@{parameterPrefix}{i}";
             parameters.Add(name);
-            cmd.Parameters.AddWithValue(name, values[i]);
+            cmd.AddParameterWithValue(name, values[i]);
         }
 
         where.Add($"{expression} IN ({string.Join(", ", parameters)})");
@@ -483,16 +483,16 @@ public sealed class AttentionService : IAttentionService
         _ => 3
     };
 
-    private static int? NullableInt(SqliteDataReader reader, int ordinal) =>
+    private static int? NullableInt(DbDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
 
-    private static string? NullableString(SqliteDataReader reader, int ordinal) =>
+    private static string? NullableString(DbDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
-    private static DateTime? NullableDate(SqliteDataReader reader, int ordinal) =>
+    private static DateTime? NullableDate(DbDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : ParseDate(reader.GetString(ordinal));
 
-    private static DateTime ReadDate(SqliteDataReader reader, int ordinal) =>
+    private static DateTime ReadDate(DbDataReader reader, int ordinal) =>
         ParseDate(reader.GetString(ordinal));
 
     private static DateTime ParseDate(string value) =>

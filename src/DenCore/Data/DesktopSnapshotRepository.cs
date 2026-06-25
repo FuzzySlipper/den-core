@@ -1,7 +1,7 @@
 using System.Globalization;
+using System.Data.Common;
 using System.Text.Json;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -109,7 +109,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
             ORDER BY observed_at DESC, updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var result = new List<DesktopGitSnapshot>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -219,8 +219,8 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
             ORDER BY observed_at DESC, updated_at DESC, id DESC
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@projectId", (object?)snapshotKey.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@diffKey", BuildDiffKey(snapshotKey));
+        cmd.AddParameterWithValue("@projectId", (object?)snapshotKey.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@diffKey", BuildDiffKey(snapshotKey));
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadDiffSnapshot(reader, staleAfter) : null;
     }
@@ -293,27 +293,27 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId.Trim());
+            cmd.AddParameterWithValue("@projectId", options.ProjectId.Trim());
         }
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkspaceId))
         {
             where.Add("workspace_id = @workspaceId");
-            cmd.Parameters.AddWithValue("@workspaceId", options.WorkspaceId.Trim());
+            cmd.AddParameterWithValue("@workspaceId", options.WorkspaceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.SourceInstanceId))
         {
             where.Add("source_instance_id = @sourceInstanceId");
-            cmd.Parameters.AddWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
+            cmd.AddParameterWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.SessionId))
         {
             where.Add("session_id = @sessionId");
-            cmd.Parameters.AddWithValue("@sessionId", options.SessionId.Trim());
+            cmd.AddParameterWithValue("@sessionId", options.SessionId.Trim());
         }
 
         var whereClause = where.Count == 0 ? string.Empty : $"WHERE {string.Join(" AND ", where)}";
@@ -324,7 +324,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
             ORDER BY observed_at DESC, updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var result = new List<DesktopSessionSnapshot>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -333,124 +333,124 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         return result;
     }
 
-    private string BuildGitWhere(SqliteCommand cmd, DesktopGitSnapshotListOptions options)
+    private string BuildGitWhere(DbCommand cmd, DesktopGitSnapshotListOptions options)
     {
         var where = new List<string>();
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId.Trim());
+            cmd.AddParameterWithValue("@projectId", options.ProjectId.Trim());
         }
         if (options.TaskId is not null)
         {
             where.Add("task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkspaceId))
         {
             where.Add("workspace_id = @workspaceId");
-            cmd.Parameters.AddWithValue("@workspaceId", options.WorkspaceId.Trim());
+            cmd.AddParameterWithValue("@workspaceId", options.WorkspaceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.SourceInstanceId))
         {
             where.Add("source_instance_id = @sourceInstanceId");
-            cmd.Parameters.AddWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
+            cmd.AddParameterWithValue("@sourceInstanceId", options.SourceInstanceId.Trim());
         }
         if (!string.IsNullOrWhiteSpace(options.RootPath))
         {
             where.Add("root_path = @rootPath");
-            cmd.Parameters.AddWithValue("@rootPath", options.RootPath.Trim());
+            cmd.AddParameterWithValue("@rootPath", options.RootPath.Trim());
         }
         if (options.State is not null)
         {
             where.Add("state = @state");
-            cmd.Parameters.AddWithValue("@state", options.State.Value.ToDbValue());
+            cmd.AddParameterWithValue("@state", options.State.Value.ToDbValue());
         }
         return where.Count == 0 ? string.Empty : $"WHERE {string.Join(" AND ", where)}";
     }
 
-    private void AddGitParameters(SqliteCommand cmd, DesktopGitSnapshot snapshot)
+    private void AddGitParameters(DbCommand cmd, DesktopGitSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
-        cmd.Parameters.AddWithValue("@rootPath", snapshot.RootPath.Trim());
-        cmd.Parameters.AddWithValue("@scopeKey", BuildGitScopeKey(snapshot));
-        cmd.Parameters.AddWithValue("@state", snapshot.State.ToDbValue());
-        cmd.Parameters.AddWithValue("@branch", NullIfWhiteSpace(snapshot.Branch));
-        cmd.Parameters.AddWithValue("@isDetached", snapshot.IsDetached ? 1 : 0);
-        cmd.Parameters.AddWithValue("@headSha", NullIfWhiteSpace(snapshot.HeadSha));
-        cmd.Parameters.AddWithValue("@upstream", NullIfWhiteSpace(snapshot.Upstream));
-        cmd.Parameters.AddWithValue("@ahead", (object?)snapshot.Ahead ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@behind", (object?)snapshot.Behind ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@dirtyCounts", JsonSerializer.Serialize(snapshot.DirtyCounts, JsonOptions));
-        cmd.Parameters.AddWithValue("@changedFiles", JsonSerializer.Serialize(snapshot.ChangedFiles, JsonOptions));
-        cmd.Parameters.AddWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
-        cmd.Parameters.AddWithValue("@truncated", snapshot.Truncated ? 1 : 0);
-        cmd.Parameters.AddWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
-        cmd.Parameters.AddWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
-        cmd.Parameters.AddWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
-        cmd.Parameters.AddWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
-        cmd.Parameters.AddWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
+        cmd.AddParameterWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
+        cmd.AddParameterWithValue("@rootPath", snapshot.RootPath.Trim());
+        cmd.AddParameterWithValue("@scopeKey", BuildGitScopeKey(snapshot));
+        cmd.AddParameterWithValue("@state", snapshot.State.ToDbValue());
+        cmd.AddParameterWithValue("@branch", NullIfWhiteSpace(snapshot.Branch));
+        cmd.AddParameterWithValue("@isDetached", snapshot.IsDetached ? 1 : 0);
+        cmd.AddParameterWithValue("@headSha", NullIfWhiteSpace(snapshot.HeadSha));
+        cmd.AddParameterWithValue("@upstream", NullIfWhiteSpace(snapshot.Upstream));
+        cmd.AddParameterWithValue("@ahead", (object?)snapshot.Ahead ?? DBNull.Value);
+        cmd.AddParameterWithValue("@behind", (object?)snapshot.Behind ?? DBNull.Value);
+        cmd.AddParameterWithValue("@dirtyCounts", JsonSerializer.Serialize(snapshot.DirtyCounts, JsonOptions));
+        cmd.AddParameterWithValue("@changedFiles", JsonSerializer.Serialize(snapshot.ChangedFiles, JsonOptions));
+        cmd.AddParameterWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
+        cmd.AddParameterWithValue("@truncated", snapshot.Truncated ? 1 : 0);
+        cmd.AddParameterWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
+        cmd.AddParameterWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
+        cmd.AddParameterWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
+        cmd.AddParameterWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
+        cmd.AddParameterWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
     }
 
-    private void AddDiffParameters(SqliteCommand cmd, DesktopDiffSnapshot snapshot)
+    private void AddDiffParameters(DbCommand cmd, DesktopDiffSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
-        cmd.Parameters.AddWithValue("@rootPath", snapshot.RootPath.Trim());
-        cmd.Parameters.AddWithValue("@path", NullIfWhiteSpace(snapshot.Path));
-        cmd.Parameters.AddWithValue("@baseRef", NullIfWhiteSpace(snapshot.BaseRef));
-        cmd.Parameters.AddWithValue("@headRef", NullIfWhiteSpace(snapshot.HeadRef));
-        cmd.Parameters.AddWithValue("@diffKey", BuildDiffKey(snapshot));
-        cmd.Parameters.AddWithValue("@maxBytes", snapshot.MaxBytes);
-        cmd.Parameters.AddWithValue("@staged", snapshot.Staged ? 1 : 0);
-        cmd.Parameters.AddWithValue("@diff", snapshot.Diff);
-        cmd.Parameters.AddWithValue("@truncated", snapshot.Truncated ? 1 : 0);
-        cmd.Parameters.AddWithValue("@binary", snapshot.Binary ? 1 : 0);
-        cmd.Parameters.AddWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
-        cmd.Parameters.AddWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
-        cmd.Parameters.AddWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
-        cmd.Parameters.AddWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
-        cmd.Parameters.AddWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
-        cmd.Parameters.AddWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
+        cmd.AddParameterWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
+        cmd.AddParameterWithValue("@rootPath", snapshot.RootPath.Trim());
+        cmd.AddParameterWithValue("@path", NullIfWhiteSpace(snapshot.Path));
+        cmd.AddParameterWithValue("@baseRef", NullIfWhiteSpace(snapshot.BaseRef));
+        cmd.AddParameterWithValue("@headRef", NullIfWhiteSpace(snapshot.HeadRef));
+        cmd.AddParameterWithValue("@diffKey", BuildDiffKey(snapshot));
+        cmd.AddParameterWithValue("@maxBytes", snapshot.MaxBytes);
+        cmd.AddParameterWithValue("@staged", snapshot.Staged ? 1 : 0);
+        cmd.AddParameterWithValue("@diff", snapshot.Diff);
+        cmd.AddParameterWithValue("@truncated", snapshot.Truncated ? 1 : 0);
+        cmd.AddParameterWithValue("@binary", snapshot.Binary ? 1 : 0);
+        cmd.AddParameterWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
+        cmd.AddParameterWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
+        cmd.AddParameterWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
+        cmd.AddParameterWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
+        cmd.AddParameterWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
+        cmd.AddParameterWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
     }
 
-    private void AddSessionParameters(SqliteCommand cmd, DesktopSessionSnapshot snapshot)
+    private void AddSessionParameters(DbCommand cmd, DesktopSessionSnapshot snapshot)
     {
-        cmd.Parameters.AddWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
-        cmd.Parameters.AddWithValue("@sessionId", snapshot.SessionId.Trim());
-        cmd.Parameters.AddWithValue("@parentSessionId", NullIfWhiteSpace(snapshot.ParentSessionId));
-        cmd.Parameters.AddWithValue("@agentIdentity", NullIfWhiteSpace(snapshot.AgentIdentity));
-        cmd.Parameters.AddWithValue("@role", NullIfWhiteSpace(snapshot.Role));
-        cmd.Parameters.AddWithValue("@currentCommand", NullIfWhiteSpace(snapshot.CurrentCommand));
-        cmd.Parameters.AddWithValue("@currentPhase", NullIfWhiteSpace(snapshot.CurrentPhase));
-        cmd.Parameters.AddWithValue("@title", NullIfWhiteSpace(snapshot.Title));
-        cmd.Parameters.AddWithValue("@displayName", NullIfWhiteSpace(snapshot.DisplayName));
-        cmd.Parameters.AddWithValue("@cwd", NullIfWhiteSpace(snapshot.Cwd));
-        cmd.Parameters.AddWithValue("@kind", NullIfWhiteSpace(snapshot.Kind));
-        cmd.Parameters.AddWithValue("@backend", NullIfWhiteSpace(snapshot.Backend));
-        cmd.Parameters.AddWithValue("@status", NullIfWhiteSpace(snapshot.Status));
-        cmd.Parameters.AddWithValue("@startedAt", snapshot.StartedAt is null ? DBNull.Value : ToDbTime(snapshot.StartedAt.Value));
-        cmd.Parameters.AddWithValue("@lastActivityAt", snapshot.LastActivityAt is null ? DBNull.Value : ToDbTime(snapshot.LastActivityAt.Value));
-        cmd.Parameters.AddWithValue("@exitedAt", snapshot.ExitedAt is null ? DBNull.Value : ToDbTime(snapshot.ExitedAt.Value));
-        cmd.Parameters.AddWithValue("@exitCode", (object?)snapshot.ExitCode ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
-        cmd.Parameters.AddWithValue("@capabilities", JsonOrNull(snapshot.Capabilities));
-        cmd.Parameters.AddWithValue("@recentActivity", JsonOrNull(snapshot.RecentActivity));
-        cmd.Parameters.AddWithValue("@childSessions", JsonOrNull(snapshot.ChildSessions));
-        cmd.Parameters.AddWithValue("@controlCapabilities", JsonOrNull(snapshot.ControlCapabilities));
-        cmd.Parameters.AddWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
-        cmd.Parameters.AddWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
-        cmd.Parameters.AddWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
-        cmd.Parameters.AddWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
-        cmd.Parameters.AddWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
+        cmd.AddParameterWithValue("@projectId", (object?)snapshot.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)snapshot.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workspaceId", NullIfWhiteSpace(snapshot.WorkspaceId));
+        cmd.AddParameterWithValue("@sessionId", snapshot.SessionId.Trim());
+        cmd.AddParameterWithValue("@parentSessionId", NullIfWhiteSpace(snapshot.ParentSessionId));
+        cmd.AddParameterWithValue("@agentIdentity", NullIfWhiteSpace(snapshot.AgentIdentity));
+        cmd.AddParameterWithValue("@role", NullIfWhiteSpace(snapshot.Role));
+        cmd.AddParameterWithValue("@currentCommand", NullIfWhiteSpace(snapshot.CurrentCommand));
+        cmd.AddParameterWithValue("@currentPhase", NullIfWhiteSpace(snapshot.CurrentPhase));
+        cmd.AddParameterWithValue("@title", NullIfWhiteSpace(snapshot.Title));
+        cmd.AddParameterWithValue("@displayName", NullIfWhiteSpace(snapshot.DisplayName));
+        cmd.AddParameterWithValue("@cwd", NullIfWhiteSpace(snapshot.Cwd));
+        cmd.AddParameterWithValue("@kind", NullIfWhiteSpace(snapshot.Kind));
+        cmd.AddParameterWithValue("@backend", NullIfWhiteSpace(snapshot.Backend));
+        cmd.AddParameterWithValue("@status", NullIfWhiteSpace(snapshot.Status));
+        cmd.AddParameterWithValue("@startedAt", snapshot.StartedAt is null ? DBNull.Value : ToDbTime(snapshot.StartedAt.Value));
+        cmd.AddParameterWithValue("@lastActivityAt", snapshot.LastActivityAt is null ? DBNull.Value : ToDbTime(snapshot.LastActivityAt.Value));
+        cmd.AddParameterWithValue("@exitedAt", snapshot.ExitedAt is null ? DBNull.Value : ToDbTime(snapshot.ExitedAt.Value));
+        cmd.AddParameterWithValue("@exitCode", (object?)snapshot.ExitCode ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sourceDisplayName", NullIfWhiteSpace(snapshot.SourceDisplayName));
+        cmd.AddParameterWithValue("@capabilities", JsonOrNull(snapshot.Capabilities));
+        cmd.AddParameterWithValue("@recentActivity", JsonOrNull(snapshot.RecentActivity));
+        cmd.AddParameterWithValue("@childSessions", JsonOrNull(snapshot.ChildSessions));
+        cmd.AddParameterWithValue("@controlCapabilities", JsonOrNull(snapshot.ControlCapabilities));
+        cmd.AddParameterWithValue("@warnings", JsonSerializer.Serialize(snapshot.Warnings, JsonOptions));
+        cmd.AddParameterWithValue("@sourceInstanceId", snapshot.SourceInstanceId.Trim());
+        cmd.AddParameterWithValue("@observedAt", ToDbTime(snapshot.ObservedAt));
+        cmd.AddParameterWithValue("@receivedAt", ToDbTime(snapshot.ReceivedAt));
+        cmd.AddParameterWithValue("@updatedAt", ToDbTime(snapshot.UpdatedAt));
     }
 
-    private DesktopGitSnapshot ReadGitSnapshot(SqliteDataReader reader, TimeSpan staleAfter)
+    private DesktopGitSnapshot ReadGitSnapshot(DbDataReader reader, TimeSpan staleAfter)
     {
         var observedAt = FromDbTime(reader.GetString(18));
         var freshnessSeconds = FreshnessSeconds(observedAt);
@@ -482,7 +482,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         };
     }
 
-    private DesktopDiffSnapshot ReadDiffSnapshot(SqliteDataReader reader, TimeSpan staleAfter)
+    private DesktopDiffSnapshot ReadDiffSnapshot(DbDataReader reader, TimeSpan staleAfter)
     {
         var observedAt = FromDbTime(reader.GetString(16));
         return new DesktopDiffSnapshot
@@ -511,7 +511,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         };
     }
 
-    private DesktopSessionSnapshot ReadSessionSnapshot(SqliteDataReader reader, TimeSpan staleAfter)
+    private DesktopSessionSnapshot ReadSessionSnapshot(DbDataReader reader, TimeSpan staleAfter)
     {
         var observedAt = FromDbTime(reader.GetString(27));
         return new DesktopSessionSnapshot

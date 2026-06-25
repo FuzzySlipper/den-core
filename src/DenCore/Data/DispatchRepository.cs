@@ -1,4 +1,5 @@
 using DenCore.Models;
+using System.Data.Common;
 using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
@@ -68,7 +69,7 @@ public sealed class DispatchRepository : IDispatchRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = SelectColumns + " WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadEntry(reader) : null;
@@ -85,13 +86,13 @@ public sealed class DispatchRepository : IDispatchRepository
         if (projectId is not null)
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         if (targetAgent is not null)
         {
             where.Add("target_agent = @targetAgent");
-            cmd.Parameters.AddWithValue("@targetAgent", targetAgent);
+            cmd.AddParameterWithValue("@targetAgent", targetAgent);
         }
 
         if (statuses is { Length: > 0 })
@@ -101,7 +102,7 @@ public sealed class DispatchRepository : IDispatchRepository
             {
                 var p = $"@status{i}";
                 placeholders.Add(p);
-                cmd.Parameters.AddWithValue(p, statuses[i].ToDbValue());
+                cmd.AddParameterWithValue(p, statuses[i].ToDbValue());
             }
             where.Add($"status IN ({string.Join(", ", placeholders)})");
         }
@@ -128,8 +129,8 @@ public sealed class DispatchRepository : IDispatchRepository
                       task_id, summary, context_prompt, context_json, dedup_key,
                       created_at, expires_at, decided_at, completed_at, decided_by, completed_by
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@newStatus", DispatchStatus.Expired.ToDbValue());
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@newStatus", DispatchStatus.Expired.ToDbValue());
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -149,13 +150,13 @@ public sealed class DispatchRepository : IDispatchRepository
               AND task_id = @taskId
               AND status IN ('pending', 'approved')
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@taskId", taskId);
 
         if (excludeId is not null)
         {
             cmd.CommandText += " AND id != @excludeId";
-            cmd.Parameters.AddWithValue("@excludeId", excludeId.Value);
+            cmd.AddParameterWithValue("@excludeId", excludeId.Value);
         }
 
         return await cmd.ExecuteNonQueryAsync();
@@ -178,10 +179,10 @@ public sealed class DispatchRepository : IDispatchRepository
               AND status IN ('pending', 'approved')
               AND id < @keepId
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@taskId", taskId);
-        cmd.Parameters.AddWithValue("@targetAgent", targetAgent);
-        cmd.Parameters.AddWithValue("@keepId", keepId);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@targetAgent", targetAgent);
+        cmd.AddParameterWithValue("@keepId", keepId);
 
         return await cmd.ExecuteNonQueryAsync();
     }
@@ -195,7 +196,7 @@ public sealed class DispatchRepository : IDispatchRepository
             SET status = 'expired'
             WHERE status = 'pending' AND expires_at <= @now
             """;
-        cmd.Parameters.AddWithValue("@now", now.ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.AddParameterWithValue("@now", now.ToString("yyyy-MM-dd HH:mm:ss"));
         return await cmd.ExecuteNonQueryAsync();
     }
 
@@ -207,7 +208,7 @@ public sealed class DispatchRepository : IDispatchRepository
         if (projectId is not null)
         {
             cmd.CommandText = "SELECT COUNT(*) FROM dispatch_entries WHERE status = 'pending' AND project_id = @projectId";
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
         else
         {
@@ -218,29 +219,29 @@ public sealed class DispatchRepository : IDispatchRepository
         return Convert.ToInt32(result);
     }
 
-    private static async Task<DispatchEntry?> GetByDedupKeyAsync(SqliteConnection conn, string dedupKey)
+    private static async Task<DispatchEntry?> GetByDedupKeyAsync(DbConnection conn, string dedupKey)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = SelectColumns + " WHERE dedup_key = @dedupKey AND status = 'pending'";
-        cmd.Parameters.AddWithValue("@dedupKey", dedupKey);
+        cmd.AddParameterWithValue("@dedupKey", dedupKey);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadEntry(reader) : null;
     }
 
-    private static void AddCreateParams(SqliteCommand cmd, DispatchEntry entry)
+    private static void AddCreateParams(DbCommand cmd, DispatchEntry entry)
     {
-        cmd.Parameters.AddWithValue("@projectId", entry.ProjectId);
-        cmd.Parameters.AddWithValue("@targetAgent", entry.TargetAgent);
-        cmd.Parameters.AddWithValue("@status", entry.Status.ToDbValue());
-        cmd.Parameters.AddWithValue("@triggerType", entry.TriggerType.ToDbValue());
-        cmd.Parameters.AddWithValue("@triggerId", entry.TriggerId);
-        cmd.Parameters.AddWithValue("@taskId", (object?)entry.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@summary", (object?)entry.Summary ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@contextPrompt", (object?)entry.ContextPrompt ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@contextJson", (object?)entry.ContextJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@dedupKey", entry.DedupKey);
-        cmd.Parameters.AddWithValue("@expiresAt", entry.ExpiresAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        cmd.AddParameterWithValue("@projectId", entry.ProjectId);
+        cmd.AddParameterWithValue("@targetAgent", entry.TargetAgent);
+        cmd.AddParameterWithValue("@status", entry.Status.ToDbValue());
+        cmd.AddParameterWithValue("@triggerType", entry.TriggerType.ToDbValue());
+        cmd.AddParameterWithValue("@triggerId", entry.TriggerId);
+        cmd.AddParameterWithValue("@taskId", (object?)entry.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@summary", (object?)entry.Summary ?? DBNull.Value);
+        cmd.AddParameterWithValue("@contextPrompt", (object?)entry.ContextPrompt ?? DBNull.Value);
+        cmd.AddParameterWithValue("@contextJson", (object?)entry.ContextJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@dedupKey", entry.DedupKey);
+        cmd.AddParameterWithValue("@expiresAt", entry.ExpiresAt.ToString("yyyy-MM-dd HH:mm:ss"));
     }
 
     private const string SelectColumns = """
@@ -250,7 +251,7 @@ public sealed class DispatchRepository : IDispatchRepository
         FROM dispatch_entries
         """;
 
-    internal static DispatchEntry ReadEntry(SqliteDataReader reader)
+    internal static DispatchEntry ReadEntry(DbDataReader reader)
     {
         return new DispatchEntry
         {

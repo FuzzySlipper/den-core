@@ -1,5 +1,5 @@
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 using TaskStatus = DenCore.Models.TaskStatus;
 
 namespace DenCore.Data;
@@ -33,14 +33,14 @@ public sealed class ProjectRepository : IProjectRepository
             VALUES (@id, @name, @kind, @visibility, @owner, @rootPath, @description, @settingsJson)
             RETURNING id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", project.Id);
-        cmd.Parameters.AddWithValue("@name", project.Name);
-        cmd.Parameters.AddWithValue("@kind", project.Kind);
-        cmd.Parameters.AddWithValue("@visibility", project.Visibility);
-        cmd.Parameters.AddWithValue("@owner", (object?)project.Owner ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@rootPath", (object?)project.RootPath ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@description", (object?)project.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@settingsJson", (object?)project.SettingsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@id", project.Id);
+        cmd.AddParameterWithValue("@name", project.Name);
+        cmd.AddParameterWithValue("@kind", project.Kind);
+        cmd.AddParameterWithValue("@visibility", project.Visibility);
+        cmd.AddParameterWithValue("@owner", (object?)project.Owner ?? DBNull.Value);
+        cmd.AddParameterWithValue("@rootPath", (object?)project.RootPath ?? DBNull.Value);
+        cmd.AddParameterWithValue("@description", (object?)project.Description ?? DBNull.Value);
+        cmd.AddParameterWithValue("@settingsJson", (object?)project.SettingsJson ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -52,7 +52,7 @@ public sealed class ProjectRepository : IProjectRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at FROM projects WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadProject(reader) : null;
@@ -88,7 +88,7 @@ public sealed class ProjectRepository : IProjectRepository
         cmd.CommandText = $"SELECT id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at FROM projects {whereClause} ORDER BY id";
 
         if (kind is not null)
-            cmd.Parameters.AddWithValue("@kind", kind);
+            cmd.AddParameterWithValue("@kind", kind);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         var projects = new List<Project>();
@@ -103,7 +103,7 @@ public sealed class ProjectRepository : IProjectRepository
 
         await using var projCmd = conn.CreateCommand();
         projCmd.CommandText = "SELECT id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at FROM projects WHERE id = @id";
-        projCmd.Parameters.AddWithValue("@id", id);
+        projCmd.AddParameterWithValue("@id", id);
 
         await using var projReader = await projCmd.ExecuteReaderAsync();
         if (!await projReader.ReadAsync())
@@ -115,7 +115,7 @@ public sealed class ProjectRepository : IProjectRepository
         // Task counts by status
         await using var statsCmd = conn.CreateCommand();
         statsCmd.CommandText = "SELECT status, COUNT(*) FROM tasks WHERE project_id = @id GROUP BY status";
-        statsCmd.Parameters.AddWithValue("@id", id);
+        statsCmd.AddParameterWithValue("@id", id);
 
         var counts = new Dictionary<TaskStatus, int>();
         foreach (TaskStatus s in Enum.GetValues<TaskStatus>())
@@ -143,8 +143,8 @@ public sealed class ProjectRepository : IProjectRepository
                   )
                   AND m.sender != @agent
                 """;
-            unreadCmd.Parameters.AddWithValue("@id", id);
-            unreadCmd.Parameters.AddWithValue("@agent", agent);
+            unreadCmd.AddParameterWithValue("@id", id);
+            unreadCmd.AddParameterWithValue("@agent", agent);
             unread = Convert.ToInt32(await unreadCmd.ExecuteScalarAsync());
         }
 
@@ -166,8 +166,8 @@ public sealed class ProjectRepository : IProjectRepository
             WHERE id = @id
             RETURNING id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@visibility", visibility);
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@visibility", visibility);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -187,27 +187,27 @@ public sealed class ProjectRepository : IProjectRepository
         if (!string.IsNullOrWhiteSpace(update.Name))
         {
             sets.Add("name = @name");
-            cmd.Parameters.AddWithValue("@name", update.Name);
+            cmd.AddParameterWithValue("@name", update.Name);
         }
         if (update.RootPath is not null)
         {
             sets.Add("root_path = @rootPath");
-            cmd.Parameters.AddWithValue("@rootPath", update.RootPath);
+            cmd.AddParameterWithValue("@rootPath", update.RootPath);
         }
         if (update.Description is not null)
         {
             sets.Add("description = @description");
-            cmd.Parameters.AddWithValue("@description", update.Description);
+            cmd.AddParameterWithValue("@description", update.Description);
         }
         if (update.Owner is not null)
         {
             sets.Add("owner = @owner");
-            cmd.Parameters.AddWithValue("@owner", update.Owner);
+            cmd.AddParameterWithValue("@owner", update.Owner);
         }
         if (update.SettingsJson is not null)
         {
             sets.Add("settings_json = @settingsJson");
-            cmd.Parameters.AddWithValue("@settingsJson", update.SettingsJson);
+            cmd.AddParameterWithValue("@settingsJson", update.SettingsJson);
         }
 
         cmd.CommandText = $"""
@@ -216,7 +216,7 @@ public sealed class ProjectRepository : IProjectRepository
             WHERE id = @id
             RETURNING id, name, kind, visibility, owner, root_path, description, settings_json, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -253,7 +253,7 @@ public sealed class ProjectRepository : IProjectRepository
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParameterWithValue("@id", id);
             var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
             if (count > 0)
                 counts[table] = count;
@@ -267,14 +267,14 @@ public sealed class ProjectRepository : IProjectRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM projects WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         var rows = await cmd.ExecuteNonQueryAsync();
         if (rows == 0)
             throw new KeyNotFoundException($"Project '{id}' not found");
     }
 
-    private static Project ReadProject(SqliteDataReader reader) => new()
+    private static Project ReadProject(DbDataReader reader) => new()
     {
         Id = reader.GetString(0),
         Name = reader.GetString(1),

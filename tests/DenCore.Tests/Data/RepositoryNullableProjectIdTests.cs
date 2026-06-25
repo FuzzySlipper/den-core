@@ -268,7 +268,7 @@ public class RepositoryNullableProjectIdTests : IAsyncLifetime
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = @name";
-        cmd.Parameters.AddWithValue("@name", tableName);
+        cmd.AddParameterWithValue("@name", tableName);
         return (string)(await cmd.ExecuteScalarAsync())!;
     }
 

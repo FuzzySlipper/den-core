@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -46,7 +46,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
                        created_at, updated_at
                 FROM knowledge_entries WHERE slug = @slug
                 """;
-            checkCmd.Parameters.AddWithValue("@slug", entry.Slug);
+            checkCmd.AddParameterWithValue("@slug", entry.Slug);
             await using var reader = await checkCmd.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
@@ -73,7 +73,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             await using var revCmd = conn.CreateCommand();
             revCmd.Transaction = tx;
             revCmd.CommandText = "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM knowledge_entry_revisions WHERE entry_id = @entryId";
-            revCmd.Parameters.AddWithValue("@entryId", existingId.Value);
+            revCmd.AddParameterWithValue("@entryId", existingId.Value);
             var revResult = await revCmd.ExecuteScalarAsync();
             nextRevision = Convert.ToInt32(revResult);
 
@@ -89,22 +89,22 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
                         @curationState, @tagsJson, @audienceJson, @aliasesJson, @sourceRefsJson,
                         @accuracyNotes, @replacementSlug, @changedBy, @changeNote)
                 """;
-            revInsertCmd.Parameters.AddWithValue("@entryId", existingId.Value);
-            revInsertCmd.Parameters.AddWithValue("@revNum", nextRevision);
-            revInsertCmd.Parameters.AddWithValue("@title", existing?.Title ?? entry.Title);
-            revInsertCmd.Parameters.AddWithValue("@summary", (object?)existing?.Summary ?? DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@body", existing?.BodyMarkdown ?? entry.BodyMarkdown);
-            revInsertCmd.Parameters.AddWithValue("@kind", existing?.Kind ?? entry.Kind);
-            revInsertCmd.Parameters.AddWithValue("@status", existing?.Status ?? entry.Status);
-            revInsertCmd.Parameters.AddWithValue("@curationState", existing?.CurationState ?? entry.CurationState);
-            revInsertCmd.Parameters.AddWithValue("@tagsJson", DBNull.Value); // loaded separately
-            revInsertCmd.Parameters.AddWithValue("@audienceJson", DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@aliasesJson", DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@sourceRefsJson", DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@accuracyNotes", DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@replacementSlug", DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@changedBy", (object?)entry.UpdatedBy ?? DBNull.Value);
-            revInsertCmd.Parameters.AddWithValue("@changeNote", (object?)changeNote ?? DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@entryId", existingId.Value);
+            revInsertCmd.AddParameterWithValue("@revNum", nextRevision);
+            revInsertCmd.AddParameterWithValue("@title", existing?.Title ?? entry.Title);
+            revInsertCmd.AddParameterWithValue("@summary", (object?)existing?.Summary ?? DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@body", existing?.BodyMarkdown ?? entry.BodyMarkdown);
+            revInsertCmd.AddParameterWithValue("@kind", existing?.Kind ?? entry.Kind);
+            revInsertCmd.AddParameterWithValue("@status", existing?.Status ?? entry.Status);
+            revInsertCmd.AddParameterWithValue("@curationState", existing?.CurationState ?? entry.CurationState);
+            revInsertCmd.AddParameterWithValue("@tagsJson", DBNull.Value); // loaded separately
+            revInsertCmd.AddParameterWithValue("@audienceJson", DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@aliasesJson", DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@sourceRefsJson", DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@accuracyNotes", DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@replacementSlug", DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@changedBy", (object?)entry.UpdatedBy ?? DBNull.Value);
+            revInsertCmd.AddParameterWithValue("@changeNote", (object?)changeNote ?? DBNull.Value);
             await revInsertCmd.ExecuteNonQueryAsync();
         }
 
@@ -141,30 +141,30 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
                       created_by, updated_by, created_at, updated_at
             """;
 
-        upsertCmd.Parameters.AddWithValue("@slug", entry.Slug);
-        upsertCmd.Parameters.AddWithValue("@title", entry.Title);
-        upsertCmd.Parameters.AddWithValue("@summary", (object?)entry.Summary ?? DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@body", entry.BodyMarkdown);
-        upsertCmd.Parameters.AddWithValue("@kind", entry.Kind);
-        upsertCmd.Parameters.AddWithValue("@status", entry.Status);
-        upsertCmd.Parameters.AddWithValue("@curationState", entry.CurationState);
-        upsertCmd.Parameters.AddWithValue("@audienceJson",
+        upsertCmd.AddParameterWithValue("@slug", entry.Slug);
+        upsertCmd.AddParameterWithValue("@title", entry.Title);
+        upsertCmd.AddParameterWithValue("@summary", (object?)entry.Summary ?? DBNull.Value);
+        upsertCmd.AddParameterWithValue("@body", entry.BodyMarkdown);
+        upsertCmd.AddParameterWithValue("@kind", entry.Kind);
+        upsertCmd.AddParameterWithValue("@status", entry.Status);
+        upsertCmd.AddParameterWithValue("@curationState", entry.CurationState);
+        upsertCmd.AddParameterWithValue("@audienceJson",
             entry.Audience is { Count: > 0 } ? JsonSerializer.Serialize(entry.Audience) : DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@aliasesJson",
+        upsertCmd.AddParameterWithValue("@aliasesJson",
             entry.Aliases is { Count: > 0 } ? JsonSerializer.Serialize(entry.Aliases) : DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@sourceRefsJson",
+        upsertCmd.AddParameterWithValue("@sourceRefsJson",
             entry.SourceRefs is { Count: > 0 } ? JsonSerializer.Serialize(entry.SourceRefs) : DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@accuracyNotes",
+        upsertCmd.AddParameterWithValue("@accuracyNotes",
             (object?)entry.AccuracyNotes ?? DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@replacementSlug",
+        upsertCmd.AddParameterWithValue("@replacementSlug",
             (object?)entry.ReplacementSlug ?? DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@lastReviewedAt",
+        upsertCmd.AddParameterWithValue("@lastReviewedAt",
             entry.LastReviewedAt is DateTime lr ? lr.ToString("o") : DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@reviewDueAt",
+        upsertCmd.AddParameterWithValue("@reviewDueAt",
             entry.ReviewDueAt is DateTime rd ? rd.ToString("o") : DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@createdBy",
+        upsertCmd.AddParameterWithValue("@createdBy",
             (object?)entry.CreatedBy ?? DBNull.Value);
-        upsertCmd.Parameters.AddWithValue("@updatedBy",
+        upsertCmd.AddParameterWithValue("@updatedBy",
             (object?)entry.UpdatedBy ?? DBNull.Value);
 
         await using var upsertReader = await upsertCmd.ExecuteReaderAsync();
@@ -178,7 +178,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             await using var delTags = conn.CreateCommand();
             delTags.Transaction = tx;
             delTags.CommandText = "DELETE FROM knowledge_entry_tags WHERE entry_id = @entryId";
-            delTags.Parameters.AddWithValue("@entryId", existingId.Value);
+            delTags.AddParameterWithValue("@entryId", existingId.Value);
             await delTags.ExecuteNonQueryAsync();
         }
 
@@ -192,8 +192,8 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
                     INSERT INTO knowledge_entry_tags (entry_id, tag)
                     VALUES (@entryId, @tag)
                     """;
-                tagCmd.Parameters.AddWithValue("@entryId", result.Id);
-                tagCmd.Parameters.AddWithValue("@tag", tag);
+                tagCmd.AddParameterWithValue("@entryId", result.Id);
+                tagCmd.AddParameterWithValue("@tag", tag);
                 await tagCmd.ExecuteNonQueryAsync();
             }
         }
@@ -222,7 +222,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             FROM knowledge_entries ke
             WHERE ke.slug = @slug {archivedFilter}
             """;
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@slug", slug);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -249,7 +249,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             FROM knowledge_entries ke
             WHERE ke.id = @id {archivedFilter}
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -271,7 +271,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         if (query.Kind is not null)
         {
             where.Add("ke.kind = @kind");
-            cmd.Parameters.AddWithValue("@kind", query.Kind);
+            cmd.AddParameterWithValue("@kind", query.Kind);
         }
 
         if (query.Audience is { Length: > 0 })
@@ -280,7 +280,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@aud{i}";
                 where.Add($"ke.audience_json IS NOT NULL AND json_each(ke.audience_json) IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(ke.audience_json) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, aud);
+                cmd.AddParameterWithValue(p, aud);
             }
         }
 
@@ -291,7 +291,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@reqTag{i}";
                 where.Add($"EXISTS (SELECT 1 FROM knowledge_entry_tags ket WHERE ket.entry_id = ke.id AND ket.tag = {p})");
-                cmd.Parameters.AddWithValue(p, query.RequiredTags[i]);
+                cmd.AddParameterWithValue(p, query.RequiredTags[i]);
             }
         }
 
@@ -303,7 +303,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@anyTag{i}";
                 tagConditions.Add($"EXISTS (SELECT 1 FROM knowledge_entry_tags ket2 WHERE ket2.entry_id = ke.id AND ket2.tag = {p})");
-                cmd.Parameters.AddWithValue(p, query.AnyTags[i]);
+                cmd.AddParameterWithValue(p, query.AnyTags[i]);
             }
             where.Add($"({string.Join(" OR ", tagConditions)})");
         }
@@ -320,8 +320,8 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             ORDER BY ke.updated_at DESC
             LIMIT @limit OFFSET @offset
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Min(query.Limit, 200));
-        cmd.Parameters.AddWithValue("@offset", query.Offset);
+        cmd.AddParameterWithValue("@limit", Math.Min(query.Limit, 200));
+        cmd.AddParameterWithValue("@offset", query.Offset);
 
         var results = new List<KnowledgeEntrySummary>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -349,7 +349,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         if (ftsQuery is null)
             return []; // No searchable terms
         var conditions = new List<string> { "knowledge_entries_fts MATCH @query" };
-        cmd.Parameters.AddWithValue("@query", ftsQuery);
+        cmd.AddParameterWithValue("@query", ftsQuery);
 
         // Status filter
         if (query.Status is not null)
@@ -360,7 +360,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@status{i}";
                 sc.Add($"ke.status = {p}");
-                cmd.Parameters.AddWithValue(p, s);
+                cmd.AddParameterWithValue(p, s);
             }
             conditions.Add($"({string.Join(" OR ", sc)})");
         }
@@ -378,7 +378,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         if (query.Kind is not null)
         {
             conditions.Add("ke.kind = @kind");
-            cmd.Parameters.AddWithValue("@kind", query.Kind);
+            cmd.AddParameterWithValue("@kind", query.Kind);
         }
 
         if (query.Audience is { Length: > 0 })
@@ -387,7 +387,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@aud{i}";
                 conditions.Add($"ke.audience_json IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(ke.audience_json) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, aud);
+                cmd.AddParameterWithValue(p, aud);
             }
         }
 
@@ -398,7 +398,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@reqTag{i}";
                 conditions.Add($"EXISTS (SELECT 1 FROM knowledge_entry_tags ket WHERE ket.entry_id = ke.id AND ket.tag = {p})");
-                cmd.Parameters.AddWithValue(p, query.RequiredTags[i]);
+                cmd.AddParameterWithValue(p, query.RequiredTags[i]);
             }
         }
 
@@ -410,7 +410,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@anyTag{i}";
                 tc.Add($"EXISTS (SELECT 1 FROM knowledge_entry_tags ket2 WHERE ket2.entry_id = ke.id AND ket2.tag = {p})");
-                cmd.Parameters.AddWithValue(p, query.AnyTags[i]);
+                cmd.AddParameterWithValue(p, query.AnyTags[i]);
             }
             conditions.Add($"({string.Join(" OR ", tc)})");
         }
@@ -428,7 +428,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             ORDER BY rank
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Min(query.Limit, 200));
+        cmd.AddParameterWithValue("@limit", Math.Min(query.Limit, 200));
 
         var results = new List<KnowledgeSearchResult>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -473,7 +473,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             WHERE ke.slug = @slug
             ORDER BY kr.revision_number DESC
             """;
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@slug", slug);
 
         var results = new List<KnowledgeRevisionSummary>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -498,7 +498,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
 
     // ── Private helpers ──
 
-    private static KnowledgeEntry ReadEntry(SqliteDataReader reader)
+    private static KnowledgeEntry ReadEntry(DbDataReader reader)
     {
         return new KnowledgeEntry
         {
@@ -524,7 +524,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         };
     }
 
-    private static KnowledgeEntrySummary ReadSummary(SqliteDataReader reader)
+    private static KnowledgeEntrySummary ReadSummary(DbDataReader reader)
     {
         return new KnowledgeEntrySummary
         {
@@ -549,11 +549,11 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         };
     }
 
-    private static async Task<List<string>> LoadTagsAsync(SqliteConnection conn, int entryId)
+    private static async Task<List<string>> LoadTagsAsync(DbConnection conn, int entryId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT tag FROM knowledge_entry_tags WHERE entry_id = @entryId ORDER BY tag";
-        cmd.Parameters.AddWithValue("@entryId", entryId);
+        cmd.AddParameterWithValue("@entryId", entryId);
         var tags = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -561,7 +561,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         return tags;
     }
 
-    private static async Task<List<string>> LoadTagsBySlugAsync(SqliteConnection conn, string slug)
+    private static async Task<List<string>> LoadTagsBySlugAsync(DbConnection conn, string slug)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -570,7 +570,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             WHERE ke.slug = @slug
             ORDER BY ket.tag
             """;
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@slug", slug);
         var tags = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -578,7 +578,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         return tags;
     }
 
-    internal static async Task RefreshFtsRowAsync(SqliteConnection conn, SqliteTransaction tx, int entryId, KnowledgeEntry entry)
+    internal static async Task RefreshFtsRowAsync(DbConnection conn, DbTransaction tx, int entryId, KnowledgeEntry entry)
     {
         // Standalone FTS table: use INSERT OR REPLACE for atomic upsert
         await using var cmd = conn.CreateCommand();
@@ -587,15 +587,15 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             INSERT OR REPLACE INTO knowledge_entries_fts(rowid, slug, title, summary, body_markdown)
             VALUES (@entryId, @slug, @title, @summary, @body)
             """;
-        cmd.Parameters.AddWithValue("@entryId", entryId);
-        cmd.Parameters.AddWithValue("@slug", entry.Slug);
-        cmd.Parameters.AddWithValue("@title", entry.Title);
-        cmd.Parameters.AddWithValue("@summary", (object?)entry.Summary ?? "");
-        cmd.Parameters.AddWithValue("@body", entry.BodyMarkdown);
+        cmd.AddParameterWithValue("@entryId", entryId);
+        cmd.AddParameterWithValue("@slug", entry.Slug);
+        cmd.AddParameterWithValue("@title", entry.Title);
+        cmd.AddParameterWithValue("@summary", (object?)entry.Summary ?? "");
+        cmd.AddParameterWithValue("@body", entry.BodyMarkdown);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static void BuildStatusFilter(List<string> where, SqliteCommand cmd,
+    private static void BuildStatusFilter(List<string> where, DbCommand cmd,
         bool includeDeprecated, bool includeUnreviewed, bool includeArchived, string? explicitStatus)
     {
         if (explicitStatus is not null)
@@ -607,7 +607,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@status{i}";
                 statusConditions.Add($"ke.status = {p}");
-                cmd.Parameters.AddWithValue(p, s);
+                cmd.AddParameterWithValue(p, s);
             }
             where.Add($"({string.Join(" OR ", statusConditions)})");
 
@@ -637,7 +637,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         }
     }
 
-    private static void BuildSearchStatusFilter(List<string> where, SqliteCommand cmd, string tableAlias,
+    private static void BuildSearchStatusFilter(List<string> where, DbCommand cmd, string tableAlias,
         bool includeDeprecated, bool includeUnreviewed, bool includeArchived, string? explicitStatus)
     {
         if (explicitStatus is not null)
@@ -648,7 +648,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             {
                 var p = $"@status{i}";
                 statusConditions.Add($"{tableAlias}.status = {p}");
-                cmd.Parameters.AddWithValue(p, s);
+                cmd.AddParameterWithValue(p, s);
             }
             where.Add($"({string.Join(" OR ", statusConditions)})");
 

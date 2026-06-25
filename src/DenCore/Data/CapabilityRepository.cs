@@ -1,5 +1,5 @@
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 
 namespace DenCore.Data;
 
@@ -88,25 +88,25 @@ public sealed class CapabilityRepository : ICapabilityRepository
                       timeout_ms, max_request_bytes, metadata_json,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@capabilityId", definition.CapabilityId);
-        cmd.Parameters.AddWithValue("@displayName", definition.DisplayName);
-        cmd.Parameters.AddWithValue("@description", definition.Description);
-        cmd.Parameters.AddWithValue("@ownerProjectId", (object?)definition.OwnerProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@implementationKind", definition.ImplementationKind);
-        cmd.Parameters.AddWithValue("@serviceEndpoint", (object?)definition.ServiceEndpoint ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@httpMethod", definition.HttpMethod);
-        cmd.Parameters.AddWithValue("@inputSchemaRef", (object?)definition.InputSchemaRef ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputSchemaRef", (object?)definition.OutputSchemaRef ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@inputSchemaJson", (object?)definition.InputSchemaJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputSchemaJson", (object?)definition.OutputSchemaJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sideEffectLevel", definition.SideEffectLevel);
-        cmd.Parameters.AddWithValue("@status", definition.Status);
-        cmd.Parameters.AddWithValue("@defaultModelJson", (object?)definition.DefaultModelJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@fallbackModelsJson", (object?)definition.FallbackModelsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@evalRefsJson", (object?)definition.EvalRefsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@timeoutMs", definition.TimeoutMs);
-        cmd.Parameters.AddWithValue("@maxRequestBytes", definition.MaxRequestBytes);
-        cmd.Parameters.AddWithValue("@metadataJson", (object?)definition.MetadataJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@capabilityId", definition.CapabilityId);
+        cmd.AddParameterWithValue("@displayName", definition.DisplayName);
+        cmd.AddParameterWithValue("@description", definition.Description);
+        cmd.AddParameterWithValue("@ownerProjectId", (object?)definition.OwnerProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@implementationKind", definition.ImplementationKind);
+        cmd.AddParameterWithValue("@serviceEndpoint", (object?)definition.ServiceEndpoint ?? DBNull.Value);
+        cmd.AddParameterWithValue("@httpMethod", definition.HttpMethod);
+        cmd.AddParameterWithValue("@inputSchemaRef", (object?)definition.InputSchemaRef ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputSchemaRef", (object?)definition.OutputSchemaRef ?? DBNull.Value);
+        cmd.AddParameterWithValue("@inputSchemaJson", (object?)definition.InputSchemaJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputSchemaJson", (object?)definition.OutputSchemaJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sideEffectLevel", definition.SideEffectLevel);
+        cmd.AddParameterWithValue("@status", definition.Status);
+        cmd.AddParameterWithValue("@defaultModelJson", (object?)definition.DefaultModelJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@fallbackModelsJson", (object?)definition.FallbackModelsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@evalRefsJson", (object?)definition.EvalRefsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@timeoutMs", definition.TimeoutMs);
+        cmd.AddParameterWithValue("@maxRequestBytes", definition.MaxRequestBytes);
+        cmd.AddParameterWithValue("@metadataJson", (object?)definition.MetadataJson ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -128,7 +128,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
             FROM capability_definitions
             WHERE capability_id = @capabilityId
             """;
-        cmd.Parameters.AddWithValue("@capabilityId", capabilityId);
+        cmd.AddParameterWithValue("@capabilityId", capabilityId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadDefinition(reader) : null;
@@ -143,17 +143,17 @@ public sealed class CapabilityRepository : ICapabilityRepository
         if (!string.IsNullOrWhiteSpace(options.Status))
         {
             where.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", options.Status);
+            cmd.AddParameterWithValue("@status", options.Status);
         }
         if (!string.IsNullOrWhiteSpace(options.SideEffectLevel))
         {
             where.Add("side_effect_level = @sideEffectLevel");
-            cmd.Parameters.AddWithValue("@sideEffectLevel", options.SideEffectLevel);
+            cmd.AddParameterWithValue("@sideEffectLevel", options.SideEffectLevel);
         }
         if (!string.IsNullOrWhiteSpace(options.OwnerProjectId))
         {
             where.Add("owner_project_id = @ownerProjectId");
-            cmd.Parameters.AddWithValue("@ownerProjectId", options.OwnerProjectId);
+            cmd.AddParameterWithValue("@ownerProjectId", options.OwnerProjectId);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -170,7 +170,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
             ORDER BY updated_at DESC, capability_id
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<CapabilityDefinition>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -212,24 +212,24 @@ public sealed class CapabilityRepository : ICapabilityRepository
                       error_type, error_message, metadata_json,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@invocationId", invocation.InvocationId ?? GenerateInvocationId());
-        cmd.Parameters.AddWithValue("@capabilityId", invocation.CapabilityId);
-        cmd.Parameters.AddWithValue("@capabilityVersion", (object?)invocation.CapabilityVersion ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@callerAgent", (object?)invocation.CallerAgent ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@callerProjectId", invocation.CallerProjectId);
-        cmd.Parameters.AddWithValue("@callerTaskId", (object?)invocation.CallerTaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@callerMessageId", (object?)invocation.CallerMessageId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@callerSurface", (object?)invocation.CallerSurface ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@inputArtifactRefsJson", (object?)invocation.InputArtifactRefsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requestJson", (object?)invocation.RequestJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requestHash", (object?)invocation.RequestHash ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", invocation.Status);
-        cmd.Parameters.AddWithValue("@startedAt", (object?)(invocation.StartedAt?.ToString("o")) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@completedAt", (object?)(invocation.CompletedAt?.ToString("o")) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@durationMs", (object?)invocation.DurationMs ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@errorType", (object?)invocation.ErrorType ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@errorMessage", (object?)invocation.ErrorMessage ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", (object?)invocation.MetadataJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@invocationId", invocation.InvocationId ?? GenerateInvocationId());
+        cmd.AddParameterWithValue("@capabilityId", invocation.CapabilityId);
+        cmd.AddParameterWithValue("@capabilityVersion", (object?)invocation.CapabilityVersion ?? DBNull.Value);
+        cmd.AddParameterWithValue("@callerAgent", (object?)invocation.CallerAgent ?? DBNull.Value);
+        cmd.AddParameterWithValue("@callerProjectId", invocation.CallerProjectId);
+        cmd.AddParameterWithValue("@callerTaskId", (object?)invocation.CallerTaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@callerMessageId", (object?)invocation.CallerMessageId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@callerSurface", (object?)invocation.CallerSurface ?? DBNull.Value);
+        cmd.AddParameterWithValue("@inputArtifactRefsJson", (object?)invocation.InputArtifactRefsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requestJson", (object?)invocation.RequestJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requestHash", (object?)invocation.RequestHash ?? DBNull.Value);
+        cmd.AddParameterWithValue("@status", invocation.Status);
+        cmd.AddParameterWithValue("@startedAt", (object?)(invocation.StartedAt?.ToString("o")) ?? DBNull.Value);
+        cmd.AddParameterWithValue("@completedAt", (object?)(invocation.CompletedAt?.ToString("o")) ?? DBNull.Value);
+        cmd.AddParameterWithValue("@durationMs", (object?)invocation.DurationMs ?? DBNull.Value);
+        cmd.AddParameterWithValue("@errorType", (object?)invocation.ErrorType ?? DBNull.Value);
+        cmd.AddParameterWithValue("@errorMessage", (object?)invocation.ErrorMessage ?? DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", (object?)invocation.MetadataJson ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -275,21 +275,21 @@ public sealed class CapabilityRepository : ICapabilityRepository
                       error_type, error_message, metadata_json,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@status", status);
-        cmd.Parameters.AddWithValue("@outputSummary", (object?)outputSummary ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@errorType", (object?)errorType ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@errorMessage", (object?)errorMessage ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@durationMs", (object?)durationMs ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@completedAt", (object?)(completedAt?.ToString("o")) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputJson", (object?)outputJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@modelProvider", (object?)modelProvider ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@modelName", (object?)modelName ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@modelVersion", (object?)modelVersion ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@timingsMsJson", (object?)timingsMsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@costJson", (object?)costJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@outputArtifactRefsJson", (object?)outputArtifactRefsJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadataJson", (object?)metadataJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@id", id);
+        cmd.AddParameterWithValue("@status", status);
+        cmd.AddParameterWithValue("@outputSummary", (object?)outputSummary ?? DBNull.Value);
+        cmd.AddParameterWithValue("@errorType", (object?)errorType ?? DBNull.Value);
+        cmd.AddParameterWithValue("@errorMessage", (object?)errorMessage ?? DBNull.Value);
+        cmd.AddParameterWithValue("@durationMs", (object?)durationMs ?? DBNull.Value);
+        cmd.AddParameterWithValue("@completedAt", (object?)(completedAt?.ToString("o")) ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputJson", (object?)outputJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@modelProvider", (object?)modelProvider ?? DBNull.Value);
+        cmd.AddParameterWithValue("@modelName", (object?)modelName ?? DBNull.Value);
+        cmd.AddParameterWithValue("@modelVersion", (object?)modelVersion ?? DBNull.Value);
+        cmd.AddParameterWithValue("@timingsMsJson", (object?)timingsMsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@costJson", (object?)costJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@outputArtifactRefsJson", (object?)outputArtifactRefsJson ?? DBNull.Value);
+        cmd.AddParameterWithValue("@metadataJson", (object?)metadataJson ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadInvocation(reader) : null;
@@ -313,7 +313,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
             FROM capability_invocations
             WHERE invocation_id = @invocationId
             """;
-        cmd.Parameters.AddWithValue("@invocationId", invocationId);
+        cmd.AddParameterWithValue("@invocationId", invocationId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadInvocation(reader) : null;
@@ -337,7 +337,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
             FROM capability_invocations
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadInvocation(reader) : null;
@@ -352,22 +352,22 @@ public sealed class CapabilityRepository : ICapabilityRepository
         if (!string.IsNullOrWhiteSpace(options.CapabilityId))
         {
             where.Add("capability_id = @capabilityId");
-            cmd.Parameters.AddWithValue("@capabilityId", options.CapabilityId);
+            cmd.AddParameterWithValue("@capabilityId", options.CapabilityId);
         }
         if (!string.IsNullOrWhiteSpace(options.CallerProjectId))
         {
             where.Add("caller_project_id = @callerProjectId");
-            cmd.Parameters.AddWithValue("@callerProjectId", options.CallerProjectId);
+            cmd.AddParameterWithValue("@callerProjectId", options.CallerProjectId);
         }
         if (options.CallerTaskId.HasValue)
         {
             where.Add("caller_task_id = @callerTaskId");
-            cmd.Parameters.AddWithValue("@callerTaskId", options.CallerTaskId.Value);
+            cmd.AddParameterWithValue("@callerTaskId", options.CallerTaskId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.Status))
         {
             where.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", options.Status);
+            cmd.AddParameterWithValue("@status", options.Status);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -387,7 +387,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<CapabilityInvocation>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -398,7 +398,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
 
     // ── Reader helpers ───────────────────────────────────────────────────
 
-    private static CapabilityDefinition ReadDefinition(SqliteDataReader reader)
+    private static CapabilityDefinition ReadDefinition(DbDataReader reader)
     {
         return new CapabilityDefinition
         {
@@ -426,7 +426,7 @@ public sealed class CapabilityRepository : ICapabilityRepository
         };
     }
 
-    private static CapabilityInvocation ReadInvocation(SqliteDataReader reader)
+    private static CapabilityInvocation ReadInvocation(DbDataReader reader)
     {
         return new CapabilityInvocation
         {

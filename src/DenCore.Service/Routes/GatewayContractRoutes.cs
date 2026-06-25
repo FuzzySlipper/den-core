@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -5,7 +6,6 @@ using DenCore;
 using DenCore.Data;
 using DenCore.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Service.Routes;
 
@@ -194,36 +194,42 @@ public static class GatewayContractRoutes
             checks["database"] = new GatewayReadinessCheck
             {
                 Status = "ready",
-                Message = "SQLite database is reachable."
+                Message = "Core database is reachable."
             };
 
             var requiredTables = new[] { "agent_instance_bindings", "agent_stream_entries", "tasks", "messages" };
-            var presentTables = new HashSet<string>(StringComparer.Ordinal);
-            await using (var tableCmd = conn.CreateCommand())
+            var missingTables = new List<string>();
+            foreach (var table in requiredTables)
             {
-                tableCmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
-                await using var reader = await tableCmd.ExecuteReaderAsync();
-                while (await reader.ReadAsync())
-                    presentTables.Add(reader.GetString(0));
+                try
+                {
+                    await using var tableCmd = conn.CreateCommand();
+                    tableCmd.CommandText = $"SELECT 1 FROM {table} LIMIT 0";
+                    await using var _ = await tableCmd.ExecuteReaderAsync();
+                }
+                catch (DbException)
+                {
+                    missingTables.Add(table);
+                }
             }
 
-            var missingTables = requiredTables.Where(t => !presentTables.Contains(t)).ToArray();
+            var missingTableNames = missingTables.ToArray();
             checks["migrations"] = new GatewayReadinessCheck
             {
-                Status = missingTables.Length == 0 ? "ready" : "blocked",
-                Message = missingTables.Length == 0
+                Status = missingTableNames.Length == 0 ? "ready" : "blocked",
+                Message = missingTableNames.Length == 0
                     ? "Gateway-relevant Core tables are present."
                     : "Gateway-relevant Core tables are missing.",
                 Metadata = new Dictionary<string, object?>
                 {
                     ["required_tables"] = requiredTables,
-                    ["missing_tables"] = missingTables
+                    ["missing_tables"] = missingTableNames
                 }
             };
 
             checks["gateway_contract"] = new GatewayReadinessCheck
             {
-                Status = missingTables.Length == 0 ? "ready" : "blocked",
+                Status = missingTableNames.Length == 0 ? "ready" : "blocked",
                 Message = "Gateway contract endpoints are mapped by Den Core.",
                 Metadata = new Dictionary<string, object?>
                 {
@@ -238,13 +244,13 @@ public static class GatewayContractRoutes
                 }
             };
         }
-        catch (SqliteException ex)
+        catch (DbException ex)
         {
             checks["database"] = new GatewayReadinessCheck
             {
                 Status = "blocked",
-                Message = "SQLite database is not reachable.",
-                Metadata = new Dictionary<string, object?> { ["sqlite_error_code"] = ex.SqliteErrorCode }
+                Message = "Core database is not reachable.",
+                Metadata = new Dictionary<string, object?> { ["provider_exception"] = ex.GetType().Name }
             };
             checks["migrations"] = new GatewayReadinessCheck
             {

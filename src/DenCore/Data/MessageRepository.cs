@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 using Thread = DenCore.Models.Thread;
 
 namespace DenCore.Data;
@@ -47,13 +47,13 @@ public sealed class MessageRepository : IMessageRepository
             VALUES (@projectId, @taskId, @threadId, @sender, @content, @intent, @metadata)
             RETURNING id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", message.ProjectId);
-        cmd.Parameters.AddWithValue("@taskId", (object?)message.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@threadId", (object?)message.ThreadId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sender", message.Sender);
-        cmd.Parameters.AddWithValue("@content", message.Content);
-        cmd.Parameters.AddWithValue("@intent", resolvedIntent.ToDbValue());
-        cmd.Parameters.AddWithValue("@metadata",
+        cmd.AddParameterWithValue("@projectId", message.ProjectId);
+        cmd.AddParameterWithValue("@taskId", (object?)message.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@threadId", (object?)message.ThreadId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sender", message.Sender);
+        cmd.AddParameterWithValue("@content", message.Content);
+        cmd.AddParameterWithValue("@intent", resolvedIntent.ToDbValue());
+        cmd.AddParameterWithValue("@metadata",
             message.Metadata.HasValue ? message.Metadata.Value.GetRawText() : DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -69,7 +69,7 @@ public sealed class MessageRepository : IMessageRepository
             SELECT id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at
             FROM messages WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadMessage(reader) : null;
@@ -84,18 +84,18 @@ public sealed class MessageRepository : IMessageRepository
         await using var cmd = conn.CreateCommand();
 
         var where = new List<string> { "m.project_id = @projectId" };
-        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@projectId", projectId);
 
         if (taskId is not null)
         {
             where.Add("m.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", taskId.Value);
+            cmd.AddParameterWithValue("@taskId", taskId.Value);
         }
 
         if (since is not null)
         {
             where.Add("m.created_at > @since");
-            cmd.Parameters.AddWithValue("@since", since.Value.ToString("yyyy-MM-dd HH:mm:ss"));
+            cmd.AddParameterWithValue("@since", since.Value.ToString("yyyy-MM-dd HH:mm:ss"));
         }
 
         if (unreadFor is not null)
@@ -107,13 +107,13 @@ public sealed class MessageRepository : IMessageRepository
                 )
                 """);
             where.Add("m.sender != @unreadFor");
-            cmd.Parameters.AddWithValue("@unreadFor", unreadFor);
+            cmd.AddParameterWithValue("@unreadFor", unreadFor);
         }
 
         if (intent is not null)
         {
             where.Add("m.intent = @intent");
-            cmd.Parameters.AddWithValue("@intent", intent.Value.ToDbValue());
+            cmd.AddParameterWithValue("@intent", intent.Value.ToDbValue());
         }
 
         cmd.CommandText = $"""
@@ -123,7 +123,7 @@ public sealed class MessageRepository : IMessageRepository
             ORDER BY m.created_at DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@limit", limit);
 
         var messages = new List<Message>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -174,10 +174,10 @@ public sealed class MessageRepository : IMessageRepository
             ORDER BY cr.latest_activity_at DESC, cr.root_id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@limit", limit);
         if (intent is not null)
-            cmd.Parameters.AddWithValue("@intent", intent.Value.ToDbValue());
+            cmd.AddParameterWithValue("@intent", intent.Value.ToDbValue());
 
         var items = new List<MessageFeedItem>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -202,7 +202,7 @@ public sealed class MessageRepository : IMessageRepository
         // Get root message
         await using var rootCmd = conn.CreateCommand();
         rootCmd.CommandText = "SELECT id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at FROM messages WHERE id = @id";
-        rootCmd.Parameters.AddWithValue("@id", threadId);
+        rootCmd.AddParameterWithValue("@id", threadId);
         await using var rootReader = await rootCmd.ExecuteReaderAsync();
         if (!await rootReader.ReadAsync())
             throw new KeyNotFoundException($"Message {threadId} not found");
@@ -216,7 +216,7 @@ public sealed class MessageRepository : IMessageRepository
             FROM messages WHERE thread_id = @threadId
             ORDER BY created_at ASC
             """;
-        repliesCmd.Parameters.AddWithValue("@threadId", threadId);
+        repliesCmd.AddParameterWithValue("@threadId", threadId);
 
         var replies = new List<Message>();
         await using var repliesReader = await repliesCmd.ExecuteReaderAsync();
@@ -237,8 +237,8 @@ public sealed class MessageRepository : IMessageRepository
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "INSERT OR IGNORE INTO message_reads (message_id, agent) VALUES (@msgId, @agent)";
-            cmd.Parameters.AddWithValue("@msgId", msgId);
-            cmd.Parameters.AddWithValue("@agent", agent);
+            cmd.AddParameterWithValue("@msgId", msgId);
+            cmd.AddParameterWithValue("@agent", agent);
             count += await cmd.ExecuteNonQueryAsync();
         }
 
@@ -267,31 +267,31 @@ public sealed class MessageRepository : IMessageRepository
         if (projectId is not null)
         {
             where.Add("m.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         if (taskId is not null)
         {
             where.Add("m.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", taskId.Value);
+            cmd.AddParameterWithValue("@taskId", taskId.Value);
         }
 
         if (sender is not null)
         {
             where.Add("m.sender = @sender");
-            cmd.Parameters.AddWithValue("@sender", sender);
+            cmd.AddParameterWithValue("@sender", sender);
         }
 
         if (metadataType is not null)
         {
             where.Add("json_extract(m.metadata, '$.type') = @metadataType");
-            cmd.Parameters.AddWithValue("@metadataType", metadataType);
+            cmd.AddParameterWithValue("@metadataType", metadataType);
         }
 
         if (urgency is not null)
         {
             where.Add("json_extract(m.metadata, '$.urgency') = @urgency");
-            cmd.Parameters.AddWithValue("@urgency", urgency);
+            cmd.AddParameterWithValue("@urgency", urgency);
         }
 
         if (isRead is not null && readForAgent is not null)
@@ -314,7 +314,7 @@ public sealed class MessageRepository : IMessageRepository
                     )
                     """);
             }
-            cmd.Parameters.AddWithValue("@readForAgent", readForAgent);
+            cmd.AddParameterWithValue("@readForAgent", readForAgent);
         }
 
         var isReadExpr = readForAgent is not null
@@ -326,11 +326,11 @@ public sealed class MessageRepository : IMessageRepository
                 """
             : "0";
 
-        cmd.Parameters.AddWithValue("@limit", limit);
-        cmd.Parameters.AddWithValue("@offset", offset);
+        cmd.AddParameterWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@offset", offset);
 
         if (readForAgent is not null)
-            cmd.Parameters.AddWithValue("@readForAgentResult", readForAgent);
+            cmd.AddParameterWithValue("@readForAgentResult", readForAgent);
 
         cmd.CommandText = $"""
             SELECT
@@ -384,8 +384,8 @@ public sealed class MessageRepository : IMessageRepository
                     SELECT 1 FROM messages m WHERE m.id = @msgId AND m.intent = 'notification'
                 )
                 """;
-            cmd.Parameters.AddWithValue("@msgId", msgId);
-            cmd.Parameters.AddWithValue("@agent", agent);
+            cmd.AddParameterWithValue("@msgId", msgId);
+            cmd.AddParameterWithValue("@agent", agent);
             count += await cmd.ExecuteNonQueryAsync();
         }
 
@@ -406,10 +406,10 @@ public sealed class MessageRepository : IMessageRepository
               AND m.project_id = @projectId
               {taskClause}
             """;
-        cmd.Parameters.AddWithValue("@agent", agent);
-        cmd.Parameters.AddWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@agent", agent);
+        cmd.AddParameterWithValue("@projectId", projectId);
         if (taskId is not null)
-            cmd.Parameters.AddWithValue("@taskId", taskId.Value);
+            cmd.AddParameterWithValue("@taskId", taskId.Value);
 
         return await cmd.ExecuteNonQueryAsync();
     }
@@ -485,10 +485,10 @@ public sealed class MessageRepository : IMessageRepository
             ORDER BY m.created_at DESC, m.id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@cursorMessageId", cursorMessageId);
-        cmd.Parameters.AddWithValue("@unreadFor", unreadFor);
-        cmd.Parameters.AddWithValue("@limit", limit);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@cursorMessageId", cursorMessageId);
+        cmd.AddParameterWithValue("@unreadFor", unreadFor);
+        cmd.AddParameterWithValue("@limit", limit);
 
         var messages = new List<Message>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -497,7 +497,7 @@ public sealed class MessageRepository : IMessageRepository
         return messages;
     }
 
-    private static Message ReadMessage(SqliteDataReader reader, int offset = 0)
+    private static Message ReadMessage(DbDataReader reader, int offset = 0)
     {
         var metaJson = reader.IsDBNull(offset + 7) ? null : reader.GetString(offset + 7);
         return new Message

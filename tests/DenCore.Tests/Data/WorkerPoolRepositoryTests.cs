@@ -83,8 +83,8 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             SET created_at = datetime('now', @relative_time)
             WHERE id = @assignment_id
             """;
-        cmd.Parameters.AddWithValue("@relative_time", sqliteRelativeTime);
-        cmd.Parameters.AddWithValue("@assignment_id", assignmentId);
+        cmd.AddParameterWithValue("@relative_time", sqliteRelativeTime);
+        cmd.AddParameterWithValue("@assignment_id", assignmentId);
         Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
     }
 
@@ -2135,7 +2135,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE orchestrator_leases SET lease_expires_at = datetime('now', '-1 hour') WHERE id = @id";
-            cmd.Parameters.AddWithValue("@id", lease.Id);
+            cmd.AddParameterWithValue("@id", lease.Id);
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -2530,9 +2530,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
             VALUES (@assignmentId, @runId, 'progress', @payload, datetime('now', '-20 minutes'))
             """;
-        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
-        cmd.Parameters.AddWithValue("@runId", "run-old-ckpt");
-        cmd.Parameters.AddWithValue("@payload", """{"status":"in_progress"}""");
+        cmd.AddParameterWithValue("@assignmentId", assignment.Id);
+        cmd.AddParameterWithValue("@runId", "run-old-ckpt");
+        cmd.AddParameterWithValue("@payload", """{"status":"in_progress"}""");
         await cmd.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
@@ -2573,9 +2573,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
             VALUES (@assignmentId, @runId, 'progress', @payload, datetime('now', '-2 minutes'))
             """;
-        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
-        cmd.Parameters.AddWithValue("@runId", "run-recent-ckpt");
-        cmd.Parameters.AddWithValue("@payload", """{"status":"in_progress"}""");
+        cmd.AddParameterWithValue("@assignmentId", assignment.Id);
+        cmd.AddParameterWithValue("@runId", "run-recent-ckpt");
+        cmd.AddParameterWithValue("@payload", """{"status":"in_progress"}""");
         await cmd.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
@@ -2611,9 +2611,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             INSERT INTO worker_checkpoints (assignment_id, run_id, checkpoint_type, payload, created_at)
             VALUES (@assignmentId, @runId, 'completion', @payload, datetime('now'))
             """;
-        cmd.Parameters.AddWithValue("@assignmentId", assignment.Id);
-        cmd.Parameters.AddWithValue("@runId", "run-sweep-done");
-        cmd.Parameters.AddWithValue("@payload", """{"status":"completed"}""");
+        cmd.AddParameterWithValue("@assignmentId", assignment.Id);
+        cmd.AddParameterWithValue("@runId", "run-sweep-done");
+        cmd.AddParameterWithValue("@payload", """{"status":"completed"}""");
         await cmd.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions());
@@ -2648,7 +2648,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             VALUES ('sweep-dup-worker', 'run-sweep-dup', 'test-proj', @taskId, 'coder', 'runner',
                 'ack', 'sweep-dup-worker:run-sweep-dup:2', '', datetime('now'))
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         await cmd.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions());
@@ -2672,7 +2672,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
                 @taskId, 'Review', 'dedup-direct-agent-1',
                 datetime('now', '+24 hours'), datetime('now', '-20 minutes'))
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         await cmd.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
@@ -2704,7 +2704,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
                 @taskId, 'Review', 'dedup-direct-agent-2',
                 datetime('now', '+24 hours'), datetime('now', '-20 minutes'))
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@taskId", taskId);
         await cmd.ExecuteNonQueryAsync();
 
         // Create a terminal worker assignment for the same task
@@ -2717,7 +2717,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
                 'completed', 'terminal-worker:run-terminal:1', '', datetime('now'),
                 datetime('now', '-15 minutes'))
             """;
-        cmd2.Parameters.AddWithValue("@taskId", taskId);
+        cmd2.AddParameterWithValue("@taskId", taskId);
         await cmd2.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
@@ -2894,7 +2894,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
                 'running', 'child-worker:run-child-1:1', '', datetime('now'),
                 datetime('now', '-25 minutes'))
             """;
-        cmdAssign.Parameters.AddWithValue("@taskId", taskId);
+        cmdAssign.AddParameterWithValue("@taskId", taskId);
         await cmdAssign.ExecuteNonQueryAsync();
 
         var result = await _repo.SweepStaleWorkersAsync(new StaleSweepOptions
@@ -3059,9 +3059,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             SET requested_at = datetime('now', @offset)
             WHERE task_id = @taskId AND round_number = @roundNumber
             """;
-        cmd.Parameters.AddWithValue("@taskId", taskId);
-        cmd.Parameters.AddWithValue("@roundNumber", roundNumber);
-        cmd.Parameters.AddWithValue("@offset", sqliteOffset);
+        cmd.AddParameterWithValue("@taskId", taskId);
+        cmd.AddParameterWithValue("@roundNumber", roundNumber);
+        cmd.AddParameterWithValue("@offset", sqliteOffset);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -3084,8 +3084,8 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
                 (@t2016, 1, 'den-mcp-runner', 'task/2016', 'main', 'abc123', 'def456', datetime('now', '-45 minutes')),
                 (@t2023, 1, 'den-mcp-runner', 'task/2023', 'main', 'abc123', 'def456', datetime('now', '-45 minutes'))
                 """;
-            cmd.Parameters.AddWithValue("@t2016", task2016Id);
-            cmd.Parameters.AddWithValue("@t2023", task2023Id);
+            cmd.AddParameterWithValue("@t2016", task2016Id);
+            cmd.AddParameterWithValue("@t2023", task2023Id);
             await cmd.ExecuteNonQueryAsync();
         }
 

@@ -1,7 +1,7 @@
 using System.Globalization;
+using System.Data.Common;
 using System.Text.Json;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -250,20 +250,20 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 updated_at = datetime('now')
             RETURNING {MemberColumns}
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", member.WorkerIdentity);
-        cmd.Parameters.AddWithValue("@profileIdentity", member.ProfileIdentity);
-        cmd.Parameters.AddWithValue("@workerRole", (object?)member.WorkerRole ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@displayName", (object?)member.DisplayName ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@capabilities", (object?)member.Capabilities ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@status", member.Status);
-        cmd.Parameters.AddWithValue("@lastHeartbeat", (object?)member.LastHeartbeat ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@agentInstanceId", (object?)member.AgentInstanceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@channelId", (object?)member.ChannelId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@sessionId", (object?)member.SessionId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@adapterInstanceId", (object?)member.AdapterInstanceId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@logPointer", (object?)member.LogPointer ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@staleAfterSeconds", (object?)member.StaleAfterSeconds ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@metadata", (object?)member.Metadata ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workerIdentity", member.WorkerIdentity);
+        cmd.AddParameterWithValue("@profileIdentity", member.ProfileIdentity);
+        cmd.AddParameterWithValue("@workerRole", (object?)member.WorkerRole ?? DBNull.Value);
+        cmd.AddParameterWithValue("@displayName", (object?)member.DisplayName ?? DBNull.Value);
+        cmd.AddParameterWithValue("@capabilities", (object?)member.Capabilities ?? DBNull.Value);
+        cmd.AddParameterWithValue("@status", member.Status);
+        cmd.AddParameterWithValue("@lastHeartbeat", (object?)member.LastHeartbeat ?? DBNull.Value);
+        cmd.AddParameterWithValue("@agentInstanceId", (object?)member.AgentInstanceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@channelId", (object?)member.ChannelId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@sessionId", (object?)member.SessionId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@adapterInstanceId", (object?)member.AdapterInstanceId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@logPointer", (object?)member.LogPointer ?? DBNull.Value);
+        cmd.AddParameterWithValue("@staleAfterSeconds", (object?)member.StaleAfterSeconds ?? DBNull.Value);
+        cmd.AddParameterWithValue("@metadata", (object?)member.Metadata ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -279,7 +279,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM worker_pool_members
             WHERE worker_identity = @workerIdentity
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
+        cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadMember(reader) : null;
@@ -294,22 +294,22 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(options.Status))
         {
             where.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", options.Status);
+            cmd.AddParameterWithValue("@status", options.Status);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkerIdentity))
         {
             where.Add("worker_identity = @workerIdentity");
-            cmd.Parameters.AddWithValue("@workerIdentity", options.WorkerIdentity);
+            cmd.AddParameterWithValue("@workerIdentity", options.WorkerIdentity);
         }
         if (!string.IsNullOrWhiteSpace(options.ProfileIdentity))
         {
             where.Add("profile_identity = @profileIdentity");
-            cmd.Parameters.AddWithValue("@profileIdentity", options.ProfileIdentity);
+            cmd.AddParameterWithValue("@profileIdentity", options.ProfileIdentity);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkerRole))
         {
             where.Add("worker_role = @workerRole");
-            cmd.Parameters.AddWithValue("@workerRole", options.WorkerRole);
+            cmd.AddParameterWithValue("@workerRole", options.WorkerRole);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -320,7 +320,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY updated_at DESC, worker_identity
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<WorkerPoolMember>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -338,7 +338,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (metadata is not null)
         {
             setClauses.Add("metadata = @metadata");
-            cmd.Parameters.AddWithValue("@metadata", metadata);
+            cmd.AddParameterWithValue("@metadata", metadata);
         }
 
         cmd.CommandText = $"""
@@ -346,8 +346,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             SET {string.Join(", ", setClauses)}
             WHERE worker_identity = @workerIdentity
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
-        cmd.Parameters.AddWithValue("@status", status);
+        cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
+        cmd.AddParameterWithValue("@status", status);
 
         return await cmd.ExecuteNonQueryAsync();
     }
@@ -393,7 +393,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         }
     }
 
-    private static async Task<WorkerAssignment?> TryLeaseSpecificWorkerAsync(SqliteConnection conn, LeaseWorkerInput input)
+    private static async Task<WorkerAssignment?> TryLeaseSpecificWorkerAsync(DbConnection conn, LeaseWorkerInput input)
     {
         // Check worker is available
         var worker = await GetMemberByConnAsync(conn, input.PreferredWorkerIdentity!);
@@ -426,14 +426,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, acquired_at, released_at,
                       created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", input.PreferredWorkerIdentity!);
-        cmd.Parameters.AddWithValue("@runId", input.RunId);
-        cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@role", input.Role);
-        cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
-        cmd.Parameters.AddWithValue("@leaseId", leaseId);
-        cmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
+        cmd.AddParameterWithValue("@workerIdentity", input.PreferredWorkerIdentity!);
+        cmd.AddParameterWithValue("@runId", input.RunId);
+        cmd.AddParameterWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@role", input.Role);
+        cmd.AddParameterWithValue("@assignedBy", input.AssignedBy);
+        cmd.AddParameterWithValue("@leaseId", leaseId);
+        cmd.AddParameterWithValue("@profileIdentity", worker.ProfileIdentity);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -458,7 +458,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY wa.id DESC
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@runId", runId);
+        cmd.AddParameterWithValue("@runId", runId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadAssignmentWithJoin(reader) : null;
@@ -473,27 +473,27 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("wa.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (options.TaskId is not null)
         {
             where.Add("wa.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.WorkerIdentity))
         {
             where.Add("wa.worker_identity = @workerIdentity");
-            cmd.Parameters.AddWithValue("@workerIdentity", options.WorkerIdentity);
+            cmd.AddParameterWithValue("@workerIdentity", options.WorkerIdentity);
         }
         if (!string.IsNullOrWhiteSpace(options.State))
         {
             where.Add("wa.state = @state");
-            cmd.Parameters.AddWithValue("@state", options.State);
+            cmd.AddParameterWithValue("@state", options.State);
         }
         if (!string.IsNullOrWhiteSpace(options.Role))
         {
             where.Add("wa.role = @role");
-            cmd.Parameters.AddWithValue("@role", options.Role);
+            cmd.AddParameterWithValue("@role", options.Role);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -505,7 +505,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY wa.updated_at DESC, wa.id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<WorkerAssignment>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -564,8 +564,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE id = @id
                 RETURNING {AssignmentColumns}
                 """;
-            cmd.Parameters.AddWithValue("@id", assignmentId);
-            cmd.Parameters.AddWithValue("@newState", newState);
+            cmd.AddParameterWithValue("@id", assignmentId);
+            cmd.AddParameterWithValue("@newState", newState);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             var updated = await reader.ReadAsync() ? ReadAssignment(reader) : null;
@@ -616,10 +616,10 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 VALUES (@assignmentId, @runId, @checkpointType, @payload)
                 RETURNING id, assignment_id, run_id, checkpoint_type, payload, created_at
                 """;
-            cmd.Parameters.AddWithValue("@assignmentId", assignmentId);
-            cmd.Parameters.AddWithValue("@runId", runId);
-            cmd.Parameters.AddWithValue("@checkpointType", checkpointType);
-            cmd.Parameters.AddWithValue("@payload", payload);
+            cmd.AddParameterWithValue("@assignmentId", assignmentId);
+            cmd.AddParameterWithValue("@runId", runId);
+            cmd.AddParameterWithValue("@checkpointType", checkpointType);
+            cmd.AddParameterWithValue("@payload", payload);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             await reader.ReadAsync();
@@ -645,10 +645,10 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE id = @assignmentId
                 RETURNING worker_identity
                 """;
-            updateCmd.Parameters.AddWithValue("@checkpointId", checkpoint.Id);
-            updateCmd.Parameters.AddWithValue("@assignmentId", assignmentId);
-            updateCmd.Parameters.AddWithValue("@newState", newState);
-            updateCmd.Parameters.AddWithValue("@isTerminal", WorkerPoolStates.IsTerminal(newState) ? 1 : 0);
+            updateCmd.AddParameterWithValue("@checkpointId", checkpoint.Id);
+            updateCmd.AddParameterWithValue("@assignmentId", assignmentId);
+            updateCmd.AddParameterWithValue("@newState", newState);
+            updateCmd.AddParameterWithValue("@isTerminal", WorkerPoolStates.IsTerminal(newState) ? 1 : 0);
 
             var workerIdentity = (string?)await updateCmd.ExecuteScalarAsync();
 
@@ -677,17 +677,17 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (options.AssignmentId is not null)
         {
             where.Add("assignment_id = @assignmentId");
-            cmd.Parameters.AddWithValue("@assignmentId", options.AssignmentId.Value);
+            cmd.AddParameterWithValue("@assignmentId", options.AssignmentId.Value);
         }
         if (!string.IsNullOrWhiteSpace(options.RunId))
         {
             where.Add("run_id = @runId");
-            cmd.Parameters.AddWithValue("@runId", options.RunId);
+            cmd.AddParameterWithValue("@runId", options.RunId);
         }
         if (!string.IsNullOrWhiteSpace(options.CheckpointType))
         {
             where.Add("checkpoint_type = @checkpointType");
-            cmd.Parameters.AddWithValue("@checkpointType", options.CheckpointType);
+            cmd.AddParameterWithValue("@checkpointType", options.CheckpointType);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -698,7 +698,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<WorkerCheckpoint>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -746,11 +746,11 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 VALUES (@checkpointId, @assignmentId, @runId, @responseType, @payload)
                 RETURNING id, checkpoint_id, assignment_id, run_id, response_type, payload, created_at
                 """;
-            cmd.Parameters.AddWithValue("@checkpointId", checkpointId);
-            cmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
-            cmd.Parameters.AddWithValue("@runId", runId);
-            cmd.Parameters.AddWithValue("@responseType", responseType);
-            cmd.Parameters.AddWithValue("@payload", payload);
+            cmd.AddParameterWithValue("@checkpointId", checkpointId);
+            cmd.AddParameterWithValue("@assignmentId", effectiveAssignmentId);
+            cmd.AddParameterWithValue("@runId", runId);
+            cmd.AddParameterWithValue("@responseType", responseType);
+            cmd.AddParameterWithValue("@payload", payload);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             await reader.ReadAsync();
@@ -766,7 +766,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SET state = 'running', updated_at = datetime('now')
                     WHERE id = @assignmentId AND state = 'checkpoint_waiting'
                     """;
-                updateCmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
+                updateCmd.AddParameterWithValue("@assignmentId", effectiveAssignmentId);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
@@ -781,7 +781,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SET state = 'expired', released_at = datetime('now'), updated_at = datetime('now')
                     WHERE id = @assignmentId AND state NOT IN ('completed', 'failed', 'expired')
                     """;
-                updateCmd.Parameters.AddWithValue("@assignmentId", effectiveAssignmentId);
+                updateCmd.AddParameterWithValue("@assignmentId", effectiveAssignmentId);
                 await updateCmd.ExecuteNonQueryAsync();
             }
 
@@ -805,7 +805,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             WHERE checkpoint_id = @checkpointId
             ORDER BY created_at ASC, id ASC
             """;
-        cmd.Parameters.AddWithValue("@checkpointId", checkpointId);
+        cmd.AddParameterWithValue("@checkpointId", checkpointId);
 
         var results = new List<CheckpointResponse>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -825,8 +825,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@runId", runId);
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 200));
+        cmd.AddParameterWithValue("@runId", runId);
+        cmd.AddParameterWithValue("@limit", Math.Clamp(limit, 1, 200));
 
         var results = new List<CheckpointResponse>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -856,8 +856,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             WHERE id = @id
             RETURNING {AssignmentColumns}
             """;
-        cmd.Parameters.AddWithValue("@id", assignmentId);
-        cmd.Parameters.AddWithValue("@evidenceJson", evidenceJson);
+        cmd.AddParameterWithValue("@id", assignmentId);
+        cmd.AddParameterWithValue("@evidenceJson", evidenceJson);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadAssignment(reader) : null;
@@ -889,7 +889,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             WHERE id = @id
             RETURNING {AssignmentColumns}
             """;
-        cmd.Parameters.AddWithValue("@id", assignmentId);
+        cmd.AddParameterWithValue("@id", assignmentId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadAssignment(reader) : null;
@@ -935,8 +935,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     updated_at = datetime('now')
                 WHERE worker_identity = @workerIdentity
                 """;
-            cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
-            cmd.Parameters.AddWithValue("@metadata", metadata);
+            cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
+            cmd.AddParameterWithValue("@metadata", metadata);
 
             var result = await cmd.ExecuteNonQueryAsync() > 0;
             await tx.CommitAsync();
@@ -1234,17 +1234,17 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (!string.IsNullOrWhiteSpace(options.RunId))
         {
             where.Add("run_id = @runId");
-            cmd.Parameters.AddWithValue("@runId", options.RunId);
+            cmd.AddParameterWithValue("@runId", options.RunId);
         }
         if (!string.IsNullOrWhiteSpace(options.ReasonCode))
         {
             where.Add("reason_code = @reasonCode");
-            cmd.Parameters.AddWithValue("@reasonCode", options.ReasonCode);
+            cmd.AddParameterWithValue("@reasonCode", options.ReasonCode);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -1257,7 +1257,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY created_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<WorkerNoCapacityRequest>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -1277,7 +1277,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM worker_no_capacity_requests
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadNoCapacityRequest(reader) : null;
@@ -1288,7 +1288,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// <summary>
     /// Count matching workers by status to build candidate statistics.
     /// </summary>
-    private static async Task<WorkerCandidateStats> CountCandidatesByStatusAsync(SqliteConnection conn, string? profileIdentity, string? workerRole)
+    private static async Task<WorkerCandidateStats> CountCandidatesByStatusAsync(DbConnection conn, string? profileIdentity, string? workerRole)
     {
         var stats = new WorkerCandidateStats();
         await using var cmd = conn.CreateCommand();
@@ -1299,12 +1299,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(profileIdentity))
         {
             filters.Add("profile_identity = @profileIdentity");
-            cmd.Parameters.AddWithValue("@profileIdentity", profileIdentity);
+            cmd.AddParameterWithValue("@profileIdentity", profileIdentity);
         }
         if (!string.IsNullOrWhiteSpace(workerRole))
         {
             filters.Add("worker_role = @workerRole");
-            cmd.Parameters.AddWithValue("@workerRole", workerRole);
+            cmd.AddParameterWithValue("@workerRole", workerRole);
         }
 
         if (filters.Count > 0)
@@ -1335,7 +1335,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// no_matching_worker, all_busy, all_quarantined_or_offline, hard_selector_mismatch,
     /// and ambiguous.
     /// </summary>
-    private static async Task<string> DiagnoseNoMatchingWorkersAsync(SqliteConnection conn, LeaseWorkerInput input)
+    private static async Task<string> DiagnoseNoMatchingWorkersAsync(DbConnection conn, LeaseWorkerInput input)
     {
         var stats = await CountCandidatesByStatusAsync(conn, input.ProfileIdentity, input.WorkerRole);
 
@@ -1379,7 +1379,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// Insert a no-capacity request record and return the created entity.
     /// </summary>
     private static async Task<WorkerNoCapacityRequest> InsertNoCapacityRequestAsync(
-        SqliteConnection conn, LeaseWorkerInput input, string reasonCode,
+        DbConnection conn, LeaseWorkerInput input, string reasonCode,
         WorkerCandidateStats stats, string? diagnosticMessage)
     {
         await using var cmd = conn.CreateCommand();
@@ -1396,20 +1396,20 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       profile_identity, worker_role, required_capabilities, preferred_worker_identity,
                       reason_code, candidate_details, diagnostic_message, created_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@role", input.Role);
-        cmd.Parameters.AddWithValue("@assignedBy", input.AssignedBy);
-        cmd.Parameters.AddWithValue("@runId", input.RunId);
-        cmd.Parameters.AddWithValue("@profileIdentity", (object?)input.ProfileIdentity ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@workerRole", (object?)input.WorkerRole ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@requiredCapabilities", (object?)(input.RequiredCapabilities is not null
+        cmd.AddParameterWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
+        cmd.AddParameterWithValue("@role", input.Role);
+        cmd.AddParameterWithValue("@assignedBy", input.AssignedBy);
+        cmd.AddParameterWithValue("@runId", input.RunId);
+        cmd.AddParameterWithValue("@profileIdentity", (object?)input.ProfileIdentity ?? DBNull.Value);
+        cmd.AddParameterWithValue("@workerRole", (object?)input.WorkerRole ?? DBNull.Value);
+        cmd.AddParameterWithValue("@requiredCapabilities", (object?)(input.RequiredCapabilities is not null
             ? System.Text.Json.JsonSerializer.Serialize(input.RequiredCapabilities)
             : null) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@preferredWorkerIdentity", (object?)input.PreferredWorkerIdentity ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@reasonCode", reasonCode);
-        cmd.Parameters.AddWithValue("@candidateDetails", stats.ToJson());
-        cmd.Parameters.AddWithValue("@diagnosticMessage", (object?)diagnosticMessage ?? DBNull.Value);
+        cmd.AddParameterWithValue("@preferredWorkerIdentity", (object?)input.PreferredWorkerIdentity ?? DBNull.Value);
+        cmd.AddParameterWithValue("@reasonCode", reasonCode);
+        cmd.AddParameterWithValue("@candidateDetails", stats.ToJson());
+        cmd.AddParameterWithValue("@diagnosticMessage", (object?)diagnosticMessage ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -1422,7 +1422,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// 6 profile_identity, 7 worker_role, 8 required_capabilities, 9 preferred_worker_identity,
     /// 10 reason_code, 11 candidate_details, 12 diagnostic_message, 13 created_at
     /// </summary>
-    private static WorkerNoCapacityRequest ReadNoCapacityRequest(SqliteDataReader reader) => new()
+    private static WorkerNoCapacityRequest ReadNoCapacityRequest(DbDataReader reader) => new()
     {
         Id = reader.GetInt32(0),
         ProjectId = reader.GetString(1),
@@ -1448,7 +1448,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// 5 status, 6 last_heartbeat, 7 agent_instance_id, 8 channel_id, 9 session_id, 10 metadata,
     /// 11 created_at, 12 updated_at
     /// </summary>
-    private static WorkerPoolMember ReadMember(SqliteDataReader reader) => new()
+    private static WorkerPoolMember ReadMember(DbDataReader reader) => new()
     {
         WorkerIdentity = reader.GetString(0),
         ProfileIdentity = reader.GetString(1),
@@ -1474,7 +1474,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// 7 state, 8 lease_id, 9 profile_identity, 10 latest_checkpoint_id, 11 cleanup_evidence,
     /// 12 cleanup_recorded_at, 13 acquired_at, 14 released_at, 15 created_at, 16 updated_at
     /// </summary>
-    private static WorkerAssignment ReadAssignment(SqliteDataReader reader) => new()
+    private static WorkerAssignment ReadAssignment(DbDataReader reader) => new()
     {
         Id = reader.GetInt32(0),
         WorkerIdentity = reader.GetString(1),
@@ -1500,7 +1500,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// Manual JOIN columns are at positions 17-19: worker_role, agent_instance_id, channel_id.
     /// profile_identity is now a column on wa itself (denormalized at insert).
     /// </summary>
-    private static WorkerAssignment ReadAssignmentWithJoin(SqliteDataReader reader)
+    private static WorkerAssignment ReadAssignmentWithJoin(DbDataReader reader)
     {
         var assignment = ReadAssignment(reader);
         // Columns 17-19 are the LEFT JOIN denormalized fields
@@ -1519,7 +1519,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     /// 11 cleanup_evidence, 12 cleanup_recorded_at, 13 acquired_at, 14 released_at,
     /// 15 created_at, 16 updated_at
     /// </summary>
-    private static WorkerAssignment ReadAssignment(SqliteDataReader reader, WorkerPoolMember worker) => new()
+    private static WorkerAssignment ReadAssignment(DbDataReader reader, WorkerPoolMember worker) => new()
     {
         Id = reader.GetInt32(0),
         WorkerIdentity = reader.GetString(1),
@@ -1544,7 +1544,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         UpdatedAt = DateTime.Parse(reader.GetString(16)),
     };
 
-    private static async Task<WorkerPoolMember?> GetMemberByConnAsync(SqliteConnection conn, string workerIdentity)
+    private static async Task<WorkerPoolMember?> GetMemberByConnAsync(DbConnection conn, string workerIdentity)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -1552,12 +1552,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM worker_pool_members
             WHERE worker_identity = @workerIdentity
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
+        cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadMember(reader) : null;
     }
 
-    private static async Task SetMemberStatusByConnAsync(SqliteConnection conn, string workerIdentity, string status)
+    private static async Task SetMemberStatusByConnAsync(DbConnection conn, string workerIdentity, string status)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -1565,12 +1565,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             SET status = @status, updated_at = datetime('now')
             WHERE worker_identity = @workerIdentity
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
-        cmd.Parameters.AddWithValue("@status", status);
+        cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
+        cmd.AddParameterWithValue("@status", status);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    private static async Task<bool> HasActiveAssignmentAsync(SqliteConnection conn, string workerIdentity, string runId)
+    private static async Task<bool> HasActiveAssignmentAsync(DbConnection conn, string workerIdentity, string runId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -1580,13 +1580,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
               AND state NOT IN ('completed', 'failed', 'expired')
             LIMIT 1
             """;
-        cmd.Parameters.AddWithValue("@workerIdentity", workerIdentity);
-        cmd.Parameters.AddWithValue("@runId", runId);
+        cmd.AddParameterWithValue("@workerIdentity", workerIdentity);
+        cmd.AddParameterWithValue("@runId", runId);
         var result = await cmd.ExecuteScalarAsync();
         return result is not null;
     }
 
-    private static async Task<List<string>> FindAvailableWorkersAsync(SqliteConnection conn, string[]? requiredCapabilities, string? profileIdentity = null, string? workerRole = null)
+    private static async Task<List<string>> FindAvailableWorkersAsync(DbConnection conn, string[]? requiredCapabilities, string? profileIdentity = null, string? workerRole = null)
     {
         var workers = new List<string>();
         await using var cmd = conn.CreateCommand();
@@ -1595,12 +1595,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(profileIdentity))
         {
             sql += " AND profile_identity = @profileIdentity";
-            cmd.Parameters.AddWithValue("@profileIdentity", profileIdentity);
+            cmd.AddParameterWithValue("@profileIdentity", profileIdentity);
         }
         if (!string.IsNullOrWhiteSpace(workerRole))
         {
             sql += " AND worker_role = @workerRole";
-            cmd.Parameters.AddWithValue("@workerRole", workerRole);
+            cmd.AddParameterWithValue("@workerRole", workerRole);
         }
         cmd.CommandText = sql;
 
@@ -1669,7 +1669,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         return workers;
     }
 
-    private static async Task<WorkerAssignment?> GetAssignmentByIdAsync(SqliteConnection conn, int assignmentId)
+    private static async Task<WorkerAssignment?> GetAssignmentByIdAsync(DbConnection conn, int assignmentId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -1678,13 +1678,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             LEFT JOIN worker_pool_members wm ON wa.worker_identity = wm.worker_identity
             WHERE wa.id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", assignmentId);
+        cmd.AddParameterWithValue("@id", assignmentId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadAssignmentWithJoin(reader) : null;
     }
 
-    private static async Task<WorkerCheckpoint?> GetCheckpointByIdAsync(SqliteConnection conn, int checkpointId)
+    private static async Task<WorkerCheckpoint?> GetCheckpointByIdAsync(DbConnection conn, int checkpointId)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -1692,7 +1692,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM worker_checkpoints
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", checkpointId);
+        cmd.AddParameterWithValue("@id", checkpointId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadCheckpoint(reader) : null;
@@ -1705,7 +1705,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         _ => WorkerPoolStates.CheckpointWaiting,
     };
 
-    private static WorkerCheckpoint ReadCheckpoint(SqliteDataReader reader) => new()
+    private static WorkerCheckpoint ReadCheckpoint(DbDataReader reader) => new()
     {
         Id = reader.GetInt32(0),
         AssignmentId = reader.GetInt32(1),
@@ -1715,7 +1715,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         CreatedAt = DateTime.Parse(reader.GetString(5)),
     };
 
-    private static CheckpointResponse ReadResponse(SqliteDataReader reader) => new()
+    private static CheckpointResponse ReadResponse(DbDataReader reader) => new()
     {
         Id = reader.GetInt32(0),
         CheckpointId = reader.GetInt32(1),
@@ -1756,7 +1756,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     private const string LaneColumns =
         "profile_identity, worker_role, capacity, status, metadata, created_at, updated_at";
 
-    private static WorkerPoolLane ReadLane(SqliteDataReader reader) => new()
+    private static WorkerPoolLane ReadLane(DbDataReader reader) => new()
     {
         ProfileIdentity = reader.GetString(0),
         WorkerRole = reader.GetString(1),
@@ -1781,11 +1781,11 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 updated_at = datetime('now')
             RETURNING {LaneColumns}
             """;
-        cmd.Parameters.AddWithValue("@profileIdentity", lane.ProfileIdentity);
-        cmd.Parameters.AddWithValue("@workerRole", lane.WorkerRole);
-        cmd.Parameters.AddWithValue("@capacity", lane.Capacity);
-        cmd.Parameters.AddWithValue("@status", lane.Status);
-        cmd.Parameters.AddWithValue("@metadata", (object?)lane.Metadata ?? DBNull.Value);
+        cmd.AddParameterWithValue("@profileIdentity", lane.ProfileIdentity);
+        cmd.AddParameterWithValue("@workerRole", lane.WorkerRole);
+        cmd.AddParameterWithValue("@capacity", lane.Capacity);
+        cmd.AddParameterWithValue("@status", lane.Status);
+        cmd.AddParameterWithValue("@metadata", (object?)lane.Metadata ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
@@ -1801,8 +1801,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM worker_pool_lanes
             WHERE profile_identity = @pi AND worker_role = @wr
             """;
-        cmd.Parameters.AddWithValue("@pi", profileIdentity);
-        cmd.Parameters.AddWithValue("@wr", workerRole);
+        cmd.AddParameterWithValue("@pi", profileIdentity);
+        cmd.AddParameterWithValue("@wr", workerRole);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadLane(reader) : null;
@@ -1817,12 +1817,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(profileIdentity))
         {
             where.Add("profile_identity = @pi");
-            cmd.Parameters.AddWithValue("@pi", profileIdentity);
+            cmd.AddParameterWithValue("@pi", profileIdentity);
         }
         if (!string.IsNullOrWhiteSpace(status))
         {
             where.Add("status = @status");
-            cmd.Parameters.AddWithValue("@status", status);
+            cmd.AddParameterWithValue("@status", status);
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;
@@ -1833,7 +1833,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY updated_at DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(limit, 1, 200));
 
         var results = new List<WorkerPoolLane>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -1854,9 +1854,9 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 SET status = @status, updated_at = datetime('now')
                 WHERE profile_identity = @pi AND worker_role = @wr
                 """;
-            cmd.Parameters.AddWithValue("@pi", profileIdentity);
-            cmd.Parameters.AddWithValue("@wr", workerRole);
-            cmd.Parameters.AddWithValue("@status", status);
+            cmd.AddParameterWithValue("@pi", profileIdentity);
+            cmd.AddParameterWithValue("@wr", workerRole);
+            cmd.AddParameterWithValue("@status", status);
 
             var rows = await cmd.ExecuteNonQueryAsync();
 
@@ -1889,7 +1889,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE wl.profile_identity = @pi AND wl.status = 'active'
                 GROUP BY wl.worker_role
                 """;
-            laneCmd.Parameters.AddWithValue("@pi", profileIdentity);
+            laneCmd.AddParameterWithValue("@pi", profileIdentity);
 
             await using var reader = await laneCmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -1909,8 +1909,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SELECT count(*) FROM worker_pool_members
                     WHERE profile_identity = @pi2 AND worker_role = @wr AND status = 'quarantined'
                     """;
-                qCmd.Parameters.AddWithValue("@pi2", profileIdentity);
-                qCmd.Parameters.AddWithValue("@wr", wr);
+                qCmd.AddParameterWithValue("@pi2", profileIdentity);
+                qCmd.AddParameterWithValue("@wr", wr);
                 var result = await qCmd.ExecuteScalarAsync();
                 quarantinedCount = Convert.ToInt32(result ?? 0L);
             }
@@ -1979,7 +1979,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       AND state NOT IN ('completed', 'failed', 'expired')
                       RETURNING id
                     """;
-                relCmd.Parameters.AddWithValue("@workerId", workerId);
+                relCmd.AddParameterWithValue("@workerId", workerId);
 
                 await using var relReader = await relCmd.ExecuteReaderAsync();
                 while (await relReader.ReadAsync())
@@ -1991,7 +1991,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     SET status = 'available', updated_at = datetime('now')
                     WHERE worker_identity = @workerId
                     """;
-                availCmd.Parameters.AddWithValue("@workerId", workerId);
+                availCmd.AddParameterWithValue("@workerId", workerId);
                 await availCmd.ExecuteNonQueryAsync();
             }
 
@@ -2089,7 +2089,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE event_type = 'stale_worker_detected'
                   AND dedup_key = @dedupKey
                 """;
-            checkCmd.Parameters.AddWithValue("@dedupKey", condition.StaleSignature);
+            checkCmd.AddParameterWithValue("@dedupKey", condition.StaleSignature);
             var existingCount = (long)(await checkCmd.ExecuteScalarAsync())!;
 
             if (existingCount > 0)
@@ -2112,12 +2112,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     'record_only', @body, @metadata, @dedupKey
                 )
                 """;
-            insertCmd.Parameters.AddWithValue("@projectId", (object?)condition.ProjectId ?? DBNull.Value);
-            insertCmd.Parameters.AddWithValue("@taskId", (object?)condition.TaskId ?? DBNull.Value);
-            insertCmd.Parameters.AddWithValue("@recipientAgent", (object?)condition.WorkerIdentity ?? DBNull.Value);
-            insertCmd.Parameters.AddWithValue("@recipientRole", (object?)condition.WorkerRole ?? DBNull.Value);
-            insertCmd.Parameters.AddWithValue("@body", condition.StateReason ?? string.Empty);
-            insertCmd.Parameters.AddWithValue("@metadata", JsonSerializer.Serialize(new
+            insertCmd.AddParameterWithValue("@projectId", (object?)condition.ProjectId ?? DBNull.Value);
+            insertCmd.AddParameterWithValue("@taskId", (object?)condition.TaskId ?? DBNull.Value);
+            insertCmd.AddParameterWithValue("@recipientAgent", (object?)condition.WorkerIdentity ?? DBNull.Value);
+            insertCmd.AddParameterWithValue("@recipientRole", (object?)condition.WorkerRole ?? DBNull.Value);
+            insertCmd.AddParameterWithValue("@body", condition.StateReason ?? string.Empty);
+            insertCmd.AddParameterWithValue("@metadata", JsonSerializer.Serialize(new
             {
                 classification = condition.Classification,
                 severity = condition.Severity,
@@ -2127,7 +2127,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 assignment_id = condition.AssignmentId,
                 review_round_id = condition.ReviewRoundId,
             }));
-            insertCmd.Parameters.AddWithValue("@dedupKey", condition.StaleSignature);
+            insertCmd.AddParameterWithValue("@dedupKey", condition.StaleSignature);
             await insertCmd.ExecuteNonQueryAsync();
 
             newConditions.Add(condition);
@@ -2145,7 +2145,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddStaleAckConditionsAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2206,7 +2206,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddStaleRunningConditionsAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2282,7 +2282,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddMissingReviewerCompletionAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2296,12 +2296,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (piFilter)
         {
             where.Add("t.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (taskFilter)
         {
             where.Add("rr.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId!.Value);
         }
 
         cmd.CommandText = $"""
@@ -2381,7 +2381,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddCompletionNotTerminalizedAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2445,7 +2445,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddOrphanedOrchestratorLeaseAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2457,12 +2457,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (piFilter)
         {
             where.Add("ol.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (taskFilter)
         {
             where.Add("ol.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId!.Value);
         }
 
         cmd.CommandText = $"""
@@ -2528,7 +2528,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddDuplicateAssignmentForRunAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2586,7 +2586,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddDirectAgentClaimedNoTerminalAsync(
-        SqliteConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         // Detect dispatch entries that were claimed/answered (approved) but no terminal
@@ -2600,12 +2600,12 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (piFilter)
         {
             where.Add("de.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (taskFilter)
         {
             where.Add("de.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId!.Value);
         }
 
         cmd.CommandText = $"""
@@ -2656,21 +2656,21 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static void AppendStaleFilters(
-        SqliteCommand cmd, List<string> where, bool piFilter, bool taskFilter, StaleSweepOptions options)
+        DbCommand cmd, List<string> where, bool piFilter, bool taskFilter, StaleSweepOptions options)
     {
         if (piFilter)
         {
             where.Add("wa.project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (taskFilter)
         {
             where.Add("wa.task_id = @taskId");
-            cmd.Parameters.AddWithValue("@taskId", options.TaskId!.Value);
+            cmd.AddParameterWithValue("@taskId", options.TaskId!.Value);
         }
     }
 
-    private static async Task<bool> LaneCanAcceptLeaseAsync(SqliteConnection conn, WorkerPoolMember worker, string assignmentRole)
+    private static async Task<bool> LaneCanAcceptLeaseAsync(DbConnection conn, WorkerPoolMember worker, string assignmentRole)
     {
         if (string.IsNullOrWhiteSpace(worker.ProfileIdentity))
             return true;
@@ -2687,8 +2687,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE profile_identity = @profileIdentity
                   AND worker_role = @workerRole
                 """;
-            laneCmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
-            laneCmd.Parameters.AddWithValue("@workerRole", workerRole);
+            laneCmd.AddParameterWithValue("@profileIdentity", worker.ProfileIdentity);
+            laneCmd.AddParameterWithValue("@workerRole", workerRole);
 
             await using var reader = await laneCmd.ExecuteReaderAsync();
             if (!await reader.ReadAsync())
@@ -2708,8 +2708,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                   AND COALESCE(wm.worker_role, wa.role) = @workerRole
                   AND wa.state NOT IN ('completed', 'failed', 'expired')
                 """;
-            countCmd.Parameters.AddWithValue("@profileIdentity", worker.ProfileIdentity);
-            countCmd.Parameters.AddWithValue("@workerRole", workerRole);
+            countCmd.AddParameterWithValue("@profileIdentity", worker.ProfileIdentity);
+            countCmd.AddParameterWithValue("@workerRole", workerRole);
             var active = Convert.ToInt32(await countCmd.ExecuteScalarAsync() ?? 0L);
 
             return active < capacity;
@@ -2727,7 +2727,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         "latest_checkpoint_id, cleanup_evidence, cleanup_recorded_at, metadata, " +
         "created_at, updated_at";
 
-    private static OrchestratorLease ReadOrchLease(SqliteDataReader reader) => new()
+    private static OrchestratorLease ReadOrchLease(DbDataReader reader) => new()
     {
         Id = reader.GetInt32(0),
         LeaseId = reader.GetString(1),
@@ -2847,31 +2847,31 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 RETURNING {OrchLeaseColumns}
                 """;
 
-            cmd.Parameters.AddWithValue("@leaseId", leaseId);
-            cmd.Parameters.AddWithValue("@leaseKind", WorkerPoolStates.LeaseKindProjectOrchestrator);
-            cmd.Parameters.AddWithValue("@scopeType", input.ScopeType);
-            cmd.Parameters.AddWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@channelId", (object?)input.ChannelId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@workstreamHandle", (object?)input.WorkstreamHandle ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@objective", (object?)input.Objective ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@leaseOwner", input.LeaseOwner);
-            cmd.Parameters.AddWithValue("@orchestratorIdentity", orchestratorIdentity);
-            cmd.Parameters.AddWithValue("@profileIdentity", selectedWorker.ProfileIdentity);
-            cmd.Parameters.AddWithValue("@displayName", (object?)selectedWorker.DisplayName ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@capabilityMetadata", (object?)selectedWorker.Capabilities ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@state", WorkerPoolStates.OrchLeaseLeased);
-            cmd.Parameters.AddWithValue("@requestedDurationSeconds",
+            cmd.AddParameterWithValue("@leaseId", leaseId);
+            cmd.AddParameterWithValue("@leaseKind", WorkerPoolStates.LeaseKindProjectOrchestrator);
+            cmd.AddParameterWithValue("@scopeType", input.ScopeType);
+            cmd.AddParameterWithValue("@projectId", (object?)input.ProjectId ?? DBNull.Value);
+            cmd.AddParameterWithValue("@channelId", (object?)input.ChannelId ?? DBNull.Value);
+            cmd.AddParameterWithValue("@taskId", (object?)input.TaskId ?? DBNull.Value);
+            cmd.AddParameterWithValue("@workstreamHandle", (object?)input.WorkstreamHandle ?? DBNull.Value);
+            cmd.AddParameterWithValue("@objective", (object?)input.Objective ?? DBNull.Value);
+            cmd.AddParameterWithValue("@leaseOwner", input.LeaseOwner);
+            cmd.AddParameterWithValue("@orchestratorIdentity", orchestratorIdentity);
+            cmd.AddParameterWithValue("@profileIdentity", selectedWorker.ProfileIdentity);
+            cmd.AddParameterWithValue("@displayName", (object?)selectedWorker.DisplayName ?? DBNull.Value);
+            cmd.AddParameterWithValue("@capabilityMetadata", (object?)selectedWorker.Capabilities ?? DBNull.Value);
+            cmd.AddParameterWithValue("@state", WorkerPoolStates.OrchLeaseLeased);
+            cmd.AddParameterWithValue("@requestedDurationSeconds",
                 (object?)input.RequestedDurationSeconds ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@renewalPolicy", input.RenewalPolicy);
-            cmd.Parameters.AddWithValue("@drainPolicy", input.DrainPolicy);
-            cmd.Parameters.AddWithValue("@agentInstanceId",
+            cmd.AddParameterWithValue("@renewalPolicy", input.RenewalPolicy);
+            cmd.AddParameterWithValue("@drainPolicy", input.DrainPolicy);
+            cmd.AddParameterWithValue("@agentInstanceId",
                 (object?)selectedWorker.AgentInstanceId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@adapterInstanceId",
+            cmd.AddParameterWithValue("@adapterInstanceId",
                 (object?)selectedWorker.AdapterInstanceId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@sessionId",
+            cmd.AddParameterWithValue("@sessionId",
                 (object?)selectedWorker.SessionId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@runId", (object?)input.RunId ?? DBNull.Value);
+            cmd.AddParameterWithValue("@runId", (object?)input.RunId ?? DBNull.Value);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             await reader.ReadAsync();
@@ -2897,7 +2897,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM orchestrator_leases
             WHERE id = @id
             """;
-        cmd.Parameters.AddWithValue("@id", id);
+        cmd.AddParameterWithValue("@id", id);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
@@ -2912,7 +2912,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             FROM orchestrator_leases
             WHERE lease_id = @leaseId
             """;
-        cmd.Parameters.AddWithValue("@leaseId", leaseId);
+        cmd.AddParameterWithValue("@leaseId", leaseId);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
@@ -2927,27 +2927,27 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         if (!string.IsNullOrWhiteSpace(options.ProjectId))
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", options.ProjectId);
+            cmd.AddParameterWithValue("@projectId", options.ProjectId);
         }
         if (!string.IsNullOrWhiteSpace(options.ScopeType))
         {
             where.Add("scope_type = @scopeType");
-            cmd.Parameters.AddWithValue("@scopeType", options.ScopeType);
+            cmd.AddParameterWithValue("@scopeType", options.ScopeType);
         }
         if (!string.IsNullOrWhiteSpace(options.OrchestratorIdentity))
         {
             where.Add("orchestrator_identity = @orchestratorIdentity");
-            cmd.Parameters.AddWithValue("@orchestratorIdentity", options.OrchestratorIdentity);
+            cmd.AddParameterWithValue("@orchestratorIdentity", options.OrchestratorIdentity);
         }
         if (!string.IsNullOrWhiteSpace(options.State))
         {
             where.Add("state = @state");
-            cmd.Parameters.AddWithValue("@state", options.State);
+            cmd.AddParameterWithValue("@state", options.State);
         }
         if (!string.IsNullOrWhiteSpace(options.LeaseKind))
         {
             where.Add("lease_kind = @leaseKind");
-            cmd.Parameters.AddWithValue("@leaseKind", options.LeaseKind);
+            cmd.AddParameterWithValue("@leaseKind", options.LeaseKind);
         }
         if (!options.IncludeTerminal)
         {
@@ -2962,7 +2962,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             ORDER BY updated_at DESC, id DESC
             LIMIT @limit
             """;
-        cmd.Parameters.AddWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
+        cmd.AddParameterWithValue("@limit", Math.Clamp(options.Limit, 1, 200));
 
         var results = new List<OrchestratorLease>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -2983,7 +2983,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 FROM orchestrator_leases
                 WHERE id = @id
                 """;
-            getCmd.Parameters.AddWithValue("@id", input.LeaseInternalId);
+            getCmd.AddParameterWithValue("@id", input.LeaseInternalId);
 
             await using var getReader = await getCmd.ExecuteReaderAsync();
             if (!await getReader.ReadAsync())
@@ -3028,13 +3028,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE id = @id
                 RETURNING {OrchLeaseColumns}
                 """;
-            cmd.Parameters.AddWithValue("@id", input.LeaseInternalId);
-            cmd.Parameters.AddWithValue("@newState", input.NewState);
+            cmd.AddParameterWithValue("@id", input.LeaseInternalId);
+            cmd.AddParameterWithValue("@newState", input.NewState);
 
             if (!string.IsNullOrWhiteSpace(input.Evidence) && WorkerPoolStates.IsOrchLeaseTerminal(input.NewState))
-                cmd.Parameters.AddWithValue("@evidence", input.Evidence);
+                cmd.AddParameterWithValue("@evidence", input.Evidence);
             if (!string.IsNullOrWhiteSpace(input.Metadata))
-                cmd.Parameters.AddWithValue("@metadata", input.Metadata);
+                cmd.AddParameterWithValue("@metadata", input.Metadata);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             var updated = await reader.ReadAsync() ? ReadOrchLease(reader) : null;
@@ -3069,8 +3069,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
               AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseTerminalStates.Select(s => $"'{s}'"))})
             RETURNING {OrchLeaseColumns}
             """;
-        cmd.Parameters.AddWithValue("@id", leaseId);
-        cmd.Parameters.AddWithValue("@evidence", evidenceJson);
+        cmd.AddParameterWithValue("@id", leaseId);
+        cmd.AddParameterWithValue("@evidence", evidenceJson);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadOrchLease(reader) : null;
@@ -3131,7 +3131,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
                     RETURNING orchestrator_identity
                     """;
-                cmd.Parameters.AddWithValue("@id", leaseId);
+                cmd.AddParameterWithValue("@id", leaseId);
                 var orchId = await cmd.ExecuteScalarAsync() as string;
                 if (orchId is not null)
                 {
@@ -3153,7 +3153,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                       AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
                     RETURNING orchestrator_identity
                     """;
-                cmd.Parameters.AddWithValue("@id", leaseId);
+                cmd.AddParameterWithValue("@id", leaseId);
                 var result = await cmd.ExecuteScalarAsync() as string;
                 if (result is not null)
                 {
@@ -3190,7 +3190,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE wa.project_id = @projectId
                   AND wa.state NOT IN ('completed', 'failed', 'expired')
                 """;
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -3233,7 +3233,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 WHERE project_id = @projectId
                   AND state NOT IN ({terminalFilter})
                 """;
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
 
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())

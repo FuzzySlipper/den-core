@@ -1,6 +1,6 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -39,15 +39,15 @@ public sealed class DocumentRepository : IDocumentRepository
                 updated_at = datetime('now')
             RETURNING id, project_id, slug, title, content, doc_type, visibility, tags, summary, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", document.ProjectId);
-        cmd.Parameters.AddWithValue("@slug", document.Slug);
-        cmd.Parameters.AddWithValue("@title", document.Title);
-        cmd.Parameters.AddWithValue("@content", document.Content);
-        cmd.Parameters.AddWithValue("@docType", document.DocType.ToDbValue());
-        cmd.Parameters.AddWithValue("@visibility", document.Visibility.ToDbValue());
-        cmd.Parameters.AddWithValue("@tags",
+        cmd.AddParameterWithValue("@projectId", document.ProjectId);
+        cmd.AddParameterWithValue("@slug", document.Slug);
+        cmd.AddParameterWithValue("@title", document.Title);
+        cmd.AddParameterWithValue("@content", document.Content);
+        cmd.AddParameterWithValue("@docType", document.DocType.ToDbValue());
+        cmd.AddParameterWithValue("@visibility", document.Visibility.ToDbValue());
+        cmd.AddParameterWithValue("@tags",
             document.Tags is { Count: > 0 } ? JsonSerializer.Serialize(document.Tags) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@summary",
+        cmd.AddParameterWithValue("@summary",
             document.Summary is not null ? document.Summary : DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -63,8 +63,8 @@ public sealed class DocumentRepository : IDocumentRepository
             SELECT id, project_id, slug, title, content, doc_type, visibility, tags, summary, created_at, updated_at
             FROM documents WHERE project_id = @projectId AND slug = @slug
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@slug", slug);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadDocument(reader) : null;
@@ -84,7 +84,7 @@ public sealed class DocumentRepository : IDocumentRepository
         if (visibility is not null)
         {
             where.Add("visibility = @visibility");
-            cmd.Parameters.AddWithValue("@visibility", visibility.Value.ToDbValue());
+            cmd.AddParameterWithValue("@visibility", visibility.Value.ToDbValue());
         }
         else
         {
@@ -94,13 +94,13 @@ public sealed class DocumentRepository : IDocumentRepository
         if (projectId is not null)
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         if (docType is not null)
         {
             where.Add("doc_type = @docType");
-            cmd.Parameters.AddWithValue("@docType", docType.Value.ToDbValue());
+            cmd.AddParameterWithValue("@docType", docType.Value.ToDbValue());
         }
 
         if (tags is { Length: > 0 })
@@ -109,7 +109,7 @@ public sealed class DocumentRepository : IDocumentRepository
             {
                 var p = $"@tag{i}";
                 where.Add($"EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, tags[i]);
+                cmd.AddParameterWithValue(p, tags[i]);
             }
         }
 
@@ -158,9 +158,9 @@ public sealed class DocumentRepository : IDocumentRepository
               AND d.visibility = 'normal'
             ORDER BY rank
             """;
-        cmd.Parameters.AddWithValue("@query", query);
+        cmd.AddParameterWithValue("@query", query);
         if (projectId is not null)
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
 
         var results = new List<DocumentSearchResult>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -186,8 +186,8 @@ public sealed class DocumentRepository : IDocumentRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM documents WHERE project_id = @projectId AND slug = @slug";
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@slug", slug);
         return await cmd.ExecuteNonQueryAsync() > 0;
     }
 
@@ -200,9 +200,9 @@ public sealed class DocumentRepository : IDocumentRepository
             WHERE project_id = @projectId AND slug = @slug
             RETURNING id, project_id, slug, title, content, doc_type, visibility, tags, summary, created_at, updated_at
             """;
-        cmd.Parameters.AddWithValue("@projectId", projectId);
-        cmd.Parameters.AddWithValue("@slug", slug);
-        cmd.Parameters.AddWithValue("@visibility", visibility.ToDbValue());
+        cmd.AddParameterWithValue("@projectId", projectId);
+        cmd.AddParameterWithValue("@slug", slug);
+        cmd.AddParameterWithValue("@visibility", visibility.ToDbValue());
 
         await using var reader = await cmd.ExecuteReaderAsync();
         return await reader.ReadAsync() ? ReadDocument(reader) : null;
@@ -219,13 +219,13 @@ public sealed class DocumentRepository : IDocumentRepository
         if (projectId is not null)
         {
             where.Add("project_id = @projectId");
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
         }
 
         if (docType is not null)
         {
             where.Add("doc_type = @docType");
-            cmd.Parameters.AddWithValue("@docType", docType.Value.ToDbValue());
+            cmd.AddParameterWithValue("@docType", docType.Value.ToDbValue());
         }
 
         if (tags is { Length: > 0 })
@@ -234,7 +234,7 @@ public sealed class DocumentRepository : IDocumentRepository
             {
                 var p = $"@tag{i}";
                 where.Add($"EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = {p})");
-                cmd.Parameters.AddWithValue(p, tags[i]);
+                cmd.AddParameterWithValue(p, tags[i]);
             }
         }
 
@@ -283,9 +283,9 @@ public sealed class DocumentRepository : IDocumentRepository
               AND d.visibility = 'archived'
             ORDER BY rank
             """;
-        cmd.Parameters.AddWithValue("@query", query);
+        cmd.AddParameterWithValue("@query", query);
         if (projectId is not null)
-            cmd.Parameters.AddWithValue("@projectId", projectId);
+            cmd.AddParameterWithValue("@projectId", projectId);
 
         var results = new List<DocumentSearchResult>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -315,8 +315,8 @@ public sealed class DocumentRepository : IDocumentRepository
         checkCmd.CommandText = """
             SELECT visibility FROM documents WHERE project_id = @projectId AND slug = @slug
             """;
-        checkCmd.Parameters.AddWithValue("@projectId", projectId);
-        checkCmd.Parameters.AddWithValue("@slug", slug);
+        checkCmd.AddParameterWithValue("@projectId", projectId);
+        checkCmd.AddParameterWithValue("@slug", slug);
         await using var checkReader = await checkCmd.ExecuteReaderAsync();
         if (!await checkReader.ReadAsync())
         {
@@ -339,8 +339,8 @@ public sealed class DocumentRepository : IDocumentRepository
             FROM agent_guidance_entries g
             WHERE g.document_project_id = @projectId AND g.document_slug = @slug
             """;
-        guidanceCmd.Parameters.AddWithValue("@projectId", projectId);
-        guidanceCmd.Parameters.AddWithValue("@slug", slug);
+        guidanceCmd.AddParameterWithValue("@projectId", projectId);
+        guidanceCmd.AddParameterWithValue("@slug", slug);
         await using var guidanceReader = await guidanceCmd.ExecuteReaderAsync();
         while (await guidanceReader.ReadAsync())
         {
@@ -362,7 +362,7 @@ public sealed class DocumentRepository : IDocumentRepository
         };
     }
 
-    private static Document ReadDocument(SqliteDataReader reader)
+    private static Document ReadDocument(DbDataReader reader)
     {
         var tagsJson = reader.IsDBNull(7) ? null : reader.GetString(7);
         return new Document

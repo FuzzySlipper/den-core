@@ -109,7 +109,7 @@ public class DatabaseInitializerTests : IDisposable
             )
             RETURNING source_kind, source_id, deep_link, metadata_json
             """;
-        insertMessage.Parameters.AddWithValue("@channelId", channelId);
+        insertMessage.AddParameterWithValue("@channelId", channelId);
         await using var reader = await insertMessage.ExecuteReaderAsync();
 
         Assert.True(await reader.ReadAsync());
@@ -172,7 +172,7 @@ public class DatabaseInitializerTests : IDisposable
                 @channelId, 'system', 'router', 'Bad source', 'not_a_source_kind'
             )
             """;
-        invalidMessage.Parameters.AddWithValue("@channelId", channelId);
+        invalidMessage.AddParameterWithValue("@channelId", channelId);
         await Assert.ThrowsAsync<SqliteException>(() => invalidMessage.ExecuteNonQueryAsync());
     }
 

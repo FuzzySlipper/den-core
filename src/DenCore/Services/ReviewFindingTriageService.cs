@@ -1,8 +1,8 @@
 using System.Text;
+using System.Data.Common;
 using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using TaskStatus = DenCore.Models.TaskStatus;
 
@@ -124,14 +124,14 @@ public sealed class ReviewFindingTriageService : IReviewFindingTriageService
                 VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, @tags)
                 RETURNING id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at
                 """;
-            taskCmd.Parameters.AddWithValue("@projectId", input.ProjectId);
-            taskCmd.Parameters.AddWithValue("@parentId", (object?)input.FollowUpParentTaskId ?? DBNull.Value);
-            taskCmd.Parameters.AddWithValue("@title", title);
-            taskCmd.Parameters.AddWithValue("@description", description);
-            taskCmd.Parameters.AddWithValue("@status", TaskStatus.Planned.ToDbValue());
-            taskCmd.Parameters.AddWithValue("@priority", input.FollowUpPriority ?? 3);
-            taskCmd.Parameters.AddWithValue("@assignedTo", (object?)input.FollowUpAssignedTo ?? DBNull.Value);
-            taskCmd.Parameters.AddWithValue("@tags",
+            taskCmd.AddParameterWithValue("@projectId", input.ProjectId);
+            taskCmd.AddParameterWithValue("@parentId", (object?)input.FollowUpParentTaskId ?? DBNull.Value);
+            taskCmd.AddParameterWithValue("@title", title);
+            taskCmd.AddParameterWithValue("@description", description);
+            taskCmd.AddParameterWithValue("@status", TaskStatus.Planned.ToDbValue());
+            taskCmd.AddParameterWithValue("@priority", input.FollowUpPriority ?? 3);
+            taskCmd.AddParameterWithValue("@assignedTo", (object?)input.FollowUpAssignedTo ?? DBNull.Value);
+            taskCmd.AddParameterWithValue("@tags",
                 input.FollowUpTags is { Count: > 0 }
                     ? JsonSerializer.Serialize(input.FollowUpTags)
                     : DBNull.Value);
@@ -163,11 +163,11 @@ public sealed class ReviewFindingTriageService : IReviewFindingTriageService
                           response_notes, response_at, follow_up_task_id, created_at, updated_at,
                           (SELECT round_number FROM review_rounds WHERE id = review_round_id) AS round_number
                 """;
-            updateCmd.Parameters.AddWithValue("@id", finding.Id);
-            updateCmd.Parameters.AddWithValue("@status", splitStatusValue);
-            updateCmd.Parameters.AddWithValue("@updatedBy", input.SplitBy);
-            updateCmd.Parameters.AddWithValue("@statusNotes", statusNotes);
-            updateCmd.Parameters.AddWithValue("@followUpTaskId", followUpTask.Id);
+            updateCmd.AddParameterWithValue("@id", finding.Id);
+            updateCmd.AddParameterWithValue("@status", splitStatusValue);
+            updateCmd.AddParameterWithValue("@updatedBy", input.SplitBy);
+            updateCmd.AddParameterWithValue("@statusNotes", statusNotes);
+            updateCmd.AddParameterWithValue("@followUpTaskId", followUpTask.Id);
 
             await using var reader = await updateCmd.ExecuteReaderAsync();
             if (!await reader.ReadAsync())

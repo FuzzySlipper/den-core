@@ -10,7 +10,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
     private static readonly IReadOnlyList<PostgresMigration> Migrations =
     [
         new(1, "den_core_non_fts_compatibility_schema", InitialSchema),
-        new(2, "den_core_postgres_full_text_search", FullTextSearchSchema)
+        new(2, "den_core_postgres_full_text_search", FullTextSearchSchema),
+        new(3, "den_core_postgres_utc_timestamp_and_message_jsonb", UtcTimestampAndMessageJsonbSchema)
     ];
 
     private readonly DbConnectionFactory _db;
@@ -45,7 +46,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             CREATE TABLE IF NOT EXISTS {{MigrationTable}} (
                 version    INTEGER PRIMARY KEY,
                 name       TEXT NOT NULL,
-                applied_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+                applied_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
             )
             """;
         await cmd.ExecuteNonQueryAsync();
@@ -126,8 +127,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
         STABLE
         AS $$
             SELECT CASE
-                WHEN lower(value) = 'now' THEN CURRENT_TIMESTAMP::text
-                ELSE value::timestamptz::text
+                WHEN lower(value) = 'now' THEN to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                ELSE to_char(value::timestamp, 'YYYY-MM-DD HH24:MI:SS')
             END
         $$;
 
@@ -136,12 +137,14 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
         LANGUAGE sql
         STABLE
         AS $$
-            SELECT (
-                CASE
-                    WHEN lower(value) = 'now' THEN CURRENT_TIMESTAMP
-                    ELSE value::timestamptz
-                END + modifier::interval
-            )::text
+            SELECT to_char(
+                (
+                    CASE
+                        WHEN lower(value) = 'now' THEN CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+                        ELSE value::timestamp
+                    END + modifier::interval
+                ),
+                'YYYY-MM-DD HH24:MI:SS')
         $$;
 
         ------------------------------------------------------------
@@ -158,8 +161,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             root_path     TEXT,
             description   TEXT,
             settings_json TEXT,
-            created_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE TABLE IF NOT EXISTS tasks (
@@ -173,8 +176,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             priority    INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
             assigned_to TEXT,
             tags        TEXT,
-            created_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
@@ -195,7 +198,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             old_value  TEXT,
             new_value  TEXT,
             changed_by TEXT,
-            changed_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            changed_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id);
@@ -213,8 +216,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                            'handoff', 'review_request', 'review_feedback', 'review_approval',
                            'task_ready', 'task_blocked', 'notification'
                        )),
-            metadata   TEXT,
-            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            metadata   JSONB,
+            created_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_messages_project_task ON messages(project_id, task_id);
@@ -224,7 +227,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
         CREATE TABLE IF NOT EXISTS message_reads (
             message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
             agent      TEXT NOT NULL,
-            read_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            read_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             PRIMARY KEY (message_id, agent)
         );
 
@@ -243,8 +246,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                        CHECK (visibility IN ('normal', 'hidden', 'archived')),
             tags       JSONB,
             summary    TEXT,
-            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             UNIQUE (project_id, slug)
         );
 
@@ -288,7 +291,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             verdict                    TEXT,
             verdict_by                 TEXT,
             verdict_notes              TEXT,
-            requested_at               TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            requested_at               TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             verdict_at                 TEXT,
             UNIQUE (task_id, round_number)
         );
@@ -315,8 +318,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             response_notes    TEXT,
             response_at       TEXT,
             follow_up_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
-            created_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at        TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at        TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at        TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_review_findings_task_status ON review_findings(task_id, status);
@@ -335,8 +338,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             audience            TEXT,
             sort_order          INTEGER NOT NULL DEFAULT 0,
             notes               TEXT,
-            created_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at          TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at          TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             UNIQUE (project_id, document_project_id, document_slug, audience)
         );
 
@@ -364,8 +367,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             log_pointer          TEXT,
             stale_after_seconds  INTEGER,
             metadata             TEXT,
-            created_at           TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at           TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at           TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at           TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_worker_pool_members_status
@@ -394,8 +397,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             cleanup_recorded_at TEXT,
             acquired_at         TEXT,
             released_at         TEXT,
-            created_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at          TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at          TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at          TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_worker_assignments_worker_state
@@ -416,7 +419,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             checkpoint_type TEXT NOT NULL
                             CHECK (checkpoint_type IN ('checkpoint', 'progress', 'completion', 'failure', 'state_snapshot')),
             payload         TEXT NOT NULL,
-            created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at      TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_worker_checkpoints_assignment
@@ -432,7 +435,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             response_type TEXT NOT NULL
                           CHECK (response_type IN ('ack', 'guidance', 'redirect', 'abort', 'checkpoint_request')),
             payload       TEXT NOT NULL,
-            created_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_checkpoint_responses_checkpoint
@@ -460,7 +463,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                                       )),
             candidate_details         TEXT NOT NULL DEFAULT '{}',
             diagnostic_message        TEXT,
-            created_at                TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at                TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_no_capacity_project
@@ -475,8 +478,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             status           TEXT NOT NULL DEFAULT 'active'
                              CHECK (status IN ('active', 'quarantined', 'disabled')),
             metadata         TEXT,
-            created_at       TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at       TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at       TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at       TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             PRIMARY KEY (profile_identity, worker_role)
         );
 
@@ -521,8 +524,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             cleanup_evidence           TEXT,
             cleanup_recorded_at        TEXT,
             metadata                   TEXT,
-            created_at                 TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at                 TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at                 TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at                 TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_orchestrator_leases_project
@@ -547,7 +550,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             entries_json     TEXT NOT NULL,
             created_by       TEXT,
             notes            TEXT,
-            created_at       TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at       TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_pricing_snapshots_version
@@ -587,7 +590,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             adapter_version              TEXT,
             raw_usage_source             TEXT,
             request_id_hint              TEXT,
-            created_at                   TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at                   TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_usage_events_project_occurred
@@ -616,8 +619,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             project_id    TEXT REFERENCES projects(id) ON DELETE CASCADE,
             created_by    TEXT,
             settings_json TEXT,
-            created_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at    TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at    TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -625,8 +628,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             project_id     TEXT REFERENCES projects(id) ON DELETE SET NULL,
             session_id     TEXT,
             status         TEXT NOT NULL DEFAULT 'active',
-            checked_in_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            last_heartbeat TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            checked_in_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            last_heartbeat TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             metadata       TEXT
         );
 
@@ -641,8 +644,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             status         TEXT NOT NULL DEFAULT 'active'
                            CHECK (status IN ('active', 'inactive', 'degraded')),
             metadata       TEXT,
-            checked_in_at  TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            last_heartbeat TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            checked_in_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            last_heartbeat TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_agent_bindings_project_status
@@ -670,7 +673,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             context_prompt TEXT,
             context_json   TEXT,
             dedup_key      TEXT NOT NULL,
-            created_at     TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at     TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             expires_at     TEXT NOT NULL,
             decided_at     TEXT,
             completed_at   TEXT,
@@ -704,7 +707,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             body                  TEXT,
             metadata              TEXT,
             dedup_key             TEXT,
-            created_at            TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at            TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_agent_stream_created
@@ -741,8 +744,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             task_id                INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
             state                  TEXT NOT NULL DEFAULT 'running',
             latest_stream_entry_id INTEGER,
-            created_at             TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at             TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at             TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at             TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE TABLE IF NOT EXISTS agent_workspaces (
@@ -752,22 +755,22 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             created_by_run TEXT,
             state          TEXT NOT NULL DEFAULT 'active',
             metadata       TEXT,
-            created_at     TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at     TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at     TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at     TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE TABLE IF NOT EXISTS desktop_git_snapshots (
             id         INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
             project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
             task_id    INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
-            observed_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            observed_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             payload    TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS desktop_diff_snapshots (
             id         INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
             project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-            observed_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            observed_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             payload    TEXT NOT NULL DEFAULT '{}'
         );
 
@@ -779,7 +782,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             session_id         TEXT,
             event_type         TEXT,
             payload            TEXT NOT NULL DEFAULT '{}',
-            created_at         TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at         TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE TABLE IF NOT EXISTS collaboration_sessions (
@@ -789,8 +792,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
             state      TEXT NOT NULL DEFAULT 'active',
             metadata   TEXT,
-            created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
         """;
 
@@ -837,8 +840,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             review_due_at      TEXT,
             created_by         TEXT,
             updated_by         TEXT,
-            created_at         TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
-            updated_at         TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+            created_at         TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
+            updated_at         TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_knowledge_entries_status_kind
@@ -883,7 +886,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             replacement_slug TEXT,
             changed_by       TEXT,
             change_note      TEXT,
-            created_at       TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at       TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             UNIQUE(entry_id, revision_number)
         );
 
@@ -894,8 +897,65 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             link_kind       TEXT NOT NULL DEFAULT 'related'
                             CHECK (link_kind IN ('related', 'supersedes', 'superseded_by', 'see_also', 'depends_on')),
             description     TEXT,
-            created_at      TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            created_at      TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             UNIQUE(from_entry_id, to_entry_slug, link_kind)
         );
+        """;
+
+    internal const string UtcTimestampAndMessageJsonbSchema = """
+        ------------------------------------------------------------
+        -- UTC timestamp text contract and message JSONB compatibility.
+        ------------------------------------------------------------
+        CREATE OR REPLACE FUNCTION datetime(value text)
+        RETURNS text
+        LANGUAGE sql
+        STABLE
+        AS $$
+            SELECT CASE
+                WHEN lower(value) = 'now' THEN to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                ELSE to_char(value::timestamp, 'YYYY-MM-DD HH24:MI:SS')
+            END
+        $$;
+
+        CREATE OR REPLACE FUNCTION datetime(value text, modifier text)
+        RETURNS text
+        LANGUAGE sql
+        STABLE
+        AS $$
+            SELECT to_char(
+                (
+                    CASE
+                        WHEN lower(value) = 'now' THEN CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+                        ELSE value::timestamp
+                    END + modifier::interval
+                ),
+                'YYYY-MM-DD HH24:MI:SS')
+        $$;
+
+        ALTER TABLE messages
+            ALTER COLUMN metadata TYPE JSONB USING metadata::jsonb;
+
+        DO $$
+        DECLARE
+            column_record record;
+        BEGIN
+            FOR column_record IN
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND data_type = 'text'
+                  AND column_default IS NOT NULL
+                  AND (
+                      column_name ~ '(^|_)(created|updated|applied|changed|read|requested|observed|received|checked_in|last_accessed|decided)_at$'
+                      OR column_name = 'last_heartbeat'
+                  )
+            LOOP
+                EXECUTE format(
+                    'ALTER TABLE %I ALTER COLUMN %I SET DEFAULT to_char(CURRENT_TIMESTAMP AT TIME ZONE ''UTC'', ''YYYY-MM-DD HH24:MI:SS'')',
+                    column_record.table_name,
+                    column_record.column_name);
+            END LOOP;
+        END
+        $$;
         """;
 }

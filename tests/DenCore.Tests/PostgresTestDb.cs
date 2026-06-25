@@ -14,6 +14,7 @@ public sealed class PostgresTestDb : IAsyncLifetime
     private string? _adminConnectionString;
 
     public string SchemaName { get; } = $"den_core_test_{Guid.NewGuid():N}";
+    public string ConnectionString { get; private set; } = "";
     public DbConnectionFactory Db { get; private set; } = null!;
 
     public static bool IsConfigured =>
@@ -41,7 +42,8 @@ public sealed class PostgresTestDb : IAsyncLifetime
         {
             SearchPath = SchemaName
         };
-        Db = new DbConnectionFactory(builder.ConnectionString, DatabaseProviderKind.Postgres);
+        ConnectionString = builder.ConnectionString;
+        Db = new DbConnectionFactory(ConnectionString, DatabaseProviderKind.Postgres);
     }
 
     public async Task DisposeAsync()

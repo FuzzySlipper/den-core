@@ -41,10 +41,12 @@ public sealed class WorkerPoolRepositoryPostgresTests
                     VALUES
                         ('pg-sweep-worker-1', 'pg-duplicate-run', 'pg-sweep-proj', 'coder', 'postgres-test',
                          'ack', 'pg-sweep-worker-1:pg-duplicate-run', 'postgres-profile',
-                         CURRENT_TIMESTAMP::text, CURRENT_TIMESTAMP::text),
+                         to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+                         to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
                         ('pg-sweep-worker-2', 'pg-duplicate-run', 'pg-sweep-proj', 'coder', 'postgres-test',
                          'running', 'pg-sweep-worker-2:pg-duplicate-run', 'postgres-profile',
-                         CURRENT_TIMESTAMP::text, CURRENT_TIMESTAMP::text);
+                         to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+                         to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'));
                     """;
                 await cmd.ExecuteNonQueryAsync();
             }

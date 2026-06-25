@@ -42,9 +42,12 @@ public sealed class MessageRepository : IMessageRepository
 
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var metadataValue = _db.Provider == DatabaseProviderKind.Postgres
+            ? "CAST(@metadata AS jsonb)"
+            : "@metadata";
+        cmd.CommandText = $"""
             INSERT INTO messages (project_id, task_id, thread_id, sender, content, intent, metadata)
-            VALUES (@projectId, @taskId, @threadId, @sender, @content, @intent, @metadata)
+            VALUES (@projectId, @taskId, @threadId, @sender, @content, @intent, {metadataValue})
             RETURNING id, project_id, task_id, thread_id, sender, content, intent, metadata, created_at
             """;
         cmd.AddParameterWithValue("@projectId", message.ProjectId);

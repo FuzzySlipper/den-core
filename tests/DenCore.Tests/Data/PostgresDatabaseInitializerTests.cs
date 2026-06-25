@@ -44,6 +44,21 @@ public class PostgresDatabaseInitializerTests
     }
 
     [Fact]
+    public void FullTextSearchSchema_ReplacesFtsShadowTablesWithGinIndexes()
+    {
+        var schema = PostgresDatabaseInitializer.FullTextSearchSchema;
+
+        Assert.Contains("DROP TABLE IF EXISTS documents_fts", schema);
+        Assert.Contains("DROP TABLE IF EXISTS knowledge_entries_fts", schema);
+        Assert.Contains("idx_documents_search_gin", schema);
+        Assert.Contains("idx_knowledge_entries_search_gin", schema);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS knowledge_entries", schema);
+        Assert.DoesNotContain("CREATE VIRTUAL TABLE", schema);
+        Assert.DoesNotContain("CREATE TABLE IF NOT EXISTS documents_fts", schema);
+        Assert.DoesNotContain("CREATE TABLE IF NOT EXISTS knowledge_entries_fts", schema);
+    }
+
+    [Fact]
     [Trait("Category", "PostgresProvider")]
     public async Task Initialize_WhenConfigured_SupportsRepresentativeNonFtsRepositories()
     {
@@ -207,6 +222,129 @@ public class PostgresDatabaseInitializerTests
                 IncludeDebug = true
             });
             Assert.Single(streamResults);
+        }
+        finally
+        {
+            await testDb.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "PostgresProvider")]
+    public async Task Initialize_WhenConfigured_SupportsDocumentAndKnowledgeFullTextSearch()
+    {
+        if (!PostgresTestDb.IsConfigured)
+            return;
+
+        var testDb = new PostgresTestDb();
+        await testDb.InitializeAsync();
+        try
+        {
+            var initializer = new PostgresDatabaseInitializer(
+                testDb.Db,
+                NullLogger<PostgresDatabaseInitializer>.Instance);
+            await initializer.InitializeAsync();
+
+            var projects = new ProjectRepository(testDb.Db);
+            var documents = new DocumentRepository(testDb.Db);
+            var knowledge = new KnowledgeRepository(testDb.Db);
+
+            var project = await projects.CreateAsync(new Project
+            {
+                Id = "pg-search-proj",
+                Name = "Postgres Search Project"
+            });
+            await projects.CreateAsync(new Project
+            {
+                Id = "pg-search-other",
+                Name = "Postgres Search Other"
+            });
+
+            await documents.UpsertAsync(new Document
+            {
+                ProjectId = project.Id,
+                Slug = "pg-search-normal",
+                Title = "Postgres Search Normal",
+                Content = "The searchable phrase appears in this normal document.",
+                DocType = DocType.Spec
+            });
+            await documents.UpsertAsync(new Document
+            {
+                ProjectId = "pg-search-other",
+                Slug = "pg-search-other",
+                Title = "Postgres Search Other",
+                Content = "The searchable phrase appears in another project.",
+                DocType = DocType.Spec
+            });
+            await documents.UpsertAsync(new Document
+            {
+                ProjectId = project.Id,
+                Slug = "pg-search-archived",
+                Title = "Postgres Search Archived",
+                Content = "A retired search phrase lives in an archived document.",
+                DocType = DocType.Reference,
+                Visibility = DocumentVisibility.Archived
+            });
+
+            var scopedDocs = await documents.SearchAsync("searchable phrase?!", project.Id);
+            Assert.Single(scopedDocs);
+            Assert.Equal("pg-search-normal", scopedDocs[0].Slug);
+            Assert.Contains("<b>", scopedDocs[0].Snippet);
+
+            var archivedDocs = await documents.SearchArchivedAsync("\"retired search phrase\"", project.Id);
+            Assert.Single(archivedDocs);
+            Assert.Equal("pg-search-archived", archivedDocs[0].Slug);
+            Assert.Equal(DocumentVisibility.Archived, archivedDocs[0].Visibility);
+
+            var stopwordDocs = await documents.SearchAsync("the is to of", project.Id);
+            Assert.Empty(stopwordDocs);
+
+            await knowledge.UpsertAsync(new KnowledgeEntry
+            {
+                Slug = "pg-fts-reviewed",
+                Title = "Postgres FTS Reviewed",
+                Summary = "Reviewed search summary",
+                BodyMarkdown = "Postgres tsvector query planner details for full-text search.",
+                Kind = KnowledgeEntryKinds.Reference,
+                Status = KnowledgeEntryStatuses.Reviewed,
+                CurationState = KnowledgeCurationStates.AgentCurated,
+                Tags = ["fts", "postgres"],
+                Audience = ["runner"]
+            });
+            await knowledge.UpsertAsync(new KnowledgeEntry
+            {
+                Slug = "pg-fts-draft",
+                Title = "Postgres FTS Draft",
+                BodyMarkdown = "Postgres tsvector query planner draft details for full-text search.",
+                Kind = KnowledgeEntryKinds.Reference,
+                Status = KnowledgeEntryStatuses.Draft,
+                CurationState = KnowledgeCurationStates.UnreviewedImport,
+                Tags = ["fts", "postgres"]
+            });
+
+            var reviewedKnowledge = await knowledge.SearchAsync(new KnowledgeSearchQuery
+            {
+                Query = "tsvector query! planner?",
+                RequiredTags = ["fts"],
+                Audience = ["runner"]
+            });
+            Assert.Single(reviewedKnowledge);
+            Assert.Equal("pg-fts-reviewed", reviewedKnowledge[0].Slug);
+            Assert.Contains("<b>", reviewedKnowledge[0].Snippet);
+
+            var allKnowledge = await knowledge.SearchAsync(new KnowledgeSearchQuery
+            {
+                Query = "tsvector query planner",
+                RequiredTags = ["fts"],
+                IncludeUnreviewed = true
+            });
+            Assert.Equal(2, allKnowledge.Count);
+
+            var stopwordKnowledge = await knowledge.SearchAsync(new KnowledgeSearchQuery
+            {
+                Query = "the is to of"
+            });
+            Assert.Empty(stopwordKnowledge);
         }
         finally
         {

@@ -113,4 +113,19 @@ public class FtsQuerySanitizerTests
         Assert.DoesNotContain("near", result, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("database", result);
     }
+
+    [Fact]
+    public void ToPostgresWebSearchQuery_PreservesPhraseAndPunctuation()
+    {
+        var result = FtsQuerySanitizer.ToPostgresWebSearchQuery("\"quoted phrase\" + routing?");
+
+        Assert.Equal("\"quoted phrase\" + routing?", result);
+    }
+
+    [Fact]
+    public void ToPostgresWebSearchQuery_EmptyInput_ReturnsNull()
+    {
+        Assert.Null(FtsQuerySanitizer.ToPostgresWebSearchQuery(null));
+        Assert.Null(FtsQuerySanitizer.ToPostgresWebSearchQuery("   "));
+    }
 }

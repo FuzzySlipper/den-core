@@ -95,16 +95,7 @@ public sealed class DbSqlDialect
             INSERT OR REPLACE INTO knowledge_entries_fts(rowid, slug, title, summary, body_markdown)
             VALUES (@entryId, @slug, @title, @summary, @body)
             """,
-        DatabaseProviderKind.Postgres => """
-            /* Postgres FTS replacement is owned by task #3324. */
-            INSERT INTO knowledge_entries_fts(rowid, slug, title, summary, body_markdown)
-            VALUES (@entryId, @slug, @title, @summary, @body)
-            ON CONFLICT (rowid) DO UPDATE SET
-                slug = EXCLUDED.slug,
-                title = EXCLUDED.title,
-                summary = EXCLUDED.summary,
-                body_markdown = EXCLUDED.body_markdown
-            """,
+        DatabaseProviderKind.Postgres => throw new NotSupportedException("Postgres knowledge search uses expression GIN indexes; no FTS shadow row refresh is required."),
         _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
     };
 

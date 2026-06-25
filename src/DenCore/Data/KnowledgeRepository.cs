@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Data.Common;
+using DenCore.Llm;
 using DenCore.Models;
 
 namespace DenCore.Data;
@@ -16,6 +17,18 @@ public interface IKnowledgeRepository
 
 public sealed class KnowledgeRepository : IKnowledgeRepository
 {
+    private const string PostgresHeadlineOptions =
+        "StartSel=<b>, StopSel=</b>, MaxWords=32, MinWords=8, ShortWord=3, HighlightAll=false, MaxFragments=2, FragmentDelimiter=...";
+
+    private const string PostgresKnowledgeSearchVector = """
+        (
+            setweight(to_tsvector('english', coalesce(ke.title, '')), 'A') ||
+            setweight(to_tsvector('english', coalesce(ke.summary, '')), 'B') ||
+            setweight(to_tsvector('english', coalesce(ke.body_markdown, '')), 'C') ||
+            setweight(to_tsvector('english', coalesce(ke.slug, '')), 'D')
+        )
+        """;
+
     private readonly DbConnectionFactory _db;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -229,6 +242,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             return null;
 
         var entry = ReadEntry(reader);
+        await reader.CloseAsync();
         entry.Tags = await LoadTagsAsync(conn, entry.Id);
         return entry;
     }
@@ -256,6 +270,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             return null;
 
         var entry = ReadEntry(reader);
+        await reader.CloseAsync();
         entry.Tags = await LoadTagsAsync(conn, entry.Id);
         return entry;
     }
@@ -329,6 +344,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         {
             results.Add(ReadSummary(reader));
         }
+        await reader.CloseAsync();
 
         // Load tags for each result
         foreach (var r in results)
@@ -345,10 +361,20 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         await using var cmd = conn.CreateCommand();
 
         // Build WHERE conditions
-        var ftsQuery = DenCore.Llm.FtsQuerySanitizer.Sanitize(query.Query);
+        var ftsQuery = _db.Provider switch
+        {
+            DatabaseProviderKind.Sqlite => FtsQuerySanitizer.Sanitize(query.Query),
+            DatabaseProviderKind.Postgres => FtsQuerySanitizer.ToPostgresWebSearchQuery(query.Query),
+            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
+        };
         if (ftsQuery is null)
             return []; // No searchable terms
-        var conditions = new List<string> { "knowledge_entries_fts MATCH @query" };
+        var conditions = _db.Provider switch
+        {
+            DatabaseProviderKind.Sqlite => new List<string> { "knowledge_entries_fts MATCH @query" },
+            DatabaseProviderKind.Postgres => new List<string> { $"{PostgresKnowledgeSearchVector} @@ search.query" },
+            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
+        };
         cmd.AddParameterWithValue("@query", ftsQuery);
 
         // Status filter
@@ -416,19 +442,40 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         }
 
         var whereClause = $"WHERE {string.Join(" AND ", conditions)}";
-        cmd.CommandText = $"""
-            SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
-                   ke.audience_json, ke.aliases_json, ke.source_refs_json,
-                   CASE WHEN ke.summary IS NOT NULL THEN ke.summary ELSE substr(ke.body_markdown, 1, 200) END as snippet,
-                   0.0 as rank,
-                   ke.updated_at, ke.last_reviewed_at
-            FROM knowledge_entries_fts fts
-            JOIN knowledge_entries ke ON ke.id = fts.rowid
-            {whereClause}
-            ORDER BY rank
-            LIMIT @limit
-            """;
+        cmd.CommandText = _db.Provider switch
+        {
+            DatabaseProviderKind.Sqlite => $"""
+                SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
+                       ke.audience_json, ke.aliases_json, ke.source_refs_json,
+                       CASE WHEN ke.summary IS NOT NULL THEN ke.summary ELSE substr(ke.body_markdown, 1, 200) END as snippet,
+                       0.0 as rank,
+                       ke.updated_at, ke.last_reviewed_at
+                FROM knowledge_entries_fts fts
+                JOIN knowledge_entries ke ON ke.id = fts.rowid
+                {whereClause}
+                ORDER BY rank
+                LIMIT @limit
+                """,
+            DatabaseProviderKind.Postgres => $"""
+                WITH search AS (
+                    SELECT websearch_to_tsquery('english', @query) AS query
+                )
+                SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
+                       ke.audience_json, ke.aliases_json, ke.source_refs_json,
+                       ts_headline('english', coalesce(ke.summary, '') || ' ' || coalesce(ke.body_markdown, ''), search.query, @headlineOptions) as snippet,
+                       ts_rank_cd({PostgresKnowledgeSearchVector}, search.query) as rank,
+                       ke.updated_at, ke.last_reviewed_at
+                FROM knowledge_entries ke
+                CROSS JOIN search
+                {whereClause}
+                ORDER BY rank DESC, ke.updated_at DESC
+                LIMIT @limit
+                """,
+            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
+        };
         cmd.AddParameterWithValue("@limit", Math.Min(query.Limit, 200));
+        if (_db.Provider == DatabaseProviderKind.Postgres)
+            cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
 
         var results = new List<KnowledgeSearchResult>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -446,11 +493,12 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
                 Aliases = reader.IsDBNull(7) ? [] : JsonSerializer.Deserialize<List<string>>(reader.GetString(7)) ?? [],
                 SourceRefs = reader.IsDBNull(8) ? [] : JsonSerializer.Deserialize<List<KnowledgeSourceRef>>(reader.GetString(8), JsonOpts) ?? [],
                 Snippet = reader.GetString(9),
-                Rank = reader.GetDouble(10),
+                Rank = Convert.ToDouble(reader.GetValue(10)),
                 UpdatedAt = DateTime.Parse(reader.GetString(11)),
                 LastReviewedAt = reader.IsDBNull(12) ? null : DateTime.Parse(reader.GetString(12))
             });
         }
+        await reader.CloseAsync();
 
         // Load tags for each result
         foreach (var r in results)
@@ -580,6 +628,9 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
 
     internal static async Task RefreshFtsRowAsync(DbConnection conn, DbTransaction tx, DbSqlDialect sql, int entryId, KnowledgeEntry entry)
     {
+        if (sql.Provider == DatabaseProviderKind.Postgres)
+            return;
+
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = sql.KnowledgeFtsUpsertCommandText;

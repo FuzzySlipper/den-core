@@ -3,7 +3,8 @@ using System.Text.RegularExpressions;
 namespace DenCore.Llm;
 
 /// <summary>
-/// Converts natural language text into safe SQLite FTS5 queries.
+/// Converts natural language text into safe SQLite FTS5 queries and prepares
+/// natural language input for provider-specific full-text search paths.
 /// </summary>
 public static partial class FtsQuerySanitizer
 {
@@ -76,6 +77,19 @@ public static partial class FtsQuerySanitizer
             return null;
 
         return string.Join(" OR ", allTerms);
+    }
+
+    /// <summary>
+    /// Prepares raw user text for Postgres websearch_to_tsquery.
+    /// The database parser handles phrases, operators, punctuation, and
+    /// stop words; this method only rejects empty input.
+    /// </summary>
+    public static string? ToPostgresWebSearchQuery(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return null;
+
+        return input.Trim();
     }
 
     [GeneratedRegex(@"[""*(){}+\-^~:,.;!?/\\@#$%&=\[\]<>|'`_]")]

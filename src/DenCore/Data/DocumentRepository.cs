@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Data.Common;
+using DenCore.Llm;
 using DenCore.Models;
 
 namespace DenCore.Data;
@@ -19,6 +20,18 @@ public interface IDocumentRepository
 
 public sealed class DocumentRepository : IDocumentRepository
 {
+    private const string PostgresHeadlineOptions =
+        "StartSel=<b>, StopSel=</b>, MaxWords=32, MinWords=8, ShortWord=3, HighlightAll=false, MaxFragments=2, FragmentDelimiter=...";
+
+    private const string PostgresDocumentSearchVector = """
+        (
+            setweight(to_tsvector('english', coalesce(d.title, '')), 'A') ||
+            setweight(to_tsvector('english', coalesce(d.summary, '')), 'B') ||
+            setweight(to_tsvector('english', coalesce(d.content, '')), 'C') ||
+            setweight(to_tsvector('english', coalesce(d.tags, '')), 'D')
+        )
+        """;
+
     private readonly DbConnectionFactory _db;
 
     public DocumentRepository(DbConnectionFactory db) => _db = db;
@@ -142,23 +155,61 @@ public sealed class DocumentRepository : IDocumentRepository
     }
 
     public async Task<List<DocumentSearchResult>> SearchAsync(string query, string? projectId = null)
+        => await SearchByVisibilityAsync(query, DocumentVisibility.Normal, projectId);
+
+    public async Task<List<DocumentSearchResult>> SearchArchivedAsync(string query, string? projectId = null)
+        => await SearchByVisibilityAsync(query, DocumentVisibility.Archived, projectId);
+
+    private async Task<List<DocumentSearchResult>> SearchByVisibilityAsync(
+        string query,
+        DocumentVisibility visibility,
+        string? projectId)
     {
+        var searchQuery = _db.Provider switch
+        {
+            DatabaseProviderKind.Sqlite => string.IsNullOrWhiteSpace(query) ? null : query.Trim(),
+            DatabaseProviderKind.Postgres => FtsQuerySanitizer.ToPostgresWebSearchQuery(query),
+            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
+        };
+        if (searchQuery is null)
+            return [];
+
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
 
         var projectFilter = projectId is not null ? "AND d.project_id = @projectId" : "";
 
-        cmd.CommandText = $"""
-            SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
-                   snippet(documents_fts, 1, '<b>', '</b>', '...', 32) as snippet,
-                   rank
-            FROM documents_fts fts
-            JOIN documents d ON d.id = fts.rowid
-            WHERE documents_fts MATCH @query {projectFilter}
-              AND d.visibility = 'normal'
-            ORDER BY rank
-            """;
-        cmd.AddParameterWithValue("@query", query);
+        cmd.CommandText = _db.Provider switch
+        {
+            DatabaseProviderKind.Sqlite => $"""
+                SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
+                       snippet(documents_fts, 1, '<b>', '</b>', '...', 32) as snippet,
+                       rank
+                FROM documents_fts fts
+                JOIN documents d ON d.id = fts.rowid
+                WHERE documents_fts MATCH @query {projectFilter}
+                  AND d.visibility = @visibility
+                ORDER BY rank
+                """,
+            DatabaseProviderKind.Postgres => $"""
+                WITH search AS (
+                    SELECT websearch_to_tsquery('english', @query) AS query
+                )
+                SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
+                       ts_headline('english', coalesce(d.content, d.summary, d.title, ''), search.query, @headlineOptions) as snippet,
+                       ts_rank_cd({PostgresDocumentSearchVector}, search.query) as rank
+                FROM documents d
+                CROSS JOIN search
+                WHERE {PostgresDocumentSearchVector} @@ search.query {projectFilter}
+                  AND d.visibility = @visibility
+                ORDER BY rank DESC, d.updated_at DESC
+                """,
+            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
+        };
+        cmd.AddParameterWithValue("@query", searchQuery);
+        cmd.AddParameterWithValue("@visibility", visibility.ToDbValue());
+        if (_db.Provider == DatabaseProviderKind.Postgres)
+            cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
         if (projectId is not null)
             cmd.AddParameterWithValue("@projectId", projectId);
 
@@ -175,7 +226,7 @@ public sealed class DocumentRepository : IDocumentRepository
                 Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(4)),
                 Summary = reader.IsDBNull(5) ? null : reader.GetString(5),
                 Snippet = reader.GetString(6),
-                Rank = reader.GetDouble(7)
+                Rank = Convert.ToDouble(reader.GetValue(7))
             });
         }
         return results;
@@ -261,46 +312,6 @@ public sealed class DocumentRepository : IDocumentRepository
                 Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
                 Summary = reader.IsDBNull(7) ? null : reader.GetString(7),
                 UpdatedAt = DateTime.Parse(reader.GetString(8))
-            });
-        }
-        return results;
-    }
-
-    public async Task<List<DocumentSearchResult>> SearchArchivedAsync(string query, string? projectId = null)
-    {
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-
-        var projectFilter = projectId is not null ? "AND d.project_id = @projectId" : "";
-
-        cmd.CommandText = $"""
-            SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
-                   snippet(documents_fts, 1, '<b>', '</b>', '...', 32) as snippet,
-                   rank
-            FROM documents_fts fts
-            JOIN documents d ON d.id = fts.rowid
-            WHERE documents_fts MATCH @query {projectFilter}
-              AND d.visibility = 'archived'
-            ORDER BY rank
-            """;
-        cmd.AddParameterWithValue("@query", query);
-        if (projectId is not null)
-            cmd.AddParameterWithValue("@projectId", projectId);
-
-        var results = new List<DocumentSearchResult>();
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            results.Add(new DocumentSearchResult
-            {
-                ProjectId = reader.GetString(0),
-                Slug = reader.GetString(1),
-                Title = reader.GetString(2),
-                DocType = EnumExtensions.ParseDocType(reader.GetString(3)),
-                Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(4)),
-                Summary = reader.IsDBNull(5) ? null : reader.GetString(5),
-                Snippet = reader.GetString(6),
-                Rank = reader.GetDouble(7)
             });
         }
         return results;

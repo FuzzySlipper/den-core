@@ -531,3 +531,58 @@ compat_api_projects_http=200
 compat_api_projects_bytes=6469
 compat_log_errors=none
 ```
+
+### Live Retry No-Go And #3379 Worker-Pool Retest
+
+The second #3326 live retry on 2026-06-25 reached a live Postgres flip but
+failed the post-flip smoke/soak gate and was rolled back to SQLite. Backup and
+import evidence:
+
+```text
+backup_dir=/data/services/den-core/backups/postgres-cutover-20260625T122112Z
+backup_integrity=ok
+backup_size=1279561728
+backup_sha256=1b144009a0e25c5e6017f9049896ca263e7137f74e82082629b65179d5f4211c
+import_log=import-parity-rerun-metadata-fix.txt
+count_checksum_parity=ok
+live_core_commit=c17becb25ac3
+rollback_core_health=healthy
+```
+
+The retry no-go causes were:
+
+- Worker-pool stale sweep used SQLite `GROUP_CONCAT(...)`, which failed on
+  Postgres with `function group_concat(bigint) does not exist` from
+  `WorkerPoolRepository.AddDuplicateAssignmentForRunAsync`.
+- Document writes still sent text into Postgres `documents.tags jsonb`, failing
+  `store_document` with a `jsonb`/`text` type mismatch.
+
+#3379 fixes only the worker-pool stale-sweep blocker. It routes stale-sweep
+time predicates and string aggregation through `DbSqlDialect`, uses
+Postgres `string_agg((...)::text, ',' ORDER BY ...)`, and groups duplicate
+assignments by both `run_id` and `project_id` so the query is standard
+SQL-compatible.
+
+#3379 retest evidence:
+
+```text
+local dotnet test --filter FullyQualifiedName~WorkerPoolRepositoryTests
+  Passed: 118
+
+remote Postgres harness on den-srv:
+  initial failing signal: GROUP BY required wa.project_id
+  after fix: Passed: 3
+
+alternate-port Core Postgres smoke on den-srv:
+  port=5598
+  schema=den_core
+  health=healthy
+  GET /api/worker-pool/stale?limit=5
+  stale_count=3 returned=3
+  classes=[stale_ack, stale_ack, stale_ack]
+  captured_log_errors=none
+```
+
+Do not retry #3326 until #3379 and #3380 are both reviewed and merged. The
+worker-pool stale-sweep path has been rechecked against the imported live-backup
+schema, but document write/read/search/delete smoke remains covered by #3380.

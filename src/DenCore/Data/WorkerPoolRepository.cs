@@ -2050,13 +2050,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         var piFilter = !string.IsNullOrWhiteSpace(options.ProjectId);
         var taskFilter = options.TaskId is not null;
 
-        await AddStaleAckConditionsAsync(conn, options, conditions, piFilter, taskFilter);
-        await AddStaleRunningConditionsAsync(conn, options, conditions, piFilter, taskFilter);
-        await AddMissingReviewerCompletionAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddStaleAckConditionsAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
+        await AddStaleRunningConditionsAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
+        await AddMissingReviewerCompletionAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
         await AddCompletionNotTerminalizedAsync(conn, options, conditions, piFilter, taskFilter);
-        await AddOrphanedOrchestratorLeaseAsync(conn, options, conditions, piFilter, taskFilter);
-        await AddDuplicateAssignmentForRunAsync(conn, options, conditions, piFilter, taskFilter);
-        await AddDirectAgentClaimedNoTerminalAsync(conn, options, conditions, piFilter, taskFilter);
+        await AddOrphanedOrchestratorLeaseAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
+        await AddDuplicateAssignmentForRunAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
+        await AddDirectAgentClaimedNoTerminalAsync(_db.Sql, conn, options, conditions, piFilter, taskFilter);
 
         return new StaleWorkerSweepResult
         {
@@ -2145,14 +2145,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddStaleAckConditionsAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>
         {
             "wa.state = 'ack'",
-            $"wa.created_at <= datetime('now', '-{options.AckStaleThresholdMinutes} minutes')",
+            sql.OlderThanMinutes("wa.created_at", options.AckStaleThresholdMinutes),
             "wc.id IS NULL"
         };
         AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
@@ -2206,15 +2206,15 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddStaleRunningConditionsAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>
         {
             "wa.state = 'running'",
-            $"wa.created_at <= datetime('now', '-{options.RunningStaleThresholdMinutes} minutes')",
-            $"(latest_wc.latest_checkpoint_at IS NULL OR latest_wc.latest_checkpoint_at <= datetime('now', '-{options.RunningStaleThresholdMinutes} minutes'))"
+            sql.OlderThanMinutes("wa.created_at", options.RunningStaleThresholdMinutes),
+            $"(latest_wc.latest_checkpoint_at IS NULL OR {sql.OlderThanMinutes("latest_wc.latest_checkpoint_at", options.RunningStaleThresholdMinutes)})"
         };
         AppendStaleFilters(cmd, where, piFilter, taskFilter, options);
 
@@ -2282,7 +2282,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddMissingReviewerCompletionAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2291,7 +2291,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             "rr.verdict IS NULL",
             "t.status NOT IN ('done', 'cancelled')",
             "rr.round_number = (SELECT MAX(rr_latest.round_number) FROM review_rounds rr_latest WHERE rr_latest.task_id = rr.task_id)",
-            $"rr.requested_at <= datetime('now', '-{options.ReviewerStaleThresholdMinutes} minutes')"
+            sql.OlderThanMinutes("rr.requested_at", options.ReviewerStaleThresholdMinutes)
         };
         if (piFilter)
         {
@@ -2445,14 +2445,14 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddOrphanedOrchestratorLeaseAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
         var where = new List<string>
         {
             $"ol.state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})",
-            $"ol.created_at <= datetime('now', '-{options.OrchestratorStaleThresholdMinutes} minutes')"
+            sql.OlderThanMinutes("ol.created_at", options.OrchestratorStaleThresholdMinutes)
         };
         if (piFilter)
         {
@@ -2528,7 +2528,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddDuplicateAssignmentForRunAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         await using var cmd = conn.CreateCommand();
@@ -2540,13 +2540,13 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
         cmd.CommandText = $"""
             SELECT wa.run_id, wa.project_id, COUNT(*) AS cnt,
-                   GROUP_CONCAT(wa.id) AS assignment_ids,
-                   GROUP_CONCAT(wa.worker_identity) AS worker_ids,
-                   GROUP_CONCAT(wa.state) AS states,
+                   {sql.StringAggregate("wa.id", "wa.id")} AS assignment_ids,
+                   {sql.StringAggregate("wa.worker_identity", "wa.id")} AS worker_ids,
+                   {sql.StringAggregate("wa.state", "wa.id")} AS states,
                    MAX(wa.created_at) AS latest_created
             FROM worker_assignments wa
             WHERE {string.Join(" AND ", where)}
-            GROUP BY wa.run_id
+            GROUP BY wa.run_id, wa.project_id
             HAVING COUNT(*) > 1
             ORDER BY latest_created DESC
             """;
@@ -2586,7 +2586,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     private static async Task AddDirectAgentClaimedNoTerminalAsync(
-        DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
+        DbSqlDialect sql, DbConnection conn, StaleSweepOptions options, List<StaleWorkerCondition> conditions,
         bool piFilter, bool taskFilter)
     {
         // Detect dispatch entries that were claimed/answered (approved) but no terminal
@@ -2595,7 +2595,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         var where = new List<string>
         {
             "de.status = 'approved'",
-            $"de.created_at <= datetime('now', '-{options.DirectAgentStaleThresholdMinutes} minutes')"
+            sql.OlderThanMinutes("de.created_at", options.DirectAgentStaleThresholdMinutes)
         };
         if (piFilter)
         {

@@ -75,6 +75,28 @@ public sealed class DbSqlDialect
         _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
     };
 
+    public string OlderThanMinutes(string timestampExpression, int minutes)
+    {
+        if (minutes < 0)
+            throw new ArgumentOutOfRangeException(nameof(minutes), "Minute threshold must be non-negative.");
+
+        return Provider switch
+        {
+            DatabaseProviderKind.Sqlite => $"{timestampExpression} <= datetime('now', '-{minutes} minutes')",
+            DatabaseProviderKind.Postgres => $"({timestampExpression})::timestamptz <= (CURRENT_TIMESTAMP - INTERVAL '{minutes} minutes')",
+            _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
+        };
+    }
+
+    public string StringAggregate(string valueExpression, string? orderByExpression = null) => Provider switch
+    {
+        DatabaseProviderKind.Sqlite => $"GROUP_CONCAT({valueExpression})",
+        DatabaseProviderKind.Postgres => string.IsNullOrWhiteSpace(orderByExpression)
+            ? $"string_agg(({valueExpression})::text, ',')"
+            : $"string_agg(({valueExpression})::text, ',' ORDER BY {orderByExpression})",
+        _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
+    };
+
     public string TableExistsSql => Provider switch
     {
         DatabaseProviderKind.Sqlite => "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @name",

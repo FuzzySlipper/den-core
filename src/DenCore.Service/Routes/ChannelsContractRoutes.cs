@@ -264,7 +264,7 @@ public static class ChannelsContractRoutes
         var where = new List<string>
         {
             "id > @after",
-            "(COALESCE(json_extract(metadata, '$.event_visibility'), '') <> 'debug' AND event_type NOT LIKE 'subagent_work_%')"
+            $"(COALESCE({db.Sql.JsonText("metadata", "$.event_visibility")}, '') <> 'debug' AND event_type NOT LIKE 'subagent_work_%')"
         };
         cmd.AddParameterWithValue("@after", after);
         cmd.AddParameterWithValue("@limit", limit);

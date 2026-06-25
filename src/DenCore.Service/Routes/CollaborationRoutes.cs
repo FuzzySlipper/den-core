@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
 
@@ -36,7 +37,7 @@ public static class CollaborationRoutes
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+            catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
             {
                 return Results.BadRequest(new { error = "Collaboration session references an unknown project, task, message, or agent-stream entry." });
             }

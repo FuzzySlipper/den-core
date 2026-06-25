@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
 using DenCore.Services;
@@ -265,7 +266,7 @@ public static class AgentWorkspaceRoutes
         {
             return Results.Conflict(new { error = ex.Message });
         }
-        catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+        catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
         {
             return Results.BadRequest(new { error = "Agent workspace references an unknown project, task, or run." });
         }

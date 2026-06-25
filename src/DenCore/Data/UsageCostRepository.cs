@@ -76,7 +76,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
 
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             INSERT INTO usage_events (
                 occurred_at, project_id, task_id, assignment_id, run_id, session_id,
                 agent_identity, profile_identity, worker_role, worker_identity,
@@ -98,7 +98,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
                 @pricingSnapshotId, @approximateCostMicroCents,
                 @provenance, @adapterVersion, @rawUsageSource, @requestIdHint
             );
-            SELECT last_insert_rowid();
+            {_db.Sql.LastInsertedIdSelect}
             """;
 
         BindEventParams(cmd, e);
@@ -131,7 +131,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
 
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
-                cmd.CommandText = """
+                cmd.CommandText = $"""
                     INSERT INTO usage_events (
                         occurred_at, project_id, task_id, assignment_id, run_id, session_id,
                         agent_identity, profile_identity, worker_role, worker_identity,
@@ -153,7 +153,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
                         @pricingSnapshotId, @approximateCostMicroCents,
                         @provenance, @adapterVersion, @rawUsageSource, @requestIdHint
                     );
-                    SELECT last_insert_rowid();
+                    {_db.Sql.LastInsertedIdSelect}
                     """;
                 BindEventParams(cmd, e);
                 var id = (long)(await cmd.ExecuteScalarAsync())!;
@@ -211,7 +211,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
     {
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT id, occurred_at, project_id, task_id, assignment_id, run_id, session_id,
                    agent_identity, profile_identity, worker_role, worker_identity,
                    operation_kind,
@@ -243,10 +243,10 @@ public sealed class UsageCostRepository : IUsageCostRepository
 
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             INSERT INTO pricing_snapshots (snapshot_label, snapshot_version, effective_at, entries_json, created_by, notes)
             VALUES (@label, @version, @effectiveAt, @entriesJson, @createdBy, @notes);
-            SELECT last_insert_rowid();
+            {_db.Sql.LastInsertedIdSelect}
             """;
 
         cmd.AddParameterWithValue("@label", snapshot.SnapshotLabel);

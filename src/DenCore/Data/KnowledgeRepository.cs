@@ -199,7 +199,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         }
 
         // Standalone FTS: keep in sync with current entry state
-        await RefreshFtsRowAsync(conn, tx, result.Id, entry);
+        await RefreshFtsRowAsync(conn, tx, _db.Sql, result.Id, entry);
 
         await tx.CommitAsync();
         result.Tags = entry.Tags;
@@ -279,7 +279,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             foreach (var (aud, i) in query.Audience.Select((a, i) => (a, i)))
             {
                 var p = $"@aud{i}";
-                where.Add($"ke.audience_json IS NOT NULL AND json_each(ke.audience_json) IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(ke.audience_json) WHERE json_each.value = {p})");
+                where.Add($"ke.audience_json IS NOT NULL AND {_db.Sql.JsonArrayContains("ke.audience_json", p)}");
                 cmd.AddParameterWithValue(p, aud);
             }
         }
@@ -386,7 +386,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
             foreach (var (aud, i) in query.Audience.Select((a, i) => (a, i)))
             {
                 var p = $"@aud{i}";
-                conditions.Add($"ke.audience_json IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(ke.audience_json) WHERE json_each.value = {p})");
+                conditions.Add($"ke.audience_json IS NOT NULL AND {_db.Sql.JsonArrayContains("ke.audience_json", p)}");
                 cmd.AddParameterWithValue(p, aud);
             }
         }
@@ -578,15 +578,11 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         return tags;
     }
 
-    internal static async Task RefreshFtsRowAsync(DbConnection conn, DbTransaction tx, int entryId, KnowledgeEntry entry)
+    internal static async Task RefreshFtsRowAsync(DbConnection conn, DbTransaction tx, DbSqlDialect sql, int entryId, KnowledgeEntry entry)
     {
-        // Standalone FTS table: use INSERT OR REPLACE for atomic upsert
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT OR REPLACE INTO knowledge_entries_fts(rowid, slug, title, summary, body_markdown)
-            VALUES (@entryId, @slug, @title, @summary, @body)
-            """;
+        cmd.CommandText = sql.KnowledgeFtsUpsertCommandText;
         cmd.AddParameterWithValue("@entryId", entryId);
         cmd.AddParameterWithValue("@slug", entry.Slug);
         cmd.AddParameterWithValue("@title", entry.Title);

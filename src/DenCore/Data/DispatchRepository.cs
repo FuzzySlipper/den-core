@@ -1,6 +1,5 @@
 using DenCore.Models;
 using System.Data.Common;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -53,7 +52,7 @@ public sealed class DispatchRepository : IDispatchRepository
             await reader.ReadAsync();
             return (ReadEntry(reader), true);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
+        catch (DbException ex) when (DbExceptionTranslator.IsConstraintViolation(ex)) // SQLITE_CONSTRAINT
         {
             // Only treat as dedup if a pending entry with this key actually exists.
             // Other constraint violations (FK on project_id, task_id, etc.) should propagate.

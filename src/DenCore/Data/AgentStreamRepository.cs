@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -85,7 +84,7 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
             await reader.ReadAsync();
             return ReadEntry(reader);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19 && entry.DedupKey is not null)
+        catch (DbException ex) when (entry.DedupKey is not null && DbExceptionTranslator.IsConstraintViolation(ex))
         {
             var existing = await GetByDedupKeyAsync(conn, entry.DedupKey);
             if (existing is not null)
@@ -248,13 +247,13 @@ public sealed class AgentStreamRepository : IAgentStreamRepository
 
         if (!string.IsNullOrWhiteSpace(options.MetadataRunId))
         {
-            where.Add("json_extract(metadata, '$.run_id') = @metadataRunId");
+            where.Add($"{_db.Sql.JsonText("metadata", "$.run_id")} = @metadataRunId");
             cmd.AddParameterWithValue("@metadataRunId", options.MetadataRunId);
         }
 
         if (!options.IncludeDebug)
         {
-            where.Add("(COALESCE(json_extract(metadata, '$.event_visibility'), '') <> 'debug' AND event_type NOT LIKE 'subagent_work_%')");
+            where.Add($"(COALESCE({_db.Sql.JsonText("metadata", "$.event_visibility")}, '') <> 'debug' AND event_type NOT LIKE 'subagent_work_%')");
         }
 
         var whereClause = where.Count > 0 ? $"WHERE {string.Join(" AND ", where)}" : string.Empty;

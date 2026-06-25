@@ -22,16 +22,18 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
 
     public async Task<ReviewFinding> CreateAsync(CreateReviewFindingInput input)
     {
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
+        return await SerializableTransactionRetry.ExecuteAsync(async () =>
+        {
+            await using var conn = await _db.CreateConnectionAsync();
+            await using var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
-        var round = await GetRoundContextAsync(conn, input.ReviewRoundId)
-            ?? throw new KeyNotFoundException($"Review round {input.ReviewRoundId} not found");
-        var findingNumber = await GetNextFindingNumberAsync(conn, round.TaskId);
-        var findingKey = $"R{round.TaskId}-{findingNumber}";
+            var round = await GetRoundContextAsync(conn, input.ReviewRoundId)
+                ?? throw new KeyNotFoundException($"Review round {input.ReviewRoundId} not found");
+            var findingNumber = await GetNextFindingNumberAsync(conn, round.TaskId);
+            var findingKey = $"R{round.TaskId}-{findingNumber}";
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
             INSERT INTO review_findings (
                 finding_key, task_id, review_round_id, finding_number, created_by, category,
                 summary, notes, file_references, test_commands
@@ -45,24 +47,25 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
                       status_updated_by, status_notes, status_updated_at, response_by,
                       response_notes, response_at, follow_up_task_id, created_at, updated_at
             """;
-        cmd.AddParameterWithValue("@findingKey", findingKey);
-        cmd.AddParameterWithValue("@taskId", round.TaskId);
-        cmd.AddParameterWithValue("@reviewRoundId", input.ReviewRoundId);
-        cmd.AddParameterWithValue("@findingNumber", findingNumber);
-        cmd.AddParameterWithValue("@createdBy", input.CreatedBy);
-        cmd.AddParameterWithValue("@category", input.Category.ToDbValue());
-        cmd.AddParameterWithValue("@summary", input.Summary);
-        cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
-        cmd.AddParameterWithValue("@fileReferences", SerializeList(input.FileReferences));
-        cmd.AddParameterWithValue("@testCommands", SerializeList(input.TestCommands));
+            cmd.AddParameterWithValue("@findingKey", findingKey);
+            cmd.AddParameterWithValue("@taskId", round.TaskId);
+            cmd.AddParameterWithValue("@reviewRoundId", input.ReviewRoundId);
+            cmd.AddParameterWithValue("@findingNumber", findingNumber);
+            cmd.AddParameterWithValue("@createdBy", input.CreatedBy);
+            cmd.AddParameterWithValue("@category", input.Category.ToDbValue());
+            cmd.AddParameterWithValue("@summary", input.Summary);
+            cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
+            cmd.AddParameterWithValue("@fileReferences", SerializeList(input.FileReferences));
+            cmd.AddParameterWithValue("@testCommands", SerializeList(input.TestCommands));
 
-        await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        var finding = ReadReviewFinding(reader, round.RoundNumber);
-        await reader.CloseAsync();
+            await using var reader = await cmd.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            var finding = ReadReviewFinding(reader, round.RoundNumber);
+            await reader.CloseAsync();
 
-        await tx.CommitAsync();
-        return finding;
+            await tx.CommitAsync();
+            return finding;
+        });
     }
 
     public async Task<ReviewFinding?> GetByIdAsync(int id)

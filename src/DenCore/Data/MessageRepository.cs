@@ -236,7 +236,7 @@ public sealed class MessageRepository : IMessageRepository
         foreach (var msgId in messageIds)
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "INSERT OR IGNORE INTO message_reads (message_id, agent) VALUES (@msgId, @agent)";
+            cmd.CommandText = $"{_db.Sql.InsertIgnoreInto("message_reads")} (message_id, agent) VALUES (@msgId, @agent){_db.Sql.OnConflictDoNothing}";
             cmd.AddParameterWithValue("@msgId", msgId);
             cmd.AddParameterWithValue("@agent", agent);
             count += await cmd.ExecuteNonQueryAsync();
@@ -284,13 +284,13 @@ public sealed class MessageRepository : IMessageRepository
 
         if (metadataType is not null)
         {
-            where.Add("json_extract(m.metadata, '$.type') = @metadataType");
+            where.Add($"{_db.Sql.JsonText("m.metadata", "$.type")} = @metadataType");
             cmd.AddParameterWithValue("@metadataType", metadataType);
         }
 
         if (urgency is not null)
         {
-            where.Add("json_extract(m.metadata, '$.urgency') = @urgency");
+            where.Add($"{_db.Sql.JsonText("m.metadata", "$.urgency")} = @urgency");
             cmd.AddParameterWithValue("@urgency", urgency);
         }
 
@@ -336,7 +336,7 @@ public sealed class MessageRepository : IMessageRepository
             SELECT
                 m.id, m.project_id, m.task_id, m.thread_id, m.sender, m.content,
                 m.metadata, m.created_at,
-                json_extract(m.metadata, '$.urgency') AS urgency,
+                {_db.Sql.JsonText("m.metadata", "$.urgency")} AS urgency,
                 {isReadExpr} AS is_read
             FROM messages m
             WHERE {string.Join(" AND ", where)}
@@ -377,12 +377,13 @@ public sealed class MessageRepository : IMessageRepository
         foreach (var msgId in notificationIds)
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT OR IGNORE INTO message_reads (message_id, agent)
+            cmd.CommandText = $"""
+                {_db.Sql.InsertIgnoreInto("message_reads")} (message_id, agent)
                 SELECT @msgId, @agent
                 WHERE EXISTS (
                     SELECT 1 FROM messages m WHERE m.id = @msgId AND m.intent = 'notification'
                 )
+                {_db.Sql.OnConflictDoNothing}
                 """;
             cmd.AddParameterWithValue("@msgId", msgId);
             cmd.AddParameterWithValue("@agent", agent);
@@ -399,12 +400,13 @@ public sealed class MessageRepository : IMessageRepository
 
         var taskClause = taskId is not null ? "AND m.task_id = @taskId" : "";
         cmd.CommandText = $"""
-            INSERT OR IGNORE INTO message_reads (message_id, agent)
+            {_db.Sql.InsertIgnoreInto("message_reads")} (message_id, agent)
             SELECT m.id, @agent
             FROM messages m
             WHERE m.intent = 'notification'
               AND m.project_id = @projectId
               {taskClause}
+            {_db.Sql.OnConflictDoNothing}
             """;
         cmd.AddParameterWithValue("@agent", agent);
         cmd.AddParameterWithValue("@projectId", projectId);

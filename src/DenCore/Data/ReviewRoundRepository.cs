@@ -23,35 +23,37 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
     {
         ValidateCreateInput(input);
 
-        await using var conn = await _db.CreateConnectionAsync();
-        await using var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
-
-        var latest = await GetLatestByTaskWithConnectionAsync(conn, input.TaskId);
-        var roundNumber = (latest?.RoundNumber ?? 0) + 1;
-        var lastReviewedHead = input.LastReviewedHeadCommit ?? latest?.HeadCommit;
-        var preferredDiffBaseRef = input.PreferredDiffBaseRef ?? input.BaseBranch;
-        var preferredDiffBaseCommit = input.PreferredDiffBaseCommit ?? input.BaseCommit;
-        var preferredDiffHeadRef = input.PreferredDiffHeadRef ?? input.Branch;
-        var preferredDiffHeadCommit = input.PreferredDiffHeadCommit ?? input.HeadCommit;
-        var alternateDiffHeadRef = input.AlternateDiffBaseRef is null && input.AlternateDiffHeadRef is null &&
-            input.AlternateDiffBaseCommit is null && input.AlternateDiffHeadCommit is null
-            ? null
-            : input.AlternateDiffHeadRef ?? input.Branch;
-        var alternateDiffHeadCommit = input.AlternateDiffBaseRef is null && input.AlternateDiffHeadRef is null &&
-            input.AlternateDiffBaseCommit is null && input.AlternateDiffHeadCommit is null
-            ? null
-            : input.AlternateDiffHeadCommit ?? input.HeadCommit;
-        var deltaBaseCommit = input.DeltaBaseCommit ?? lastReviewedHead;
-
-        if (lastReviewedHead is not null &&
-            string.Equals(lastReviewedHead, input.HeadCommit, StringComparison.OrdinalIgnoreCase))
+        return await SerializableTransactionRetry.ExecuteAsync(async () =>
         {
-            throw new InvalidOperationException(
-                $"Task {input.TaskId} review head {input.HeadCommit} matches the last reviewed head commit.");
-        }
+            await using var conn = await _db.CreateConnectionAsync();
+            await using var tx = await conn.BeginTransactionAsync(System.Data.IsolationLevel.Serializable);
 
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+            var latest = await GetLatestByTaskWithConnectionAsync(conn, input.TaskId);
+            var roundNumber = (latest?.RoundNumber ?? 0) + 1;
+            var lastReviewedHead = input.LastReviewedHeadCommit ?? latest?.HeadCommit;
+            var preferredDiffBaseRef = input.PreferredDiffBaseRef ?? input.BaseBranch;
+            var preferredDiffBaseCommit = input.PreferredDiffBaseCommit ?? input.BaseCommit;
+            var preferredDiffHeadRef = input.PreferredDiffHeadRef ?? input.Branch;
+            var preferredDiffHeadCommit = input.PreferredDiffHeadCommit ?? input.HeadCommit;
+            var alternateDiffHeadRef = input.AlternateDiffBaseRef is null && input.AlternateDiffHeadRef is null &&
+                input.AlternateDiffBaseCommit is null && input.AlternateDiffHeadCommit is null
+                ? null
+                : input.AlternateDiffHeadRef ?? input.Branch;
+            var alternateDiffHeadCommit = input.AlternateDiffBaseRef is null && input.AlternateDiffHeadRef is null &&
+                input.AlternateDiffBaseCommit is null && input.AlternateDiffHeadCommit is null
+                ? null
+                : input.AlternateDiffHeadCommit ?? input.HeadCommit;
+            var deltaBaseCommit = input.DeltaBaseCommit ?? lastReviewedHead;
+
+            if (lastReviewedHead is not null &&
+                string.Equals(lastReviewedHead, input.HeadCommit, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Task {input.TaskId} review head {input.HeadCommit} matches the last reviewed head commit.");
+            }
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
             INSERT INTO review_rounds (
                 task_id, round_number, requested_by, branch, base_branch, base_commit, head_commit,
                 last_reviewed_head_commit, commits_since_last_review, tests_run, notes,
@@ -74,36 +76,37 @@ public sealed class ReviewRoundRepository : IReviewRoundRepository
                       inherited_commit_count, task_local_commit_count, verdict, verdict_by, verdict_notes,
                       requested_at, verdict_at
             """;
-        cmd.AddParameterWithValue("@taskId", input.TaskId);
-        cmd.AddParameterWithValue("@roundNumber", roundNumber);
-        cmd.AddParameterWithValue("@requestedBy", input.RequestedBy);
-        cmd.AddParameterWithValue("@branch", input.Branch);
-        cmd.AddParameterWithValue("@baseBranch", input.BaseBranch);
-        cmd.AddParameterWithValue("@baseCommit", input.BaseCommit);
-        cmd.AddParameterWithValue("@headCommit", input.HeadCommit);
-        cmd.AddParameterWithValue("@lastReviewedHeadCommit", (object?)lastReviewedHead ?? DBNull.Value);
-        cmd.AddParameterWithValue("@commitsSinceLastReview", (object?)input.CommitsSinceLastReview ?? DBNull.Value);
-        cmd.AddParameterWithValue("@testsRun", input.TestsRun is { Count: > 0 } ? JsonSerializer.Serialize(input.TestsRun) : DBNull.Value);
-        cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
-        cmd.AddParameterWithValue("@preferredDiffBaseRef", preferredDiffBaseRef);
-        cmd.AddParameterWithValue("@preferredDiffBaseCommit", preferredDiffBaseCommit);
-        cmd.AddParameterWithValue("@preferredDiffHeadRef", preferredDiffHeadRef);
-        cmd.AddParameterWithValue("@preferredDiffHeadCommit", preferredDiffHeadCommit);
-        cmd.AddParameterWithValue("@alternateDiffBaseRef", (object?)input.AlternateDiffBaseRef ?? DBNull.Value);
-        cmd.AddParameterWithValue("@alternateDiffBaseCommit", (object?)input.AlternateDiffBaseCommit ?? DBNull.Value);
-        cmd.AddParameterWithValue("@alternateDiffHeadRef", (object?)alternateDiffHeadRef ?? DBNull.Value);
-        cmd.AddParameterWithValue("@alternateDiffHeadCommit", (object?)alternateDiffHeadCommit ?? DBNull.Value);
-        cmd.AddParameterWithValue("@deltaBaseCommit", (object?)deltaBaseCommit ?? DBNull.Value);
-        cmd.AddParameterWithValue("@inheritedCommitCount", (object?)input.InheritedCommitCount ?? DBNull.Value);
-        cmd.AddParameterWithValue("@taskLocalCommitCount", (object?)input.TaskLocalCommitCount ?? DBNull.Value);
+            cmd.AddParameterWithValue("@taskId", input.TaskId);
+            cmd.AddParameterWithValue("@roundNumber", roundNumber);
+            cmd.AddParameterWithValue("@requestedBy", input.RequestedBy);
+            cmd.AddParameterWithValue("@branch", input.Branch);
+            cmd.AddParameterWithValue("@baseBranch", input.BaseBranch);
+            cmd.AddParameterWithValue("@baseCommit", input.BaseCommit);
+            cmd.AddParameterWithValue("@headCommit", input.HeadCommit);
+            cmd.AddParameterWithValue("@lastReviewedHeadCommit", (object?)lastReviewedHead ?? DBNull.Value);
+            cmd.AddParameterWithValue("@commitsSinceLastReview", (object?)input.CommitsSinceLastReview ?? DBNull.Value);
+            cmd.AddParameterWithValue("@testsRun", input.TestsRun is { Count: > 0 } ? JsonSerializer.Serialize(input.TestsRun) : DBNull.Value);
+            cmd.AddParameterWithValue("@notes", (object?)input.Notes ?? DBNull.Value);
+            cmd.AddParameterWithValue("@preferredDiffBaseRef", preferredDiffBaseRef);
+            cmd.AddParameterWithValue("@preferredDiffBaseCommit", preferredDiffBaseCommit);
+            cmd.AddParameterWithValue("@preferredDiffHeadRef", preferredDiffHeadRef);
+            cmd.AddParameterWithValue("@preferredDiffHeadCommit", preferredDiffHeadCommit);
+            cmd.AddParameterWithValue("@alternateDiffBaseRef", (object?)input.AlternateDiffBaseRef ?? DBNull.Value);
+            cmd.AddParameterWithValue("@alternateDiffBaseCommit", (object?)input.AlternateDiffBaseCommit ?? DBNull.Value);
+            cmd.AddParameterWithValue("@alternateDiffHeadRef", (object?)alternateDiffHeadRef ?? DBNull.Value);
+            cmd.AddParameterWithValue("@alternateDiffHeadCommit", (object?)alternateDiffHeadCommit ?? DBNull.Value);
+            cmd.AddParameterWithValue("@deltaBaseCommit", (object?)deltaBaseCommit ?? DBNull.Value);
+            cmd.AddParameterWithValue("@inheritedCommitCount", (object?)input.InheritedCommitCount ?? DBNull.Value);
+            cmd.AddParameterWithValue("@taskLocalCommitCount", (object?)input.TaskLocalCommitCount ?? DBNull.Value);
 
-        await using var reader = await cmd.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        var created = ReadReviewRound(reader);
-        await reader.CloseAsync();
+            await using var reader = await cmd.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            var created = ReadReviewRound(reader);
+            await reader.CloseAsync();
 
-        await tx.CommitAsync();
-        return created;
+            await tx.CommitAsync();
+            return created;
+        });
     }
 
     public async Task<ReviewRound?> GetByIdAsync(int id)

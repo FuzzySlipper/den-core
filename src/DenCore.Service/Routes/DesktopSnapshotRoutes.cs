@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Data.Common;
 using DenCore.Data;
 using DenCore.Models;
 
@@ -25,7 +26,7 @@ public static class DesktopSnapshotRoutes
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+            catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
             {
                 return Results.BadRequest(new { error = "Desktop git snapshot references an unknown project, task, or workspace." });
             }
@@ -97,7 +98,7 @@ public static class DesktopSnapshotRoutes
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+            catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
             {
                 return Results.BadRequest(new { error = "Desktop diff snapshot references an unknown project, task, or workspace." });
             }
@@ -178,7 +179,7 @@ public static class DesktopSnapshotRoutes
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+            catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
             {
                 return Results.BadRequest(new { error = "Desktop session snapshot references an unknown project, task, or workspace." });
             }

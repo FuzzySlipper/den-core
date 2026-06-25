@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Data.Common;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Data;
 
@@ -46,7 +45,7 @@ public sealed class TopicRepository : ITopicRepository
             await reader.ReadAsync();
             return ReadTopic(reader);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        catch (DbException ex) when (DbExceptionTranslator.IsConstraintViolation(ex))
         {
             var existing = await GetBySlugAsync(topic.Slug);
             if (existing is not null)
@@ -149,7 +148,7 @@ public sealed class TopicRepository : ITopicRepository
                 throw new KeyNotFoundException($"Topic with id {id} not found");
             return ReadTopic(reader);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        catch (DbException ex) when (DbExceptionTranslator.IsConstraintViolation(ex))
         {
             var existing = await GetBySlugAsync(topic.Slug);
             if (existing is not null && existing.Id != id)
@@ -172,12 +171,10 @@ public sealed class TopicRepository : ITopicRepository
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
 
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT slug, status
             FROM consolidation_topics
-            WHERE (slug = @tag OR EXISTS (
-                SELECT 1 FROM json_each(aliases) WHERE json_each.value = @tag
-            ))
+            WHERE (slug = @tag OR {_db.Sql.JsonArrayContains("aliases", "@tag")})
             ORDER BY status = 'active' DESC, slug
             LIMIT 1
             """;

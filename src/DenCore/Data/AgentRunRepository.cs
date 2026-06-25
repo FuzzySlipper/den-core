@@ -96,7 +96,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
 
     private async Task<AgentRunRecord?> RebuildFromStreamAsync(DbConnection conn, string runId)
     {
-        var events = await LoadRunEventsAsync(conn, runId);
+        var events = await LoadRunEventsAsync(conn, runId, _db.Sql);
         if (events.Count == 0)
             return await GetByRunIdAsync(conn, runId);
 
@@ -268,10 +268,10 @@ public sealed class AgentRunRepository : IAgentRunRepository
         UpdatedAt = source.UpdatedAt
     };
 
-    private static async Task<List<RunStreamEvent>> LoadRunEventsAsync(DbConnection conn, string runId)
+    private static async Task<List<RunStreamEvent>> LoadRunEventsAsync(DbConnection conn, string runId, DbSqlDialect sql)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT
                 id,
                 event_type,
@@ -283,7 +283,7 @@ public sealed class AgentRunRepository : IAgentRunRepository
             FROM agent_stream_entries
             WHERE stream_kind = 'ops'
               AND event_type LIKE 'subagent_%'
-              AND json_extract(metadata, '$.run_id') = @runId
+              AND {sql.JsonText("metadata", "$.run_id")} = @runId
             ORDER BY id ASC
             """;
         cmd.AddParameterWithValue("@runId", runId);

@@ -207,7 +207,7 @@ public sealed class AttentionService : IAttentionService
         var where = new List<string> { "stream_kind = 'ops'", "event_type = 'subagent_rerun_unavailable'" };
         AddProjectTaskFilter(cmd, where, "project_id", "task_id", options);
         cmd.CommandText = $"""
-            SELECT id, project_id, task_id, body, json_extract(metadata, '$.run_id') AS run_id, created_at
+            SELECT id, project_id, task_id, body, {_db.Sql.JsonText("metadata", "$.run_id")} AS run_id, created_at
             FROM agent_stream_entries
             WHERE {string.Join(" AND ", where)}
             """;

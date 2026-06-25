@@ -1,4 +1,5 @@
 using DenCore.Data;
+using System.Data.Common;
 using DenCore.Models;
 
 namespace DenCore.Service.Routes;
@@ -24,7 +25,7 @@ public static class DesktopSessionEventRoutes
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-            catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 19)
+            catch (DbException ex) when (DbExceptionTranslator.IsReferentialIntegrityViolation(ex))
             {
                 return Results.BadRequest(new { error = "Desktop session event references an unknown project, task, or workspace." });
             }

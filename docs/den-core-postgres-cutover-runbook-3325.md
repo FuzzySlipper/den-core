@@ -8,8 +8,10 @@ from SQLite to Postgres. It is not authorization to perform the live cutover.
 ## Current Verdict
 
 Live cutover remains gated by the dedicated live cutover task #3326 and explicit
-Patch approval. The #3365 blocker that was discovered during the original #3325
-rehearsal has a repeatable smoke script:
+Patch approval. The #3365 and #3370 blockers discovered by rehearsal/live
+no-go attempts now have repeatable import/startup checks.
+
+For a synthetic fixture:
 
 ```bash
 DEN_MIGRATION_DATABASE_URL=postgres://... \
@@ -21,6 +23,28 @@ backup with `.backup`, import through den-services `den-core-import-parity`,
 start Core against `Search Path=den_core`, smoke `/health` and `/api/projects`,
 then drop the rehearsal schema. Do not run #3326 unless this rehearsal passes
 against the current cutover build and target.
+
+For the live backup copy from the #3326 no-go:
+
+```bash
+go run ./cmd/den-core-import-parity \
+  --source-sqlite /data/services/den-core/backups/postgres-cutover-20260625T110733Z/den.db \
+  --postgres-url "$DEN_MIGRATION_DATABASE_URL" \
+  --apply-migrations \
+  --reset-target
+
+DenCore__Provider=Postgres \
+DenCore__ConnectionString="...;Search Path=den_core" \
+  /data/services/den-core/app/DenMcp.Server --port 5598
+
+curl -fsS http://127.0.0.1:5598/health
+curl -fsS http://127.0.0.1:5598/api/projects
+```
+
+#3370 corrected the import schema to keep Phase 0 timestamp columns compatible
+with current Core string-based readers and to preserve checkpoint payloads as
+text. The live backup copy import/parity and alternate-port Core startup smoke
+must pass before any new #3326 retry window.
 
 ## Verified Topology
 
@@ -452,3 +476,58 @@ Result:
   assuming text `documents.tags`; den-services imports that column as `jsonb`.
   Core now casts `tags::text` in the Postgres FTS index/search expression.
 - Rehearsal schema cleaned up: `den_core=0`, `den_core_test_%=0`.
+
+### Live Cutover No-Go And #3370 Compatibility Rehearsal
+
+The first #3326 live quiet-window attempt on 2026-06-25 was a no-go. Core was
+deployed to commit `602e6fd4be9b`, the live SQLite DB was backed up, and
+services were stopped for the import window. Backup evidence:
+
+```text
+backup_dir=/data/services/den-core/backups/postgres-cutover-20260625T110733Z
+backup_integrity=ok
+backup_size=1279488000
+backup_sha256=edb6fbaab64fa7c2e06ee810eb59d592dd31ce92fdf0683bf6d52513e977adb0
+env_backup=server.env.pre-postgres
+```
+
+No live Postgres flip was performed. The no-go causes were:
+
+- `worker_checkpoints.payload` and `checkpoint_responses.payload` were modeled
+  as `jsonb`, but live historical rows include non-JSON payload text and Core
+  treats these payloads as strings.
+- The importer timestamp parser did not accept T-separated no-zone timestamps
+  such as `2026-04-26T09:43:57.0000000`.
+- After those two fixes were staged, row counts matched, but checksum parity
+  failed on timestamp/json-heavy tables.
+- An alternate-port Core smoke against the imported schema returned healthy
+  `/health` but `/api/projects` failed with `InvalidCastException` because Core
+  tried to read a Postgres `timestamptz` value as `System.String`.
+
+Rollback restored the unchanged SQLite config and restarted
+`den-core.service`, `den-mcp.service`, and `den-channels.service`; Core health,
+facade health, raw `/api/projects`, MCP reads, and a low-risk MCP message write
+all passed.
+
+#3370 compatibility result against the same live backup copy:
+
+```text
+applied_migrations=den_core/001, den_core/002
+known_source_exclusions=documents_fts..., notification_message_links, pi_session_events, pi_sessions
+all listed target tables status ok
+capability_invocations checksum=ok
+agent_runs checksum=ok
+desktop_diff_snapshots checksum=ok
+desktop_git_snapshots checksum=ok
+desktop_session_snapshots checksum=ok
+worker_checkpoints checksum=ok
+```
+
+Alternate-port Core smoke against the imported schema:
+
+```text
+compat_health={"status":"healthy","commit":"602e6fd4be9b",...}
+compat_api_projects_http=200
+compat_api_projects_bytes=6469
+compat_log_errors=none
+```

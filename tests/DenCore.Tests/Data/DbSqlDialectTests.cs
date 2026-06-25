@@ -12,6 +12,8 @@ public class DbSqlDialectTests
         Assert.Equal(DatabaseProviderKind.Sqlite, sql.Provider);
         Assert.Equal("datetime('now')", sql.CurrentTimestamp);
         Assert.Equal("SELECT last_insert_rowid();", sql.LastInsertedIdSelect);
+        Assert.True(sql.SupportsReturningClause);
+        Assert.Equal(" RETURNING id", sql.ReturningIdClause());
         Assert.Equal("INSERT OR IGNORE INTO message_reads", sql.InsertIgnoreInto("message_reads"));
         Assert.Equal("", sql.OnConflictDoNothing);
         Assert.Equal("json_extract(metadata, '$.run_id')", sql.JsonText("metadata", "$.run_id"));
@@ -26,6 +28,10 @@ public class DbSqlDialectTests
 
         Assert.Equal(DatabaseProviderKind.Postgres, sql.Provider);
         Assert.Equal("CURRENT_TIMESTAMP", sql.CurrentTimestamp);
+        Assert.Throws<NotSupportedException>(() => sql.LastInsertedIdSelect);
+        Assert.True(sql.SupportsReturningClause);
+        Assert.Equal(" RETURNING id", sql.ReturningIdClause());
+        Assert.Equal(" RETURNING usage_events.id", sql.ReturningIdClause("usage_events.id"));
         Assert.Equal("INSERT INTO message_reads", sql.InsertIgnoreInto("message_reads"));
         Assert.Equal(" ON CONFLICT DO NOTHING", sql.OnConflictDoNothing);
         Assert.Equal("metadata::jsonb #>> '{run_id}'", sql.JsonText("metadata", "$.run_id"));

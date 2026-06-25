@@ -16,5 +16,5 @@ Task #3321 introduced provider-neutral SQL dialect helpers and database exceptio
 
 - Runtime route/repository constraint handling now uses `DbExceptionTranslator` instead of checking `SqliteErrorCode == 19`.
 - Runtime JSON scalar and JSON-array filters touched in #3321 now go through `DbSqlDialect.JsonText` or `DbSqlDialect.JsonArrayContains`.
-- Runtime `last_insert_rowid()` reads touched in #3321 now go through `DbSqlDialect.LastInsertedIdSelect`.
+- Runtime `last_insert_rowid()` reads touched in #3321 now go through SQLite-only `DbSqlDialect.LastInsertedIdSelect`; Postgres identity reads must use `DbSqlDialect.ReturningIdClause`.
 - Runtime insert-ignore patterns touched in #3321 now go through `DbSqlDialect.InsertIgnoreInto` plus `OnConflictDoNothing`.

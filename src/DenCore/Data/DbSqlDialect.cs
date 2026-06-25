@@ -22,7 +22,19 @@ public sealed class DbSqlDialect
     public string LastInsertedIdSelect => Provider switch
     {
         DatabaseProviderKind.Sqlite => "SELECT last_insert_rowid();",
-        DatabaseProviderKind.Postgres => "/* Postgres identity reads should use INSERT ... RETURNING id. */ SELECT currval(pg_get_serial_sequence('', 'id'));",
+        DatabaseProviderKind.Postgres => throw new NotSupportedException("Postgres identity reads must use INSERT ... RETURNING via ReturningIdClause."),
+        _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
+    };
+
+    public bool SupportsReturningClause => Provider switch
+    {
+        DatabaseProviderKind.Sqlite or DatabaseProviderKind.Postgres => true,
+        _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
+    };
+
+    public string ReturningIdClause(string columnExpression = "id") => Provider switch
+    {
+        DatabaseProviderKind.Sqlite or DatabaseProviderKind.Postgres => $" RETURNING {columnExpression}",
         _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
     };
 

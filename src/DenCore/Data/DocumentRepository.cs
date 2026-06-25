@@ -40,16 +40,19 @@ public sealed class DocumentRepository : IDocumentRepository
     {
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var tagsValue = _db.Provider == DatabaseProviderKind.Postgres
+            ? "CAST(@tags AS jsonb)"
+            : "@tags";
+        cmd.CommandText = $"""
             INSERT INTO documents (project_id, slug, title, content, doc_type, visibility, tags, summary)
-            VALUES (@projectId, @slug, @title, @content, @docType, @visibility, @tags, @summary)
+            VALUES (@projectId, @slug, @title, @content, @docType, @visibility, {tagsValue}, @summary)
             ON CONFLICT(project_id, slug) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
                 doc_type = excluded.doc_type,
                 tags = excluded.tags,
                 summary = excluded.summary,
-                updated_at = datetime('now')
+                updated_at = {_db.Sql.CurrentTimestamp}
             RETURNING id, project_id, slug, title, content, doc_type, visibility, tags, summary, created_at, updated_at
             """;
         cmd.AddParameterWithValue("@projectId", document.ProjectId);
@@ -137,7 +140,7 @@ public sealed class DocumentRepository : IDocumentRepository
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var tagsJson = reader.IsDBNull(6) ? null : reader.GetString(6);
+            var tagsJson = ReadNullableText(reader, 6);
             results.Add(new DocumentSummary
             {
                 Id = reader.GetInt32(0),
@@ -148,7 +151,7 @@ public sealed class DocumentRepository : IDocumentRepository
                 Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(5)),
                 Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
                 Summary = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdatedAt = DateTime.Parse(reader.GetString(8))
+                UpdatedAt = ReadDateTime(reader, 8)
             });
         }
         return results;
@@ -246,8 +249,8 @@ public sealed class DocumentRepository : IDocumentRepository
     {
         await using var conn = await _db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE documents SET visibility = @visibility, updated_at = datetime('now')
+        cmd.CommandText = $"""
+            UPDATE documents SET visibility = @visibility, updated_at = {_db.Sql.CurrentTimestamp}
             WHERE project_id = @projectId AND slug = @slug
             RETURNING id, project_id, slug, title, content, doc_type, visibility, tags, summary, created_at, updated_at
             """;
@@ -300,7 +303,7 @@ public sealed class DocumentRepository : IDocumentRepository
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var tagsJson = reader.IsDBNull(6) ? null : reader.GetString(6);
+            var tagsJson = ReadNullableText(reader, 6);
             results.Add(new DocumentSummary
             {
                 Id = reader.GetInt32(0),
@@ -311,7 +314,7 @@ public sealed class DocumentRepository : IDocumentRepository
                 Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(5)),
                 Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
                 Summary = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdatedAt = DateTime.Parse(reader.GetString(8))
+                UpdatedAt = ReadDateTime(reader, 8)
             });
         }
         return results;
@@ -375,7 +378,7 @@ public sealed class DocumentRepository : IDocumentRepository
 
     private static Document ReadDocument(DbDataReader reader)
     {
-        var tagsJson = reader.IsDBNull(7) ? null : reader.GetString(7);
+        var tagsJson = ReadNullableText(reader, 7);
         return new Document
         {
             Id = reader.GetInt32(0),
@@ -387,8 +390,36 @@ public sealed class DocumentRepository : IDocumentRepository
             Visibility = EnumExtensions.ParseDocumentVisibility(reader.GetString(6)),
             Tags = tagsJson is not null ? JsonSerializer.Deserialize<List<string>>(tagsJson) : null,
             Summary = reader.IsDBNull(8) ? null : reader.GetString(8),
-            CreatedAt = DateTime.Parse(reader.GetString(9)),
-            UpdatedAt = DateTime.Parse(reader.GetString(10))
+            CreatedAt = ReadDateTime(reader, 9),
+            UpdatedAt = ReadDateTime(reader, 10)
+        };
+    }
+
+    private static string? ReadNullableText(DbDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return null;
+
+        return reader.GetValue(ordinal) switch
+        {
+            string text => text,
+            JsonElement element => element.GetRawText(),
+            JsonDocument document => document.RootElement.GetRawText(),
+            DateTime timestamp => timestamp.ToString("O"),
+            DateTimeOffset timestamp => timestamp.ToString("O"),
+            var value => value.ToString()
+        };
+    }
+
+    private static DateTime ReadDateTime(DbDataReader reader, int ordinal)
+    {
+        var value = reader.GetValue(ordinal);
+        return value switch
+        {
+            DateTime timestamp => timestamp,
+            DateTimeOffset timestamp => timestamp.UtcDateTime,
+            string text => DateTime.Parse(text),
+            _ => DateTime.Parse(value.ToString() ?? "")
         };
     }
 }

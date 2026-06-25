@@ -583,6 +583,43 @@ alternate-port Core Postgres smoke on den-srv:
   captured_log_errors=none
 ```
 
-Do not retry #3326 until #3379 and #3380 are both reviewed and merged. The
-worker-pool stale-sweep path has been rechecked against the imported live-backup
-schema, but document write/read/search/delete smoke remains covered by #3380.
+### #3380 Document JSONB Retest
+
+#3380 fixes the remaining document write blocker from the second #3326 retry.
+Core now aligns its Postgres document schema with the imported live schema by
+using `documents.tags JSONB`, writes tags with `CAST(@tags AS jsonb)`, and reads
+document tags/timestamps through provider-tolerant row helpers. Concise MCP
+document list/search projections were also checked so C# `DocumentSummary` and
+`DocumentSearchResult` values preserve metadata instead of collapsing to
+placeholder-only records.
+
+#3380 retest evidence:
+
+```text
+local dotnet test --filter FullyQualifiedName~DocumentRepositoryTests|FullyQualifiedName~PostgresDatabaseInitializerTests.InitialSchema
+  Passed: 27
+
+local dotnet test --filter FullyQualifiedName~ConciseReadResponseTests
+  Passed: 35
+
+remote Postgres harness on den-srv:
+  Category=PostgresProvider
+  Passed: 5
+
+alternate-port Core Postgres smoke on den-srv:
+  port=5598
+  schema=den_core
+  health=healthy
+  POST /api/projects/_global/documents/
+  GET /api/projects/_global/documents/task-3380-jsonb-smoke
+  GET /api/projects/_global/documents?tags=jsonb-smoke
+  GET /api/projects/_global/documents/search?query="jsonb smoke phrase"
+  DELETE /api/projects/_global/documents/task-3380-jsonb-smoke
+  document_smoke=ok listed=1 search=1
+  captured_log_errors=none
+```
+
+Do not retry #3326 until #3380 is reviewed and merged. After merge, the next
+retry window should still run both targeted smoke gates before any live flip:
+`GET /api/worker-pool/stale?limit=5` and document store/get/list/search/delete
+against the imported Postgres `den_core` schema.

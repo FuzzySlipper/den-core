@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DenCore.Models;
 
 namespace DenCore.Service.Tools;
 
@@ -198,8 +199,8 @@ public static class ConciseReadResponse
                 project_id = Prop(d, "project_id"),
                 slug = Prop(d, "slug"),
                 title = Prop(d, "title"),
-                doc_type = Prop(d, "doc_type"),
-                visibility = Prop(d, "visibility"),
+                doc_type = DocumentEnumValue(Prop(d, "doc_type")),
+                visibility = DocumentEnumValue(Prop(d, "visibility")),
                 summary = Prop(d, "summary"),
                 tags = Prop(d, "tags"),
                 deep_read_hint = "Use get_document with verbose=true for full content.",
@@ -389,7 +390,7 @@ public static class ConciseReadResponse
                 project_id = Prop(r, "project_id"),
                 slug = Prop(r, "slug"),
                 title = Prop(r, "title"),
-                doc_type = Prop(r, "doc_type"),
+                doc_type = DocumentEnumValue(Prop(r, "doc_type")),
                 snippet = Prop(r, "snippet"),
                 deep_read_hint = "Use get_document with verbose=true for full content.",
             });
@@ -419,8 +420,8 @@ public static class ConciseReadResponse
             project_id = Prop(doc, "project_id"),
             slug = Prop(doc, "slug"),
             title = Prop(doc, "title"),
-            doc_type = Prop(doc, "doc_type"),
-            visibility = Prop(doc, "visibility"),
+            doc_type = DocumentEnumValue(Prop(doc, "doc_type")),
+            visibility = DocumentEnumValue(Prop(doc, "visibility")),
             summary = Prop(doc, "summary"),
             tags = Prop(doc, "tags"),
             created_at = Prop(doc, "created_at"),
@@ -458,8 +459,24 @@ public static class ConciseReadResponse
 
     private static object? Prop(object obj, string name)
     {
-        return obj.GetType().GetProperty(name)?.GetValue(obj);
+        var type = obj.GetType();
+        var prop = type.GetProperty(name);
+        if (prop is not null)
+            return prop.GetValue(obj);
+
+        prop = type.GetProperties()
+            .FirstOrDefault(p =>
+                string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(ToSnakeCase(p.Name), name, StringComparison.OrdinalIgnoreCase));
+        return prop?.GetValue(obj);
     }
+
+    private static object? DocumentEnumValue(object? value) => value switch
+    {
+        DocType docType => docType.ToDbValue(),
+        DocumentVisibility visibility => visibility.ToDbValue(),
+        _ => value
+    };
 
     private static string ToSnakeCase(string name)
     {

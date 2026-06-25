@@ -39,6 +39,7 @@ public class PostgresDatabaseInitializerTests
         }
 
         Assert.DoesNotContain("content               TEXT", schema);
+        Assert.Contains("tags       JSONB", schema);
         Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_stream_dedup", schema);
         Assert.Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_dedup", schema);
     }

@@ -97,13 +97,12 @@ public sealed class UsageCostRepository : IUsageCostRepository
                 @requestCount, @retryCount, @streaming, @errorKind,
                 @pricingSnapshotId, @approximateCostMicroCents,
                 @provenance, @adapterVersion, @rawUsageSource, @requestIdHint
-            );
-            {_db.Sql.LastInsertedIdSelect}
+            )
+            {_db.Sql.ReturningIdClause()}
             """;
 
         BindEventParams(cmd, e);
-        var id = (long)(await cmd.ExecuteScalarAsync())!;
-        e.Id = (int)id;
+        e.Id = Convert.ToInt32((await cmd.ExecuteScalarAsync())!);
         e.CreatedAt = DateTime.UtcNow;
         return e;
     }
@@ -152,12 +151,11 @@ public sealed class UsageCostRepository : IUsageCostRepository
                         @requestCount, @retryCount, @streaming, @errorKind,
                         @pricingSnapshotId, @approximateCostMicroCents,
                         @provenance, @adapterVersion, @rawUsageSource, @requestIdHint
-                    );
-                    {_db.Sql.LastInsertedIdSelect}
+                    )
+                    {_db.Sql.ReturningIdClause()}
                     """;
                 BindEventParams(cmd, e);
-                var id = (long)(await cmd.ExecuteScalarAsync())!;
-                e.Id = (int)id;
+                e.Id = Convert.ToInt32((await cmd.ExecuteScalarAsync())!);
                 e.CreatedAt = DateTime.UtcNow;
             }
 
@@ -245,8 +243,8 @@ public sealed class UsageCostRepository : IUsageCostRepository
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             INSERT INTO pricing_snapshots (snapshot_label, snapshot_version, effective_at, entries_json, created_by, notes)
-            VALUES (@label, @version, @effectiveAt, @entriesJson, @createdBy, @notes);
-            {_db.Sql.LastInsertedIdSelect}
+            VALUES (@label, @version, @effectiveAt, @entriesJson, @createdBy, @notes)
+            {_db.Sql.ReturningIdClause()}
             """;
 
         cmd.AddParameterWithValue("@label", snapshot.SnapshotLabel);
@@ -256,8 +254,7 @@ public sealed class UsageCostRepository : IUsageCostRepository
         cmd.AddParameterWithValue("@createdBy", (object?)snapshot.CreatedBy ?? DBNull.Value);
         cmd.AddParameterWithValue("@notes", (object?)snapshot.Notes ?? DBNull.Value);
 
-        var id = (long)(await cmd.ExecuteScalarAsync())!;
-        snapshot.Id = (int)id;
+        snapshot.Id = Convert.ToInt32((await cmd.ExecuteScalarAsync())!);
         snapshot.CreatedAt = DateTime.UtcNow;
         return snapshot;
     }

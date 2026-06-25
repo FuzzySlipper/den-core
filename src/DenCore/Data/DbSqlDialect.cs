@@ -15,7 +15,7 @@ public sealed class DbSqlDialect
     public string CurrentTimestamp => Provider switch
     {
         DatabaseProviderKind.Sqlite => "datetime('now')",
-        DatabaseProviderKind.Postgres => "CURRENT_TIMESTAMP",
+        DatabaseProviderKind.Postgres => "CURRENT_TIMESTAMP::text",
         _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
     };
 
@@ -71,7 +71,7 @@ public sealed class DbSqlDialect
     public string AddSeconds(string timestampExpression, string secondsExpression) => Provider switch
     {
         DatabaseProviderKind.Sqlite => $"datetime({timestampExpression}, '+' || {secondsExpression} || ' seconds')",
-        DatabaseProviderKind.Postgres => $"{timestampExpression} + ({secondsExpression} * INTERVAL '1 second')",
+        DatabaseProviderKind.Postgres => $"(({timestampExpression})::timestamptz + ({secondsExpression} * INTERVAL '1 second'))::text",
         _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
     };
 

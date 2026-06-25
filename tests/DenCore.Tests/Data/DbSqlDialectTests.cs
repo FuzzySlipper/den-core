@@ -27,7 +27,7 @@ public class DbSqlDialectTests
         var sql = DbSqlDialect.Postgres;
 
         Assert.Equal(DatabaseProviderKind.Postgres, sql.Provider);
-        Assert.Equal("CURRENT_TIMESTAMP", sql.CurrentTimestamp);
+        Assert.Equal("CURRENT_TIMESTAMP::text", sql.CurrentTimestamp);
         Assert.Throws<NotSupportedException>(() => sql.LastInsertedIdSelect);
         Assert.True(sql.SupportsReturningClause);
         Assert.Equal(" RETURNING id", sql.ReturningIdClause());
@@ -36,6 +36,7 @@ public class DbSqlDialectTests
         Assert.Equal(" ON CONFLICT DO NOTHING", sql.OnConflictDoNothing);
         Assert.Equal("metadata::jsonb #>> '{run_id}'", sql.JsonText("metadata", "$.run_id"));
         Assert.Equal("EXISTS (SELECT 1 FROM jsonb_array_elements_text(tags_json::jsonb) AS value WHERE value = @tag)", sql.JsonArrayContains("tags_json", "@tag"));
+        Assert.Equal("((last_heartbeat)::timestamptz + (stale_after_seconds * INTERVAL '1 second'))::text", sql.AddSeconds("last_heartbeat", "stale_after_seconds"));
         Assert.Equal("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = @name", sql.TableExistsSql);
         Assert.Contains("ON CONFLICT (rowid) DO UPDATE", sql.KnowledgeFtsUpsertCommandText);
     }

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DenCore.Data;
 
-public sealed class DatabaseInitializer
+public sealed class DatabaseInitializer : IDatabaseInitializer
 {
     private readonly string _connectionString;
     private readonly ILogger<DatabaseInitializer> _logger;

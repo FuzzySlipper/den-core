@@ -28,7 +28,7 @@ public sealed class DocumentRepository : IDocumentRepository
             setweight(to_tsvector('english', coalesce(d.title, '')), 'A') ||
             setweight(to_tsvector('english', coalesce(d.summary, '')), 'B') ||
             setweight(to_tsvector('english', coalesce(d.content, '')), 'C') ||
-            setweight(to_tsvector('english', coalesce(d.tags, '')), 'D')
+            setweight(to_tsvector('english', coalesce(d.tags::text, '')), 'D')
         )
         """;
 

@@ -7,20 +7,20 @@ from SQLite to Postgres. It is not authorization to perform the live cutover.
 
 ## Current Verdict
 
-Live cutover is **NO-GO** until #3365 is resolved.
+Live cutover remains gated by the dedicated live cutover task #3326 and explicit
+Patch approval. The #3365 blocker that was discovered during the original #3325
+rehearsal has a repeatable smoke script:
 
-The #3325 rehearsal proved backup/import/parity pieces, but the combined
-sequence failed when Core started against the imported `den_core` schema:
-
-```text
-Npgsql.PostgresException: 22P02 invalid input syntax for type json
-at DenCore.Data.PostgresDatabaseInitializer.ApplyMigrationAsync(...)
+```bash
+DEN_MIGRATION_DATABASE_URL=postgres://... \
+  scripts/rehearse-postgres-imported-schema-start.sh
 ```
 
-Follow-up #3365 must reconcile the den-services import/parity `den_core`
-schema with the Core-side Postgres startup initializer, or select one
-authoritative production migration path. Do not run #3326 before that task is
-done and re-rehearsed.
+The script exercises the non-live sequence: create a temporary SQLite fixture,
+backup with `.backup`, import through den-services `den-core-import-parity`,
+start Core against `Search Path=den_core`, smoke `/health` and `/api/projects`,
+then drop the rehearsal schema. Do not run #3326 unless this rehearsal passes
+against the current cutover build and target.
 
 ## Verified Topology
 
@@ -426,24 +426,29 @@ remaining den_core_test_% schemas=0
 Command shape:
 
 ```bash
-DenCore__Provider=Postgres
-DenCore__ConnectionString="Host=192.168.1.10;Port=5433;Database=denservices;Username=<redacted>;Password=<redacted>;Search Path=den_core"
-ASPNETCORE_ENVIRONMENT=Development
-dotnet run --project src/DenCore.Service/DenCore.Service.csproj \
-  -p:NuGetAudit=false --no-launch-profile -- --port 5598
+DEN_MIGRATION_DATABASE_URL=postgres://... \
+  scripts/rehearse-postgres-imported-schema-start.sh
 ```
 
 Observed:
 
 ```text
-temp_core_health=FAILED
-Npgsql.PostgresException: 22P02 invalid input syntax for type json
-at DenCore.Data.PostgresDatabaseInitializer.ApplyMigrationAsync(...)
+backup_integrity=ok
+backup_tables=62
+backup_size=991232
+applied_migrations=den_core/001, den_core/002
+projects source/imported/target = 1/1/1 status ok
+temp_core_health={"status":"healthy",...}
+api_projects_http=200
+remaining_den_core_schemas=0
+remaining_den_core_test_schemas=0
 ```
 
 Result:
 
-- Live cutover is blocked.
-- Follow-up #3365 created.
-- #3326 now depends on #3365.
+- The imported schema and Core Postgres startup path are compatible for the
+  required health/projects smoke.
+- The original #3365 failure was caused by Core's document search vector
+  assuming text `documents.tags`; den-services imports that column as `jsonb`.
+  Core now casts `tags::text` in the Postgres FTS index/search expression.
 - Rehearsal schema cleaned up: `den_core=0`, `den_core_test_%=0`.

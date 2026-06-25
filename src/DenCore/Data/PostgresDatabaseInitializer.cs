@@ -806,7 +806,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                 setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
                 setweight(to_tsvector('english', coalesce(summary, '')), 'B') ||
                 setweight(to_tsvector('english', coalesce(content, '')), 'C') ||
-                setweight(to_tsvector('english', coalesce(tags, '')), 'D')
+                setweight(to_tsvector('english', coalesce(tags::text, '')), 'D')
             ));
 
         ------------------------------------------------------------

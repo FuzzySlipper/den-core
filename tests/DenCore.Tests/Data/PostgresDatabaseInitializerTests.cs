@@ -52,6 +52,7 @@ public class PostgresDatabaseInitializerTests
         Assert.Contains("DROP TABLE IF EXISTS knowledge_entries_fts", schema);
         Assert.Contains("idx_documents_search_gin", schema);
         Assert.Contains("idx_knowledge_entries_search_gin", schema);
+        Assert.Contains("coalesce(tags::text, '')", schema);
         Assert.Contains("CREATE TABLE IF NOT EXISTS knowledge_entries", schema);
         Assert.DoesNotContain("CREATE VIRTUAL TABLE", schema);
         Assert.DoesNotContain("CREATE TABLE IF NOT EXISTS documents_fts", schema);

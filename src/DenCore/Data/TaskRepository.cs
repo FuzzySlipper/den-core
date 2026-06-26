@@ -32,9 +32,12 @@ public sealed class TaskRepository : ITaskRepository
         await using var tx = await conn.BeginTransactionAsync();
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var tagsValue = _db.Provider == DatabaseProviderKind.Postgres
+            ? "CAST(@tags AS jsonb)"
+            : "@tags";
+        cmd.CommandText = $"""
             INSERT INTO tasks (project_id, parent_id, title, description, status, priority, assigned_to, tags)
-            VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, @tags)
+            VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, {tagsValue})
             RETURNING id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at
             """;
         cmd.AddParameterWithValue("@projectId", task.ProjectId);
@@ -563,7 +566,10 @@ public sealed class TaskRepository : ITaskRepository
             };
 
             var p = $"@p{paramIdx++}";
-            sets.Add($"{column} = {p}");
+            var valueExpression = field == "tags" && _db.Provider == DatabaseProviderKind.Postgres
+                ? $"CAST({p} AS jsonb)"
+                : p;
+            sets.Add($"{column} = {valueExpression}");
             cmd.AddParameterWithValue(p, newDbVal ?? DBNull.Value);
 
             // Write history

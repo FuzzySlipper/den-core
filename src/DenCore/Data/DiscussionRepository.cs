@@ -303,6 +303,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
         var comment = ReadComment(reader);
+        await reader.CloseAsync();
 
         // Update last_comment_at on the thread
         await TouchThreadLastCommentAsync(conn, threadId);
@@ -368,6 +369,7 @@ public sealed class DiscussionRepository : IDiscussionRepository
         await using var reader = await cmd.ExecuteReaderAsync();
         await reader.ReadAsync();
         var comment = ReadComment(reader);
+        await reader.CloseAsync();
 
         // Update last_comment_at on the thread
         await TouchThreadLastCommentAsync(conn, threadId);

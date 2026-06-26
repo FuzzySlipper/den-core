@@ -102,7 +102,7 @@ public sealed class TopicRepository : ITopicRepository
         cmd.CommandText = $"""
             SELECT id, slug, display_name, description, aliases, status, owning_space, updated_at
             FROM consolidation_topics {whereClause}
-            ORDER BY display_name COLLATE NOCASE
+            ORDER BY lower(display_name), display_name
             """;
 
         var results = new List<ConsolidationTopicSummary>();

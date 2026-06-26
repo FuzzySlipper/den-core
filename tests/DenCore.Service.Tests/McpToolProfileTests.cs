@@ -105,7 +105,7 @@ public sealed class McpToolProfileTests : IAsyncLifetime
 
             var result = await SendToolCallAsync(sessionId, 200, "send_user_notification", new
             {
-                project_id = "den-core",
+                project_id = "_global",
                 sender = profile,
                 content = $"test notification from {profile}",
                 urgency = "low"
@@ -131,7 +131,7 @@ public sealed class McpToolProfileTests : IAsyncLifetime
 
             var result = await SendToolCallAsync(sessionId, 201, "send_user_notification", new
             {
-                project_id = "den-core",
+                project_id = "_global",
                 sender = profile,
                 content = $"blocked worker notification attempt from {profile}"
             });
@@ -489,11 +489,14 @@ public sealed class McpToolProfileTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("DenCore:Provider", "Postgres");
+            builder.UseSetting("DenCore:ConnectionString", DatabaseInitializer.GetConnectionString(_dbPath));
             builder.ConfigureAppConfiguration((_, config) =>
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake"
@@ -504,6 +507,7 @@ public sealed class McpToolProfileTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

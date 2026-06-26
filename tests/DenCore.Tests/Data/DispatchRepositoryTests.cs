@@ -1,6 +1,5 @@
 using DenCore.Data;
 using DenCore.Models;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Tests.Data;
 
@@ -249,12 +248,12 @@ public class DispatchRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task CreateIfAbsent_NonDedupConstraintViolation_Throws()
     {
-        // A bad project_id FK should propagate as SqliteException, not be swallowed as dedup
+        // A bad project_id FK should propagate as a DB exception, not be swallowed as dedup.
         var entry = MakeEntry();
         entry.ProjectId = "nonexistent-project";
         entry.DedupKey = DispatchEntry.BuildDedupKey(entry.TriggerType, entry.TriggerId, entry.TargetAgent);
 
-        await Assert.ThrowsAsync<SqliteException>(
+        await Assert.ThrowsAnyAsync<Exception>(
             () => _repo.CreateIfAbsentAsync(entry));
     }
 

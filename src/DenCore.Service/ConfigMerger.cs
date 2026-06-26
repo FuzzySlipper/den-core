@@ -196,29 +196,22 @@ public static class ProductionValidator
             return warnings;
         }
 
-        if (provider == DatabaseProviderKind.Postgres)
+        if (provider != DatabaseProviderKind.Postgres)
         {
-            try
-            {
-                DbConnectionFactory.ValidateConnectionString(provider, options.ConnectionString);
-            }
-            catch (ArgumentException ex)
-            {
-                warnings.Add(
-                    $"PRODUCTION GUARD: {ex.Message}");
-            }
-
+            warnings.Add(
+                $"PRODUCTION GUARD: Den Core production is Postgres-only after the #3326 cutover. "
+                + $"Set DenCore:Provider=Postgres and DenCore:ConnectionString. Current provider: {provider}");
             return warnings;
         }
 
-        var resolvedDb = options.GetResolvedDatabasePath();
-        if (resolvedDb != null &&
-            !resolvedDb.Contains("/data/services/den-core/data/"))
+        try
+        {
+            DbConnectionFactory.ValidateConnectionString(provider, options.ConnectionString);
+        }
+        catch (ArgumentException ex)
         {
             warnings.Add(
-                $"PRODUCTION GUARD: DatabasePath resolved to '{resolvedDb}', "
-                + $"outside /data/services/den-core/data/. "
-                + $"(Current DatabasePath: '{options.DatabasePath}')");
+                $"PRODUCTION GUARD: {ex.Message}");
         }
 
         return warnings;

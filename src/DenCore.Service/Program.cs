@@ -30,11 +30,9 @@ var llmConfig = ConfigMerger.BuildLlmConfig(builder.Configuration);
 var trustedPublisherOptions = ConfigMerger.BuildTrustedPublisherOptions(builder.Configuration);
 var denPublishFacadeOptions = ConfigMerger.BuildDenPublishFacadeOptions(builder.Configuration);
 
-// CLI overrides: --port and --db-path (highest precedence)
+// CLI overrides: --port (highest precedence)
 if (builder.Configuration["port"] is { } port)
     options.ListenUrl = $"http://localhost:{port}";
-if (builder.Configuration["db-path"] is { } dbPathOverride)
-    options.DatabasePath = dbPathOverride;
 
 // LLM CLI overrides
 if (builder.Configuration["llm-endpoint"] is { } llmEndpoint)
@@ -97,13 +95,10 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 // Database
 var databaseProvider = options.GetDatabaseProvider();
-IDatabaseInitializer? initializer = null;
-var dbConnectionFactory = databaseProvider switch
-{
-    DatabaseProviderKind.Sqlite => CreateSqliteConnectionFactory(options, out initializer),
-    DatabaseProviderKind.Postgres => CreatePostgresConnectionFactory(options, out initializer),
-    _ => throw new NotSupportedException($"Unsupported database provider: {databaseProvider}")
-};
+if (databaseProvider != DatabaseProviderKind.Postgres)
+    throw new NotSupportedException($"Unsupported database provider: {databaseProvider}");
+
+var dbConnectionFactory = CreatePostgresConnectionFactory(options, out var initializer);
 builder.Services.AddSingleton(dbConnectionFactory);
 
 // Repositories
@@ -173,8 +168,8 @@ builder.Services.AddSingleton<LibrarianGatherer>();
 builder.Services.AddSingleton<LibrarianService>();
 
 // MCP endpoint hosted by Core. den-mcp adapter mode proxies public /mcp here so
-// Core remains the sole SQLite owner/writer while preserving the existing MCP
-// tool surface for Hermes clients.
+// Core remains the sole den_core Postgres writer while preserving the existing
+// MCP tool surface for Hermes clients.
 builder.Services.AddSingleton(McpToolProfileRegistry.CreateDefault());
 builder.Services.AddMcpServer()
     .WithHttpTransport(options =>
@@ -242,14 +237,6 @@ app.MapMcp("/mcp");
 
 // SPA fallback — serves index.html for unmatched routes
 app.MapFallbackToFile("index.html");
-
-static DbConnectionFactory CreateSqliteConnectionFactory(DenCoreOptions options, out IDatabaseInitializer initializer)
-{
-    var dbPath = options.GetResolvedDatabasePath();
-    var sqliteInitializer = new DatabaseInitializer(dbPath, NullLogger<DatabaseInitializer>.Instance);
-    initializer = sqliteInitializer;
-    return new DbConnectionFactory(sqliteInitializer.ConnectionString);
-}
 
 static DbConnectionFactory CreatePostgresConnectionFactory(DenCoreOptions options, out IDatabaseInitializer initializer)
 {

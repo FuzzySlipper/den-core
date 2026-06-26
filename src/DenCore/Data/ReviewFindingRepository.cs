@@ -167,7 +167,7 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
                 status_notes = @statusNotes,
                 status_updated_at = datetime('now'),
                 follow_up_task_id = CASE
-                    WHEN @status = @splitStatus THEN @followUpTaskId
+                    WHEN @status = @splitStatus THEN CAST(@followUpTaskId AS integer)
                     ELSE NULL
                 END,
                 updated_at = datetime('now')
@@ -209,8 +209,8 @@ public sealed class ReviewFindingRepository : IReviewFindingRepository
             WHERE task_id = @taskId
             """;
         cmd.AddParameterWithValue("@taskId", taskId);
-        var max = (long)(await cmd.ExecuteScalarAsync())!;
-        return (int)max + 1;
+        var max = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        return max + 1;
     }
 
     private static async Task<(int TaskId, int RoundNumber)?> GetRoundContextAsync(DbConnection conn, int reviewRoundId)

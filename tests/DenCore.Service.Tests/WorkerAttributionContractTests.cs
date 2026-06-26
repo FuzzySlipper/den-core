@@ -423,6 +423,8 @@ public sealed class WorkerAttributionContractTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("DenCore:Provider", "Postgres");
+            builder.UseSetting("DenCore:ConnectionString", DatabaseInitializer.GetConnectionString(_dbPath));
             builder.UseSetting("db-path", _dbPath);
             builder.UseSetting("llm-endpoint", "http://localhost/fake");
             builder.UseSetting("llm-api-key", "test-key");
@@ -432,6 +434,7 @@ public sealed class WorkerAttributionContractTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

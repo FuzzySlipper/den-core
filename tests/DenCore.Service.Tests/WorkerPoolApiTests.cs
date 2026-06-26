@@ -2000,6 +2000,8 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("DenCore:Provider", "Postgres");
+            builder.UseSetting("DenCore:ConnectionString", DatabaseInitializer.GetConnectionString(_dbPath));
             // UseSetting makes config values available during Program.Main execution
             builder.UseSetting("db-path", _dbPath);
             builder.UseSetting("llm-endpoint", "http://localhost/fake");
@@ -2010,6 +2012,7 @@ public sealed class WorkerPoolApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

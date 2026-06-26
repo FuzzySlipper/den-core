@@ -47,8 +47,9 @@ public class UsageCostRepositoryTests : IAsyncLifetime
         foreach (var table in new[] { "usage_events", "pricing_snapshots" })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@table_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@table_name", table);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
     }
 
@@ -69,8 +70,9 @@ public class UsageCostRepositoryTests : IAsyncLifetime
         })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='index' AND name='{idx}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@index_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@index_name", idx);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
     }
 

@@ -7,8 +7,8 @@ Postgres FTS replacement owned by #3324.
 
 ## Startup path
 
-When `DenCore:Provider=Postgres`, `Program.cs` now creates a
-`PostgresDatabaseInitializer` beside the existing SQLite initializer. The
+When `DenCore:Provider=Postgres`, `Program.cs` creates a
+`PostgresDatabaseInitializer`. The
 Postgres initializer:
 
 - opens only the configured `DenCore:ConnectionString`;
@@ -17,8 +17,8 @@ Postgres initializer:
   retry helper;
 - seeds the `_global` project idempotently.
 
-The SQLite initializer remains the only path that runs PRAGMA statements, WAL
-setup, SQLite table rebuild migrations, and default channel trigger setup.
+The SQLite initializer was removed in #3327 after the #3326 cutover. Production
+validation now fails closed on any non-Postgres provider.
 
 ## Phase 0C schema coverage
 
@@ -39,8 +39,8 @@ for representative non-FTS repository and route coverage:
 
 ## SQL hazard handling
 
-Usage-cost inserts now use `INSERT ... RETURNING id` for both SQLite and
-Postgres instead of SQLite-only `last_insert_rowid()`.
+Usage-cost inserts now use `INSERT ... RETURNING id` instead of the retired
+SQLite-only `last_insert_rowid()` pattern.
 
 Most remaining `datetime('now')` occurrences are still visible in runtime source.
 For this phase they are quarantined by the Postgres migration through a small

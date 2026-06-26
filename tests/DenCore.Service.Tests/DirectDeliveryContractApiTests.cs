@@ -917,7 +917,7 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         using var payload1 = await JsonDocument.ParseAsync(await response1.Content.ReadAsStreamAsync());
         var lastSeen1 = payload1.RootElement.GetProperty("last_seen").GetString();
 
-        // Wait for SQLite's datetime('now') to advance (second precision)
+        // Wait for datetime('now') compatibility helpers to advance (second precision)
         await Task.Delay(1100);
 
         // Re-registration (same body)
@@ -994,11 +994,14 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            builder.UseSetting("DenCore:Provider", "Postgres");
+            builder.UseSetting("DenCore:ConnectionString", DatabaseInitializer.GetConnectionString(_dbPath));
             builder.ConfigureAppConfiguration((_, config) =>
             {
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake",
@@ -1008,13 +1011,14 @@ public sealed class DirectDeliveryContractApiTests : IAsyncLifetime
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<DbConnectionFactory>();
-                services.AddSingleton(new DbConnectionFactory($"Data Source={_dbPath}"));
+                services.AddSingleton(new DbConnectionFactory(DatabaseInitializer.GetConnectionString(_dbPath)));
             });
         }
 
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath)) File.Delete(_dbPath);
         }
     }

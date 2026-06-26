@@ -136,5 +136,5 @@ When an agent/orchestrator completes its assigned work, it should emit a notific
 
 - **Projection, not duplication**: Notifications are not stored in a separate table. The feed queries `messages WHERE intent='notification'`.
 - **Read state**: Uses the existing `message_reads` table. The `is_read` field is derived per agent identity.
-- **Urgency**: Stored in the `metadata` JSON column. Filtering uses SQLite `json_extract()`.
-- **Metadata type**: Stored in `metadata.type`. Filtering uses SQLite `json_extract()`.
+- **Urgency**: Stored in the `metadata` JSON column. Filtering uses the active provider's JSON operator (`jsonb` on live Postgres).
+- **Metadata type**: Stored in `metadata.type`. Filtering uses the active provider's JSON operator (`jsonb` on live Postgres).

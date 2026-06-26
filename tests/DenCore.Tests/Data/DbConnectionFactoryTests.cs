@@ -5,12 +5,12 @@ namespace DenCore.Tests.Data;
 public class DbConnectionFactoryTests
 {
     [Fact]
-    public void Constructor_Sqlite_AllowsExistingConnectionStringPath()
+    public void Constructor_DefaultsToPostgresProvider()
     {
-        var factory = new DbConnectionFactory("Data Source=:memory:");
+        var factory = new DbConnectionFactory("Host=localhost;Database=den_core_test;Username=den");
 
-        Assert.Equal(DatabaseProviderKind.Sqlite, factory.Provider);
-        Assert.Equal(DatabaseProviderKind.Sqlite, factory.Sql.Provider);
+        Assert.Equal(DatabaseProviderKind.Postgres, factory.Provider);
+        Assert.Equal(DatabaseProviderKind.Postgres, factory.Sql.Provider);
     }
 
     [Fact]

@@ -4,26 +4,25 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace DenCore.Tests;
 
 /// <summary>
-/// Creates an isolated temp SQLite database for each test.
-/// Use <see cref="PostgresTestDb"/> for explicit Postgres provider harness tests.
+/// Creates an isolated Postgres schema for each test.
 /// </summary>
 public sealed class TestDb : IAsyncLifetime
 {
-    private string _dbPath = null!;
+    private DatabaseInitializer? _initializer;
     public DbConnectionFactory Db { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
-        _dbPath = Path.Combine(Path.GetTempPath(), $"den-mcp-test-{Guid.NewGuid()}.db");
-        var init = new DatabaseInitializer(_dbPath, NullLogger<DatabaseInitializer>.Instance);
-        await init.InitializeAsync();
-        Db = new DbConnectionFactory(init.ConnectionString);
+        _initializer = new DatabaseInitializer(
+            $"den-core-test-{Guid.NewGuid():N}",
+            NullLogger<DatabaseInitializer>.Instance);
+        await _initializer.InitializeAsync();
+        Db = new DbConnectionFactory(_initializer.ConnectionString);
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        if (File.Exists(_dbPath))
-            File.Delete(_dbPath);
-        return Task.CompletedTask;
+        if (_initializer is not null)
+            await _initializer.DisposeAsync();
     }
 }

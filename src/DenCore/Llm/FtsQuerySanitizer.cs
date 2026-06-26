@@ -3,8 +3,7 @@ using System.Text.RegularExpressions;
 namespace DenCore.Llm;
 
 /// <summary>
-/// Converts natural language text into safe SQLite FTS5 queries and prepares
-/// natural language input for provider-specific full-text search paths.
+/// Prepares natural language input for Postgres full-text search paths.
 /// </summary>
 public static partial class FtsQuerySanitizer
 {
@@ -28,7 +27,7 @@ public static partial class FtsQuerySanitizer
     };
 
     /// <summary>
-    /// Converts natural language text into a safe FTS5 query using OR-joined terms.
+    /// Converts natural language text into an OR-joined term query.
     /// Returns null if no meaningful terms remain after sanitization.
     /// </summary>
     public static string? Sanitize(string? input)
@@ -42,14 +41,14 @@ public static partial class FtsQuerySanitizer
 
     /// <summary>
     /// Extracts meaningful search terms from natural language text.
-    /// Strips FTS5 operators, punctuation, and stop words.
+    /// Strips search operators, punctuation, and stop words.
     /// </summary>
     public static List<string> ExtractTerms(string? input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return [];
 
-        // Strip characters with special meaning in FTS5 syntax
+        // Strip characters with special meaning in search syntax.
         var cleaned = FtsPunctuation().Replace(input, " ");
 
         return cleaned
@@ -63,7 +62,7 @@ public static partial class FtsQuerySanitizer
     }
 
     /// <summary>
-    /// Builds a combined FTS5 query from multiple text sources (query, title, tags).
+    /// Builds a combined term query from multiple text sources (query, title, tags).
     /// Deduplicates terms across sources. Returns null if no terms remain.
     /// </summary>
     public static string? BuildCombinedQuery(params string?[] sources)

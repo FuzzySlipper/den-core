@@ -2020,7 +2020,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     }
 
     /// <summary>
-    /// Compute a human-readable age string from an ISO 8601 or SQLite datetime timestamp.
+    /// Compute a human-readable age string from an ISO 8601 or legacy text timestamp.
     /// </summary>
     private static string ComputeAge(string? activityAt)
     {

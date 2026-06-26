@@ -47,18 +47,19 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         foreach (var table in new[] { "capability_definitions", "capability_invocations" })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@table_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@table_name", table);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
 
         // Verify new columns exist
         await using var colsCmd = conn.CreateCommand();
-        colsCmd.CommandText = "SELECT count(*) FROM pragma_table_info('capability_definitions') WHERE name IN ('implementation_kind', 'service_endpoint', 'http_method', 'input_schema_ref', 'output_schema_ref', 'input_schema_json', 'output_schema_json', 'default_model_json', 'fallback_models_json', 'eval_refs_json', 'timeout_ms', 'max_request_bytes', 'metadata_json')";
+        colsCmd.CommandText = "SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'capability_definitions' AND column_name IN ('implementation_kind', 'service_endpoint', 'http_method', 'input_schema_ref', 'output_schema_ref', 'input_schema_json', 'output_schema_json', 'default_model_json', 'fallback_models_json', 'eval_refs_json', 'timeout_ms', 'max_request_bytes', 'metadata_json')";
         Assert.Equal(13L, (await colsCmd.ExecuteScalarAsync())!);
 
         // Verify invocation columns
         await using var invColsCmd = conn.CreateCommand();
-        invColsCmd.CommandText = "SELECT count(*) FROM pragma_table_info('capability_invocations') WHERE name IN ('invocation_id', 'caller_agent', 'caller_task_id', 'caller_message_id', 'caller_surface', 'input_artifact_refs_json', 'request_json', 'request_hash', 'model_provider', 'model_name', 'model_version', 'timings_ms_json', 'cost_json', 'output_summary', 'output_json', 'output_artifact_refs_json', 'error_type', 'metadata_json')";
+        invColsCmd.CommandText = "SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'capability_invocations' AND column_name IN ('invocation_id', 'caller_agent', 'caller_task_id', 'caller_message_id', 'caller_surface', 'input_artifact_refs_json', 'request_json', 'request_hash', 'model_provider', 'model_name', 'model_version', 'timings_ms_json', 'cost_json', 'output_summary', 'output_json', 'output_artifact_refs_json', 'error_type', 'metadata_json')";
         Assert.Equal(18L, (await invColsCmd.ExecuteScalarAsync())!);
 
         foreach (var idx in new[] {
@@ -73,8 +74,9 @@ public class CapabilityRepositoryTests : IAsyncLifetime
         })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='index' AND name='{idx}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@index_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@index_name", idx);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
     }
 

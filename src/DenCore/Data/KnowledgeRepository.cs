@@ -361,20 +361,10 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         await using var cmd = conn.CreateCommand();
 
         // Build WHERE conditions
-        var ftsQuery = _db.Provider switch
-        {
-            DatabaseProviderKind.Sqlite => FtsQuerySanitizer.Sanitize(query.Query),
-            DatabaseProviderKind.Postgres => FtsQuerySanitizer.ToPostgresWebSearchQuery(query.Query),
-            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
-        };
+        var ftsQuery = FtsQuerySanitizer.ToPostgresWebSearchQuery(query.Query);
         if (ftsQuery is null)
             return []; // No searchable terms
-        var conditions = _db.Provider switch
-        {
-            DatabaseProviderKind.Sqlite => new List<string> { "knowledge_entries_fts MATCH @query" },
-            DatabaseProviderKind.Postgres => new List<string> { $"{PostgresKnowledgeSearchVector} @@ search.query" },
-            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
-        };
+        var conditions = new List<string> { $"{PostgresKnowledgeSearchVector} @@ search.query" };
         cmd.AddParameterWithValue("@query", ftsQuery);
 
         // Status filter
@@ -442,40 +432,23 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
         }
 
         var whereClause = $"WHERE {string.Join(" AND ", conditions)}";
-        cmd.CommandText = _db.Provider switch
-        {
-            DatabaseProviderKind.Sqlite => $"""
-                SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
-                       ke.audience_json, ke.aliases_json, ke.source_refs_json,
-                       CASE WHEN ke.summary IS NOT NULL THEN ke.summary ELSE substr(ke.body_markdown, 1, 200) END as snippet,
-                       0.0 as rank,
-                       ke.updated_at, ke.last_reviewed_at
-                FROM knowledge_entries_fts fts
-                JOIN knowledge_entries ke ON ke.id = fts.rowid
-                {whereClause}
-                ORDER BY rank
-                LIMIT @limit
-                """,
-            DatabaseProviderKind.Postgres => $"""
-                WITH search AS (
-                    SELECT websearch_to_tsquery('english', @query) AS query
-                )
-                SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
-                       ke.audience_json, ke.aliases_json, ke.source_refs_json,
-                       ts_headline('english', coalesce(ke.summary, '') || ' ' || coalesce(ke.body_markdown, ''), search.query, @headlineOptions) as snippet,
-                       ts_rank_cd({PostgresKnowledgeSearchVector}, search.query) as rank,
-                       ke.updated_at, ke.last_reviewed_at
-                FROM knowledge_entries ke
-                CROSS JOIN search
-                {whereClause}
-                ORDER BY rank DESC, ke.updated_at DESC
-                LIMIT @limit
-                """,
-            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
-        };
+        cmd.CommandText = $"""
+            WITH search AS (
+                SELECT websearch_to_tsquery('english', @query) AS query
+            )
+            SELECT ke.slug, ke.title, ke.summary, ke.kind, ke.status, ke.curation_state,
+                   ke.audience_json, ke.aliases_json, ke.source_refs_json,
+                   ts_headline('english', coalesce(ke.summary, '') || ' ' || coalesce(ke.body_markdown, ''), search.query, @headlineOptions) as snippet,
+                   ts_rank_cd({PostgresKnowledgeSearchVector}, search.query) as rank,
+                   ke.updated_at, ke.last_reviewed_at
+            FROM knowledge_entries ke
+            CROSS JOIN search
+            {whereClause}
+            ORDER BY rank DESC, ke.updated_at DESC
+            LIMIT @limit
+            """;
         cmd.AddParameterWithValue("@limit", Math.Min(query.Limit, 200));
-        if (_db.Provider == DatabaseProviderKind.Postgres)
-            cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
+        cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
 
         var results = new List<KnowledgeSearchResult>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -628,18 +601,7 @@ public sealed class KnowledgeRepository : IKnowledgeRepository
 
     internal static async Task RefreshFtsRowAsync(DbConnection conn, DbTransaction tx, DbSqlDialect sql, int entryId, KnowledgeEntry entry)
     {
-        if (sql.Provider == DatabaseProviderKind.Postgres)
-            return;
-
-        await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = sql.KnowledgeFtsUpsertCommandText;
-        cmd.AddParameterWithValue("@entryId", entryId);
-        cmd.AddParameterWithValue("@slug", entry.Slug);
-        cmd.AddParameterWithValue("@title", entry.Title);
-        cmd.AddParameterWithValue("@summary", (object?)entry.Summary ?? "");
-        cmd.AddParameterWithValue("@body", entry.BodyMarkdown);
-        await cmd.ExecuteNonQueryAsync();
+        await Task.CompletedTask;
     }
 
     private static void BuildStatusFilter(List<string> where, DbCommand cmd,

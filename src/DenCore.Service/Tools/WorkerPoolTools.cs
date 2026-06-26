@@ -34,7 +34,7 @@ public sealed class WorkerPoolTools
         [Description("Shared role/profile identity (e.g. 'spawned-coder'). Multiple members can share this.")] string? profile_identity = null,
         [Description("Worker role: coder, reviewer, validator, drift_checker, packet_auditor.")] string? worker_role = null,
         [Description("Optional display name.")] string? display_name = null,
-        [Description("JSON array of capability strings, e.g. [\"dotnet\",\"sqlite\"]. " +
+        [Description("JSON array of capability strings, e.g. [\"dotnet\",\"postgres\"]. " +
                      "Do NOT use role names (coder/reviewer/validator) as capability strings; " +
                      "those are resolved through worker_role.")] string? capabilities = null,
         [Description("Pool status: available, busy, quarantined, offboarded. Default: available.")] string status = "available",
@@ -131,7 +131,7 @@ public sealed class WorkerPoolTools
         [Description("Optional preferred specific worker identity.")] string? preferred_worker_identity = null,
         [Description("Optional profile identity filter (e.g. 'spawned-coder'). Only workers with this profile are considered.")] string? profile_identity = null,
         [Description("Optional worker role filter (e.g. 'coder'). Only workers with this role are considered.")] string? worker_role = null,
-        [Description("JSON array of hard capability constraints, e.g. [\"dotnet\",\"sqlite\"]. " +
+        [Description("JSON array of hard capability constraints, e.g. [\"dotnet\",\"postgres\"]. " +
                      "Do NOT pass role names (coder/reviewer/validator) here — use role/worker_role instead. " +
                      "Role-name aliases are normalised and matched against worker_role automatically.")] string? required_capabilities = null,
         [Description("If true, return full assignment record.")] bool verbose = false)

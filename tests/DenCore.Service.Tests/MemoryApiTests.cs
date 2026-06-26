@@ -154,6 +154,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake",
@@ -168,7 +169,9 @@ public sealed class MemoryApiTests : IAsyncLifetime
                     services.RemoveAll<DenCoreOptions>();
                     services.AddSingleton(new DenCoreOptions
                     {
+                        Provider = nameof(DatabaseProviderKind.Postgres),
                         DatabasePath = _dbPath,
+                        ConnectionString = DatabaseInitializer.GetConnectionString(_dbPath),
                         GatewayContract = new GatewayContractOptions { ServiceToken = serviceToken }
                     });
                 }
@@ -178,6 +181,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

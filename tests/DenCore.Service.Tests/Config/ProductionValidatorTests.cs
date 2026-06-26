@@ -36,16 +36,14 @@ public sealed class ProductionValidatorTests
     }
 
     [Fact]
-    public void Validate_DefaultSqliteProvider_FailsClosed()
+    public void Validate_DefaultPostgresProviderWithoutConnectionString_FailsClosed()
     {
-        // Empty Provider still resolves to the legacy SQLite default for local
-        // tests, but production must fail closed after the Postgres cutover.
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
         };
         var warnings = ProductionValidator.Validate(opts);
-        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
+        Assert.Contains(warnings, w => w.Contains("DenCore:ConnectionString"));
     }
 
     [Fact]
@@ -58,7 +56,7 @@ public sealed class ProductionValidatorTests
         var warnings = ProductionValidator.Validate(opts);
         Assert.Equal(2, warnings.Count);
         Assert.Contains(warnings, w => w.Contains("5199"));
-        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
+        Assert.Contains(warnings, w => w.Contains("DenCore:ConnectionString"));
     }
 
     [Fact]
@@ -76,16 +74,16 @@ public sealed class ProductionValidatorTests
     }
 
     [Fact]
-    public void Validate_SqliteProviderWithProductionDbPath_FailsClosed()
+    public void Validate_RetiredProviderWithProductionDbPath_FailsClosed()
     {
         var opts = new DenCoreOptions
         {
             ListenUrl = "http://127.0.0.1:5299",
-            Provider = "Sqlite",
+            Provider = "RetiredSqlite",
             DatabasePath = "/data/services/den-core/data/den.db",
         };
         var warnings = ProductionValidator.Validate(opts);
-        Assert.Contains(warnings, w => w.Contains("production is Postgres-only"));
+        Assert.Contains(warnings, w => w.Contains("Unsupported DenCore:Provider"));
     }
 
     [Fact]

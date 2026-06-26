@@ -91,7 +91,7 @@ public sealed class LibrarianGatherer
         }
         catch
         {
-            // FTS query failure (e.g., malformed despite sanitization) — degrade gracefully
+            // Search query failure (e.g., malformed despite sanitization) — degrade gracefully
             return [];
         }
     }

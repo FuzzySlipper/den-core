@@ -11,7 +11,7 @@ Source map: Den document `den-core/den-core-schema-boundary-2026-06`.
 - Runtime writer: `.NET den-core` process.
 - Live schema: `den_core`.
 - Live provider: `Postgres`.
-- SQLite: rollback/archive artifact and legacy test fixture only.
+- SQLite: rollback/archive artifact only; live source no longer carries the SQLite provider/package.
 
 ## Extraction rules
 
@@ -54,9 +54,9 @@ planned first.
   runtime.
 - The `den_outbox` shape is deferred until Wave 2 proves whether per-producer
   outbox schemas or a shared coordination table are needed.
-- Test harness cleanup is still pending: many repository/service tests use the
-  legacy SQLite fixture even though production validation now fails closed on
-  SQLite.
+- Some historical rollback/import docs still mention SQLite backups because the
+  #3326 cutover source was SQLite. Those are archival runbook records, not live
+  runtime guidance.
 
 ## Next planning tasks to open
 
@@ -65,6 +65,5 @@ planned first.
   `den_discussions`, including roles, grants, and read views.
 - Wave 1 module skeleton task set in `den-services` for the same owner modules.
 - Den Core route/tool tombstone planning task for the Wave 1 domains.
-- Test harness migration task: replace broad SQLite default fixture usage with
-  Postgres test schemas, then remove the remaining SQLite package dependency
-  from non-test build paths.
+- Post-cutover test hardening task: expand Postgres-backed service/repository
+  coverage for each Phase 1 extraction domain as it moves out of `den_core`.

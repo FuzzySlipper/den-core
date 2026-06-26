@@ -100,6 +100,7 @@ public sealed class MessageWaitApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["DenCore:DatabasePath"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["DenCore:Llm:Endpoint"] = "",
                     ["DenCore:Llm:Model"] = "test-model"
                 });
@@ -120,6 +121,12 @@ public sealed class MessageWaitApiTests : IAsyncLifetime
                 services.RemoveAll<INotificationChannel>();
                 services.AddSingleton<INotificationChannel, NoOpNotificationChannel>();
             });
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
         }
     }
 

@@ -2,7 +2,6 @@ using DenCore.Data;
 using DenCore.Models;
 using System.Text.Json;
 using DenCore.Tests;
-using Microsoft.Data.Sqlite;
 
 namespace DenCore.Tests.Data;
 
@@ -74,7 +73,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         return member.WorkerIdentity;
     }
 
-    private async Task BackdateAssignmentAsync(long assignmentId, string sqliteRelativeTime)
+    private async Task BackdateAssignmentAsync(long assignmentId, string relativeTime)
     {
         await using var conn = await _testDb.Db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -83,7 +82,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             SET created_at = datetime('now', @relative_time)
             WHERE id = @assignment_id
             """;
-        cmd.AddParameterWithValue("@relative_time", sqliteRelativeTime);
+        cmd.AddParameterWithValue("@relative_time", relativeTime);
         cmd.AddParameterWithValue("@assignment_id", assignmentId);
         Assert.Equal(1, await cmd.ExecuteNonQueryAsync());
     }
@@ -100,16 +99,18 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         foreach (var table in new[] { "worker_pool_members", "worker_assignments", "worker_checkpoints", "checkpoint_responses" })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@table_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@table_name", table);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
 
         // Check key indexes exist
         foreach (var idx in new[] { "idx_worker_pool_members_status", "idx_worker_assignments_worker_state", "idx_worker_assignments_project_state", "idx_worker_checkpoints_assignment", "idx_checkpoint_responses_checkpoint" })
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='index' AND name='{idx}'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+            cmd.CommandText = "SELECT to_regclass(@index_name) IS NOT NULL";
+            cmd.AddParameterWithValue("@index_name", idx);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
         }
     }
 
@@ -398,7 +399,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             await cmd.ExecuteNonQueryAsync();
         }
 
-        await Assert.ThrowsAsync<SqliteException>(() =>
+        await Assert.ThrowsAsync<Exception>(() =>
             _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Completed));
 
         var assignment = await _repo.GetAssignmentAsync(lease.Id);
@@ -2297,8 +2298,8 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         await using var conn = await _testDb.Db.CreateConnectionAsync();
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='orchestrator_leases'";
-        Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
+        cmd.CommandText = "SELECT to_regclass('orchestrator_leases') IS NOT NULL";
+        Assert.True((bool)(await cmd.ExecuteScalarAsync())!);
 
         // Check indexes
         foreach (var idx in new[] {
@@ -2310,8 +2311,9 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         })
         {
             await using var idxCmd = conn.CreateCommand();
-            idxCmd.CommandText = $"SELECT count(*) FROM sqlite_master WHERE type='index' AND name='{idx}'";
-            Assert.Equal(1L, (await idxCmd.ExecuteScalarAsync())!);
+            idxCmd.CommandText = "SELECT to_regclass(@index_name) IS NOT NULL";
+            idxCmd.AddParameterWithValue("@index_name", idx);
+            Assert.True((bool)(await idxCmd.ExecuteScalarAsync())!);
         }
     }
 
@@ -3050,7 +3052,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             && c.TaskId == taskId);
     }
 
-    private async Task BackdateReviewRoundAsync(int taskId, int roundNumber, string sqliteOffset)
+    private async Task BackdateReviewRoundAsync(int taskId, int roundNumber, string relativeOffset)
     {
         await using var conn = await _testDb.Db.CreateConnectionAsync();
         await using var cmd = conn.CreateCommand();
@@ -3061,7 +3063,7 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
             """;
         cmd.AddParameterWithValue("@taskId", taskId);
         cmd.AddParameterWithValue("@roundNumber", roundNumber);
-        cmd.AddParameterWithValue("@offset", sqliteOffset);
+        cmd.AddParameterWithValue("@offset", relativeOffset);
         await cmd.ExecuteNonQueryAsync();
     }
 

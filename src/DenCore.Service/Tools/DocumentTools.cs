@@ -95,7 +95,7 @@ public sealed class DocumentTools
     [McpServerTool(Name = "search_documents"), Description("Full-text search across documents. Excludes archived documents. Supports AND, OR, NOT, and \"phrase\" queries. Concise by default with snippets; use verbose=true for full results.")]
     public static async Task<string> SearchDocuments(
         IDocumentRepository repo,
-        [Description("FTS5 search query.")] string query,
+        [Description("Full-text search query.")] string query,
         [Description("Scope search to one project or space.")] string? project_id = null,
         [Description("If true, return full JSON records. Default is concise with deep_read_hint.")] bool verbose = false)
     {
@@ -155,7 +155,7 @@ public sealed class DocumentTools
     [McpServerTool(Name = "query_archived_documents"), Description("Deliberate archived document recall path. List or search documents that have been archived. Separate from default list_documents to prevent accidental inclusion of archived content.")]
     public static async Task<string> QueryArchivedDocuments(
         IDocumentRepository repo,
-        [Description("Optional FTS5 search query. Omit to list all archived documents.")] string? query = null,
+        [Description("Optional full-text search query. Omit to list all archived documents.")] string? query = null,
         [Description("Scope to one project or space.")] string? project_id = null,
         [Description("Filter by type: prd, spec, adr, convention, reference, note, memory.")] string? doc_type = null,
         [Description("Filter by tags (comma-separated).")] string? tags = null)

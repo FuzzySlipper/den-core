@@ -337,6 +337,7 @@ public sealed class CapabilityApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake"
@@ -347,6 +348,7 @@ public sealed class CapabilityApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

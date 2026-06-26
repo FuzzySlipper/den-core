@@ -168,12 +168,7 @@ public sealed class DocumentRepository : IDocumentRepository
         DocumentVisibility visibility,
         string? projectId)
     {
-        var searchQuery = _db.Provider switch
-        {
-            DatabaseProviderKind.Sqlite => string.IsNullOrWhiteSpace(query) ? null : query.Trim(),
-            DatabaseProviderKind.Postgres => FtsQuerySanitizer.ToPostgresWebSearchQuery(query),
-            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
-        };
+        var searchQuery = FtsQuerySanitizer.ToPostgresWebSearchQuery(query);
         if (searchQuery is null)
             return [];
 
@@ -182,37 +177,22 @@ public sealed class DocumentRepository : IDocumentRepository
 
         var projectFilter = projectId is not null ? "AND d.project_id = @projectId" : "";
 
-        cmd.CommandText = _db.Provider switch
-        {
-            DatabaseProviderKind.Sqlite => $"""
-                SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
-                       snippet(documents_fts, 1, '<b>', '</b>', '...', 32) as snippet,
-                       rank
-                FROM documents_fts fts
-                JOIN documents d ON d.id = fts.rowid
-                WHERE documents_fts MATCH @query {projectFilter}
-                  AND d.visibility = @visibility
-                ORDER BY rank
-                """,
-            DatabaseProviderKind.Postgres => $"""
-                WITH search AS (
-                    SELECT websearch_to_tsquery('english', @query) AS query
-                )
-                SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
-                       ts_headline('english', coalesce(d.content, d.summary, d.title, ''), search.query, @headlineOptions) as snippet,
-                       ts_rank_cd({PostgresDocumentSearchVector}, search.query) as rank
-                FROM documents d
-                CROSS JOIN search
-                WHERE {PostgresDocumentSearchVector} @@ search.query {projectFilter}
-                  AND d.visibility = @visibility
-                ORDER BY rank DESC, d.updated_at DESC
-                """,
-            _ => throw new NotSupportedException($"Unsupported database provider: {_db.Provider}")
-        };
+        cmd.CommandText = $"""
+            WITH search AS (
+                SELECT websearch_to_tsquery('english', @query) AS query
+            )
+            SELECT d.project_id, d.slug, d.title, d.doc_type, d.visibility, d.summary,
+                   ts_headline('english', coalesce(d.content, d.summary, d.title, ''), search.query, @headlineOptions) as snippet,
+                   ts_rank_cd({PostgresDocumentSearchVector}, search.query) as rank
+            FROM documents d
+            CROSS JOIN search
+            WHERE {PostgresDocumentSearchVector} @@ search.query {projectFilter}
+              AND d.visibility = @visibility
+            ORDER BY rank DESC, d.updated_at DESC
+            """;
         cmd.AddParameterWithValue("@query", searchQuery);
         cmd.AddParameterWithValue("@visibility", visibility.ToDbValue());
-        if (_db.Provider == DatabaseProviderKind.Postgres)
-            cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
+        cmd.AddParameterWithValue("@headlineOptions", PostgresHeadlineOptions);
         if (projectId is not null)
             cmd.AddParameterWithValue("@projectId", projectId);
 

@@ -1,5 +1,4 @@
 using System.Data.Common;
-using Microsoft.Data.Sqlite;
 using Npgsql;
 
 namespace DenCore.Data;
@@ -8,7 +7,7 @@ public sealed class DbConnectionFactory
 {
     private readonly string _connectionString;
 
-    public DbConnectionFactory(string connectionString, DatabaseProviderKind provider = DatabaseProviderKind.Sqlite)
+    public DbConnectionFactory(string connectionString, DatabaseProviderKind provider = DatabaseProviderKind.Postgres)
     {
         ValidateConnectionString(provider, connectionString);
 
@@ -16,7 +15,6 @@ public sealed class DbConnectionFactory
         Provider = provider;
         Sql = provider switch
         {
-            DatabaseProviderKind.Sqlite => DbSqlDialect.Sqlite,
             DatabaseProviderKind.Postgres => DbSqlDialect.Postgres,
             _ => throw new NotSupportedException($"Unsupported database provider: {provider}")
         };
@@ -29,18 +27,10 @@ public sealed class DbConnectionFactory
     {
         DbConnection connection = Provider switch
         {
-            DatabaseProviderKind.Sqlite => new SqliteConnection(_connectionString),
             DatabaseProviderKind.Postgres => new NpgsqlConnection(_connectionString),
             _ => throw new NotSupportedException($"Unsupported database provider: {Provider}")
         };
         await connection.OpenAsync();
-
-        if (Provider == DatabaseProviderKind.Sqlite)
-        {
-            await using var cmd = connection.CreateCommand();
-            cmd.CommandText = "PRAGMA foreign_keys = ON;";
-            await cmd.ExecuteNonQueryAsync();
-        }
 
         return connection;
     }
@@ -49,8 +39,6 @@ public sealed class DbConnectionFactory
     {
         switch (provider)
         {
-            case DatabaseProviderKind.Sqlite:
-                return;
             case DatabaseProviderKind.Postgres:
                 ValidatePostgresConnectionString(connectionString);
                 return;

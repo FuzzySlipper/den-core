@@ -208,6 +208,7 @@ public sealed class GatewayContractApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake",
@@ -220,13 +221,15 @@ public sealed class GatewayContractApiTests : IAsyncLifetime
                 services.RemoveAll<ILlmClient>();
                 services.AddSingleton<ILlmClient, FakeLlmClient>();
                 services.RemoveAll<DbConnectionFactory>();
-                services.AddSingleton(new DbConnectionFactory($"Data Source={_dbPath}"));
+                services.AddSingleton(new DbConnectionFactory(DatabaseInitializer.GetConnectionString(_dbPath)));
                 if (serviceToken is not null)
                 {
                     services.RemoveAll<DenCoreOptions>();
                     services.AddSingleton(new DenCoreOptions
                     {
+                        Provider = nameof(DatabaseProviderKind.Postgres),
                         DatabasePath = _dbPath,
+                        ConnectionString = DatabaseInitializer.GetConnectionString(_dbPath),
                         GatewayContract = new GatewayContractOptions { ServiceToken = serviceToken }
                     });
                 }
@@ -236,6 +239,7 @@ public sealed class GatewayContractApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath)) File.Delete(_dbPath);
         }
     }

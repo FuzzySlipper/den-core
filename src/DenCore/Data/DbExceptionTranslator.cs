@@ -5,29 +5,8 @@ namespace DenCore.Data;
 
 public static class DbExceptionTranslator
 {
-    private const int SqliteConstraint = 19;
-    private const int SqliteConstraintForeignKey = 787;
-    private const int SqliteConstraintUnique = 2067;
-    private const int SqliteConstraintPrimaryKey = 1555;
-    private const int SqliteCannotOpen = 14;
-
     public static DbExceptionKind Translate(Exception exception)
     {
-        if (TryGetSqliteCode(exception, "SqliteErrorCode", out var sqliteCode))
-        {
-            if (sqliteCode == SqliteCannotOpen)
-                return DbExceptionKind.ProviderReachability;
-            if (TryGetSqliteCode(exception, "SqliteExtendedErrorCode", out var extendedCode))
-            {
-                if (extendedCode == SqliteConstraintForeignKey)
-                    return DbExceptionKind.ForeignKeyViolation;
-                if (extendedCode is SqliteConstraintUnique or SqliteConstraintPrimaryKey)
-                    return DbExceptionKind.UniqueViolation;
-            }
-            if (sqliteCode == SqliteConstraint)
-                return DbExceptionKind.ConstraintViolation;
-        }
-
         var sqlState = TryGetStringProperty(exception, "SqlState");
         return sqlState switch
         {
@@ -56,20 +35,6 @@ public static class DbExceptionTranslator
     public static bool IsProviderReachability(Exception exception) =>
         exception is DbException
             && (Translate(exception) is DbExceptionKind.ProviderReachability or DbExceptionKind.Unknown);
-
-    private static bool TryGetSqliteCode(Exception exception, string propertyName, out int code)
-    {
-        code = 0;
-        if (!string.Equals(exception.GetType().FullName, "Microsoft.Data.Sqlite.SqliteException", StringComparison.Ordinal))
-            return false;
-        var property = exception.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
-        if (property?.GetValue(exception) is int value)
-        {
-            code = value;
-            return true;
-        }
-        return false;
-    }
 
     private static string? TryGetStringProperty(Exception exception, string propertyName)
     {

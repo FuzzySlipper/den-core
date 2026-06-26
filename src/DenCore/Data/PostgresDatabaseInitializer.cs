@@ -116,10 +116,11 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
 
     internal const string InitialSchema = """
         ------------------------------------------------------------
-        -- SQLite runtime compatibility quarantine.
+        -- Legacy timestamp compatibility quarantine.
         -- Existing runtime SQL is being moved to DbSqlDialect helpers. These
         -- functions keep remaining datetime(...) expressions from leaking
-        -- SQLite-only syntax into Postgres provider tests during Phase 0C.
+        -- historical legacy timestamp expressions into the Postgres provider
+        -- tests during Phase 0C.
         ------------------------------------------------------------
         CREATE OR REPLACE FUNCTION datetime(value text)
         RETURNS text

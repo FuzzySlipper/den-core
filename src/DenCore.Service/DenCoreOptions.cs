@@ -15,7 +15,7 @@ public sealed class DenCoreOptions
     public DatabaseProviderKind GetDatabaseProvider()
     {
         var value = string.IsNullOrWhiteSpace(Provider)
-            ? nameof(DatabaseProviderKind.Sqlite)
+            ? nameof(DatabaseProviderKind.Postgres)
             : Provider.Trim();
 
         if (Enum.TryParse<DatabaseProviderKind>(value, ignoreCase: true, out var provider) &&
@@ -25,7 +25,7 @@ public sealed class DenCoreOptions
         }
 
         throw new InvalidOperationException(
-            $"Unsupported DenCore:Provider value '{Provider}'. Expected 'Sqlite' or 'Postgres'.");
+            $"Unsupported DenCore:Provider value '{Provider}'. Expected 'Postgres'.");
     }
 
     public string GetRequiredPostgresConnectionString()
@@ -36,24 +36,8 @@ public sealed class DenCoreOptions
         return ConnectionString;
     }
 
-    /// <summary>
-    /// Resolves the database path using the following priority:
-    /// 1. Explicit <see cref="DatabasePath"/> when non-empty.
-    /// 2. Legacy <c>~/.den-mcp/den.db</c> when it already exists (preserves existing data).
-    /// 3. New default <c>~/.den-core/den.db</c>.
-    /// </summary>
-    public string GetResolvedDatabasePath()
-    {
-        if (!string.IsNullOrEmpty(DatabasePath))
-            return DatabasePath;
-
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var legacyPath = Path.Combine(home, ".den-mcp", "den.db");
-        if (File.Exists(legacyPath))
-            return legacyPath;
-
-        return Path.Combine(home, ".den-core", "den.db");
-    }
+    // DatabasePath is retained only as a deserialization sink for archived
+    // rollback env files. It is not used by the live Postgres runtime.
 }
 
 public sealed class GatewayContractOptions

@@ -263,6 +263,7 @@ public class NotificationWiringTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["DenCore:DatabasePath"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["DenCore:Llm:Endpoint"] = "",
                     ["DenCore:Llm:Model"] = "test-model"
                 });
@@ -286,6 +287,12 @@ public class NotificationWiringTests : IAsyncLifetime
                 else
                     services.AddSingleton<INotificationChannel>(RecordingChannel);
             });
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
         }
     }
 

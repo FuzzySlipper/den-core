@@ -19,14 +19,14 @@ public sealed class ConfigMergerTests
     {
         var config = BuildConfig(new Dictionary<string, string?>
         {
-            ["DenCore:Provider"] = "Sqlite",
+            ["DenCore:Provider"] = "Postgres",
             ["DenCore:ListenUrl"] = "http://localhost:5199",
             ["DenCore:DatabasePath"] = "",
             ["DenCore:ConnectionString"] = "",
         });
         var opts = ConfigMerger.BuildOptions(config);
 
-        Assert.Equal("Sqlite", opts.Provider);
+        Assert.Equal("Postgres", opts.Provider);
         Assert.Equal("http://localhost:5199", opts.ListenUrl);
         Assert.Equal("", opts.DatabasePath);
         Assert.Equal("", opts.ConnectionString);

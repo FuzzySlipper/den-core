@@ -238,6 +238,7 @@ public class DesktopSnapshotApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["DenCore:DatabasePath"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["DenCore:Llm:Endpoint"] = "",
                     ["DenCore:Llm:Model"] = "test-model"
                 });
@@ -259,6 +260,7 @@ public class DesktopSnapshotApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (disposing && File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

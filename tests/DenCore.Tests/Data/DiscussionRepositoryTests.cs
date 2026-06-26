@@ -56,73 +56,39 @@ public class DiscussionRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task DbInitializer_CreatesDiscussionTables()
     {
-        // The TestDb InitializeAsync() runs DatabaseInitializer which includes
+        // The TestDb InitializeAsync() runs the Postgres initializer which includes
         // the discussion_threads and discussion_comments tables. Verify they exist.
         await using var conn = await _testDb.Db.CreateConnectionAsync();
 
         await using var c1 = conn.CreateCommand();
-        c1.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='discussion_threads'";
-        Assert.Equal(1L, (await c1.ExecuteScalarAsync())!);
+        c1.CommandText = "SELECT to_regclass('discussion_threads') IS NOT NULL";
+        Assert.True((bool)(await c1.ExecuteScalarAsync())!);
 
         await using var c2 = conn.CreateCommand();
-        c2.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='discussion_comments'";
-        Assert.Equal(1L, (await c2.ExecuteScalarAsync())!);
+        c2.CommandText = "SELECT to_regclass('discussion_comments') IS NOT NULL";
+        Assert.True((bool)(await c2.ExecuteScalarAsync())!);
 
         // Verify indexes exist
         await using var c3 = conn.CreateCommand();
-        c3.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_target'";
-        Assert.Equal(1L, (await c3.ExecuteScalarAsync())!);
+        c3.CommandText = "SELECT to_regclass('idx_discussion_threads_target') IS NOT NULL";
+        Assert.True((bool)(await c3.ExecuteScalarAsync())!);
 
         await using var cUnique = conn.CreateCommand();
-        cUnique.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_unique_target_key'";
-        Assert.Equal(1L, (await cUnique.ExecuteScalarAsync())!);
+        cUnique.CommandText = "SELECT to_regclass('idx_discussion_threads_unique_target_key') IS NOT NULL";
+        Assert.True((bool)(await cUnique.ExecuteScalarAsync())!);
 
         await using var c4 = conn.CreateCommand();
-        c4.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_comments_thread'";
-        Assert.Equal(1L, (await c4.ExecuteScalarAsync())!);
+        c4.CommandText = "SELECT to_regclass('idx_discussion_comments_thread') IS NOT NULL";
+        Assert.True((bool)(await c4.ExecuteScalarAsync())!);
 
         // Missing index assertions per review R1677-2 (Finding 825)
         await using var cIdxStatus = conn.CreateCommand();
-        cIdxStatus.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_threads_status'";
-        Assert.Equal(1L, (await cIdxStatus.ExecuteScalarAsync())!);
+        cIdxStatus.CommandText = "SELECT to_regclass('idx_discussion_threads_status') IS NOT NULL";
+        Assert.True((bool)(await cIdxStatus.ExecuteScalarAsync())!);
 
         await using var cIdxParent = conn.CreateCommand();
-        cIdxParent.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_discussion_comments_parent'";
-        Assert.Equal(1L, (await cIdxParent.ExecuteScalarAsync())!);
-    }
-
-    // ──────────────────────────────────────────────
-    // Acceptance criteria 2: Migration/ensure path is idempotent
-    // ──────────────────────────────────────────────
-    [Fact]
-    public async Task DbInitializer_EnsureDiscussionSchema_Idempotent()
-    {
-        // Calling InitializeAsync again (or the migration method) should be safe.
-        // Since TestDb already ran InitializeAsync, re-initializing should not throw.
-        var dbPath = Path.Combine(Path.GetTempPath(), $"den-mcp-test-idempotent-{Guid.NewGuid()}.db");
-        try
-        {
-            var logger = new Microsoft.Extensions.Logging.Abstractions.NullLogger<DatabaseInitializer>();
-            var init = new DatabaseInitializer(dbPath, logger);
-            await init.InitializeAsync();
-
-            // Second init — must not throw
-            var init2 = new DatabaseInitializer(dbPath, logger);
-            var ex = await Record.ExceptionAsync(() => init2.InitializeAsync());
-            Assert.Null(ex);
-
-            // Tables still intact
-            var conn = new Microsoft.Data.Sqlite.SqliteConnection(init.ConnectionString);
-            await conn.OpenAsync();
-            var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='discussion_threads'";
-            Assert.Equal(1L, (await cmd.ExecuteScalarAsync())!);
-            await conn.DisposeAsync();
-        }
-        finally
-        {
-            if (File.Exists(dbPath)) File.Delete(dbPath);
-        }
+        cIdxParent.CommandText = "SELECT to_regclass('idx_discussion_comments_parent') IS NOT NULL";
+        Assert.True((bool)(await cIdxParent.ExecuteScalarAsync())!);
     }
 
     // ──────────────────────────────────────────────
@@ -371,7 +337,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             WHERE id = @id
             """;
         cmd.AddParameterWithValue("@id", thread.Id);
-        var ex = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
+        var ex = await Assert.ThrowsAsync<Exception>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -464,7 +430,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             VALUES (@threadId, 'agent', 'test', 'invalid_kind')
             """;
         cmd.AddParameterWithValue("@threadId", thread.Id);
-        var ex = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
+        var ex = await Assert.ThrowsAsync<Exception>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

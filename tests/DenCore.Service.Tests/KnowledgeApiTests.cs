@@ -20,7 +20,7 @@ public sealed class KnowledgeApiTests : IAsyncLifetime
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) }
     };
 
-    // Use a simple hex suffix (no hyphens, which FTS5 treats as negation operators)
+    // Use a simple hex suffix (no hyphens, which search parsers can treat as operators)
     private static string U() => Guid.NewGuid().ToString("N")[..12];
 
     private KnowledgeAppFactory _factory = null!;
@@ -465,6 +465,7 @@ public sealed class KnowledgeApiTests : IAsyncLifetime
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["db-path"] = _dbPath,
+                    ["DenCore:ConnectionString"] = DatabaseInitializer.GetConnectionString(_dbPath),
                     ["llm-endpoint"] = "http://localhost/fake",
                     ["llm-api-key"] = "test-key",
                     ["llm-model"] = "fake"
@@ -475,6 +476,7 @@ public sealed class KnowledgeApiTests : IAsyncLifetime
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
+            DatabaseInitializer.DisposeLeaseAsync(_dbPath).AsTask().GetAwaiter().GetResult();
             if (File.Exists(_dbPath))
                 File.Delete(_dbPath);
         }

@@ -21,7 +21,7 @@ public sealed class LibrarianTools
         LibrarianService librarian,
         LlmConfig llmConfig,
         [Description("Project or space ID to search within.")] string project_id,
-        [Description("What you're working on or looking for, e.g. 'I'm starting work on task 47 — implementing FTS5 search'.")] string query,
+        [Description("What you're working on or looking for, e.g. 'I'm starting work on task 47 — implementing document search'.")] string query,
         [Description("Task ID to enrich search with task context (dependencies, messages, tags).")] int? task_id = null,
         [Description("Whether to also search _global project documents. Default: true.")] bool include_global = true)
     {

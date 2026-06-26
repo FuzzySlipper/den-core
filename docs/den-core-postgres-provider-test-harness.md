@@ -1,13 +1,13 @@
 # Den Core Postgres Provider Test Harness
 
 Task #3322 added the Npgsql provider path behind configuration. After the #3326
-live cutover, Postgres is the live runtime provider. The SQLite harness remains
-only for legacy repository tests and rollback archaeology until those tests are
-migrated or deleted.
+live cutover, Postgres is the live runtime provider. After #3327, repository and
+service fixtures use Postgres-backed schemas; SQLite remains only in archived
+rollback/import evidence.
 
-## Legacy SQLite Test Run
+## Default Test Run
 
-Many repository and service tests still use the legacy SQLite fixture:
+The default test run builds against the Postgres-only Core source:
 
 ```bash
 dotnet test tests/DenCore.Tests/DenCore.Tests.csproj -p:NuGetAudit=false
@@ -31,5 +31,4 @@ If the environment variable is not set, the harness test returns without opening
 
 #3323 translated the Phase 0 `den_core` startup schema and #3324 replaced the
 document/knowledge FTS paths. Post-cutover work should prefer Postgres-provider
-tests for new behavior. SQLite fixture coverage is a cleanup target, not the
-normal production contract.
+tests for new behavior.

@@ -17,9 +17,8 @@ Postgres initializer:
   retry helper;
 - seeds the `_global` project idempotently.
 
-The SQLite initializer is retained only for legacy tests and rollback
-archaeology after the #3326 cutover. Production validation now fails closed on
-any non-Postgres provider.
+The SQLite initializer was removed in #3327 after the #3326 cutover. Production
+validation now fails closed on any non-Postgres provider.
 
 ## Phase 0C schema coverage
 
@@ -40,8 +39,8 @@ for representative non-FTS repository and route coverage:
 
 ## SQL hazard handling
 
-Usage-cost inserts now use `INSERT ... RETURNING id` for both SQLite and
-Postgres instead of SQLite-only `last_insert_rowid()`.
+Usage-cost inserts now use `INSERT ... RETURNING id` instead of the retired
+SQLite-only `last_insert_rowid()` pattern.
 
 Most remaining `datetime('now')` occurrences are still visible in runtime source.
 For this phase they are quarantined by the Postgres migration through a small

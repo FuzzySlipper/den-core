@@ -176,7 +176,7 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
                         CHECK (status IN ('planned', 'in_progress', 'review', 'blocked', 'done', 'cancelled')),
             priority    INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
             assigned_to TEXT,
-            tags        TEXT,
+            tags        JSONB,
             created_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')),
             updated_at  TEXT NOT NULL DEFAULT (to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))
         );
@@ -935,6 +935,9 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
 
         ALTER TABLE messages
             ALTER COLUMN metadata TYPE JSONB USING metadata::jsonb;
+
+        ALTER TABLE tasks
+            ALTER COLUMN tags TYPE JSONB USING tags::jsonb;
 
         DO $$
         DECLARE

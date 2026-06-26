@@ -121,9 +121,12 @@ public sealed class ReviewFindingTriageService : IReviewFindingTriageService
             ProjectTask followUpTask;
             await using (var taskCmd = conn.CreateCommand())
             {
-                taskCmd.CommandText = """
+                var tagsValue = _db.Provider == DatabaseProviderKind.Postgres
+                    ? "CAST(@tags AS jsonb)"
+                    : "@tags";
+                taskCmd.CommandText = $"""
                 INSERT INTO tasks (project_id, parent_id, title, description, status, priority, assigned_to, tags)
-                VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, @tags)
+                VALUES (@projectId, @parentId, @title, @description, @status, @priority, @assignedTo, {tagsValue})
                 RETURNING id, project_id, parent_id, title, description, status, priority, assigned_to, tags, created_at, updated_at
                 """;
                 taskCmd.AddParameterWithValue("@projectId", input.ProjectId);

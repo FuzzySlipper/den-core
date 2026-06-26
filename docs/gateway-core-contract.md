@@ -1,6 +1,8 @@
-# Den Gateway / Core contract
+# Legacy Den Gateway / Core contract
 
-Den Core owns canonical Den state, persistence, and REST contracts. `den-gateway` owns local routing, delivery state, adapter retry policy, and sentinel-local durability. This contract gives Gateway stable Core-owned surfaces without requiring Gateway to read Core internals or the old `den-mcp` SQLite layout.
+> **Superseded / historical note (2026-06):** this contract was written for the retired `den-gateway` project. It remains useful as historical Core compatibility context, but new gateway/proxy implementation work belongs in `den-services/gateway`, not `den-gateway`.
+
+Den Core owns canonical Den state, persistence, and REST contracts. Historically, `den-gateway` owned local routing, delivery state, adapter retry policy, and sentinel-local durability. The active successor surface for that gateway/proxy implementation is now `den-services/gateway`; use this document only as historical contract context unless a current task explicitly ports the contract into den-services.
 
 ## Communication-surface naming
 
@@ -107,4 +109,4 @@ When unset, the Gateway contract endpoints are intentionally open for local/stub
 
 ## Boundaries
 
-Core does **not** implement Gateway routing, delivery state machines, channel wake policy, adapter retry state, or sentinel local store. Missing future pieces should become explicit `den-core` or `den-gateway` tasks rather than hidden TODOs.
+Core does **not** implement gateway routing, delivery state machines, channel wake policy, adapter retry state, or sentinel local store. Missing future pieces should become explicit `den-core` or `den-services/gateway` tasks rather than hidden TODOs. Do not create new implementation tasks in retired `den-gateway`.

@@ -1,8 +1,10 @@
 # Worker Pool Identity Contract (v2)
 
 **Canonical identifier contract for Core worker pool rows and assignment payloads.**
-Downstream consumers (Den Channels #1769, Den Gateway #1770, Den Hermes Bridge #1767, Den Web) MUST read
+Downstream consumers (Den Channels #1769, current gateway/proxy in `den-services/gateway` — legacy Den Gateway #1770 is historical, Den Hermes Bridge #1767, Den Web) MUST read
 and respect this contract when consuming Core worker pool APIs.
+
+> **Gateway retirement note (2026-06):** this contract predates the `den-gateway` decommission. Treat `Den Gateway` task references as historical implementation context; new gateway/proxy work belongs in `den-services/gateway`.
 
 ---
 
@@ -77,7 +79,7 @@ CREATE TABLE IF NOT EXISTS worker_pool_members (
 - Use `worker_identity` for lifecycle callbacks (transition, checkpoint, release).
 - Use `profile_identity` + `worker_role` for channel routing and display.
 
-### Den Gateway (#1770)
+### Current gateway/proxy (`den-services/gateway`; legacy Den Gateway #1770 historical)
 - On agent check-in, populate `agent_instance_id` on the pool member.
 - Carry `worker_identity`, `pool_member_id`, `profile_identity` in dispatch payloads.
 - Lifecycle operations use `worker_identity` (or `pool_member_id`).

@@ -1,7 +1,9 @@
 # Worker Target-vs-Runtime Attribution Contract
 
 **Status:** Active — den-core #1844
-**Cross-references:** den-channels #1845 (complete), den-gateway #1846, den-hermes-bridge #1847, den-hermes-bridge #1842
+**Cross-references:** den-channels #1845 (complete), legacy den-gateway #1846 (historical; current gateway successor is `den-services/gateway`), den-hermes-bridge #1847, den-hermes-bridge #1842
+
+> **Gateway retirement note (2026-06):** this contract predates the `den-gateway` decommission. References to Gateway delivery/wake/claim behavior describe the transport layer contract, but new implementation work belongs in `den-services/gateway`, not the retired `den-gateway` project.
 
 ---
 
@@ -20,7 +22,7 @@ This confuses orchestrators, cleanup logic, and operator dashboards. The system 
 |-------|-------|-------------------|
 | Tasks, assignments, worker runs, leases, checkpoints, blocker notifications, completion packets | Den Core | Target project/task/assignment/run attribution |
 | Message/conversation storage, memberships, event projections, source/target attribution on messages/events | Den Channels (#1845) | Channel project + structured target-work fields |
-| Delivery attempts, wake/claim evidence, adapter bindings, routing state, echo suppression, delivery health | Den Gateway (#1846) | Transport/routing attribution |
+| Delivery attempts, wake/claim evidence, adapter bindings, routing state, echo suppression, delivery health | Current gateway/proxy (`den-services/gateway`; legacy #1846 is historical) | Transport/routing attribution |
 | Hermes profile/session/process mechanics, runtime status | Den Hermes Bridge (#1847) | Runtime/control project attribution |
 
 ## Required attribution fields
@@ -149,7 +151,7 @@ Channels added structured target-work fields to direct-agent wake/message/event 
 2. For wake/delivery events, read target project from the Core assignment record via `GET /api/worker-pool/assignments/by-run/{runId}`, not from `channel.sourceProjectId`.
 3. Worker identity fields (`worker_identity`, `profile_identity`) come from Core pool member records.
 
-### For Gateway (#1846)
+### For current gateway/proxy (`den-services/gateway`; legacy #1846 historical)
 
 1. On wake/claim, read Core assignment projection for target `project_id`, `task_id`, `run_id`.
 2. Carry target metadata in dispatch payloads even when transport conversation is shared.
@@ -173,6 +175,6 @@ Channels added structured target-work fields to direct-agent wake/message/event 
 |------|---------|--------|
 | #1844 Core contract doc + audit + tests | den-core | This task |
 | #1845 Structured target-work fields in Channels DTOs | den-channels | Complete at ad795a83 |
-| #1846 Gateway wake/claim target metadata | den-gateway | Pending |
+| #1846 Gateway wake/claim target metadata | legacy `den-gateway` task; re-file/continue current implementation in `den-services/gateway` | Historical/pending successor routing |
 | #1847 Bridge runtime/target separation | den-hermes-bridge | Pending |
 | #1842 Bridge completion packet target fields | den-hermes-bridge | Related |

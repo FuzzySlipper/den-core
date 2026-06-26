@@ -12,7 +12,8 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
         new(1, "den_core_non_fts_compatibility_schema", InitialSchema),
         new(2, "den_core_postgres_full_text_search", FullTextSearchSchema),
         new(3, "den_core_postgres_utc_timestamp_and_message_jsonb", UtcTimestampAndMessageJsonbSchema),
-        new(4, "den_core_postgres_late_surface_tables", LateSurfaceTablesSchema)
+        new(4, "den_core_postgres_late_surface_tables", LateSurfaceTablesSchema),
+        new(5, "den_core_postgres_capability_disabled_status", CapabilityDisabledStatusSchema)
     ];
 
     private readonly DbConnectionFactory _db;
@@ -1482,5 +1483,18 @@ public sealed class PostgresDatabaseInitializer : IDatabaseInitializer
             WHERE caller_task_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_cap_invocations_status
             ON capability_invocations(status);
+        """;
+
+    internal const string CapabilityDisabledStatusSchema = """
+        ALTER TABLE capability_invocations
+            DROP CONSTRAINT IF EXISTS capability_invocations_status_check;
+
+        ALTER TABLE capability_invocations
+            ADD CONSTRAINT capability_invocations_status_check
+            CHECK (status IN (
+                'queued', 'running', 'completed', 'failed',
+                'invalid_request', 'invalid_output', 'timed_out',
+                'disabled', 'cancelled'
+            ));
         """;
 }

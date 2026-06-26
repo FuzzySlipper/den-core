@@ -1054,6 +1054,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
     {
         await using var conn = await _db.CreateConnectionAsync();
         await using var tx = await conn.BeginTransactionAsync();
+        var transactionCompleted = false;
         try
         {
             // First try the normal lease path
@@ -1067,6 +1068,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 if (assignment is not null)
                 {
                     await tx.CommitAsync();
+                    transactionCompleted = true;
                     var capacity = await GetCapacityForLeaseResultAsync(assignment.ProfileIdentity);
                     return new LeaseWorkerResult
                     {
@@ -1087,6 +1089,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                         stats,
                         $"Preferred worker '{preferred}' not found in pool. {stats.Total} total workers matching filters.");
                     await tx.CommitAsync();
+                    transactionCompleted = true;
                     return new LeaseWorkerResult
                     {
                         IsSuccess = false,
@@ -1107,6 +1110,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                         stats,
                         msg);
                     await tx.CommitAsync();
+                    transactionCompleted = true;
                     return new LeaseWorkerResult
                     {
                         IsSuccess = false,
@@ -1164,6 +1168,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
                 var record = await InsertNoCapacityRequestAsync(conn, input, reasonCode, stats, diagMessage);
                 await tx.CommitAsync();
+                transactionCompleted = true;
                 return new LeaseWorkerResult
                 {
                     IsSuccess = false,
@@ -1187,6 +1192,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             if (assignment is not null)
             {
                 await tx.CommitAsync();
+                transactionCompleted = true;
                 return new LeaseWorkerResult
                 {
                     IsSuccess = true,
@@ -1202,6 +1208,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 finalStats,
                 $"All {candidates.Count} matching workers became unavailable. {finalStats.Busy} busy, {finalStats.Available} available.");
             await tx.CommitAsync();
+            transactionCompleted = true;
             return new LeaseWorkerResult
             {
                 IsSuccess = false,
@@ -1211,7 +1218,8 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (!transactionCompleted)
+                await tx.RollbackAsync();
             throw;
         }
     }
@@ -1887,7 +1895,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                     AND wa.role = wl.worker_role
                     AND wa.state NOT IN ('completed', 'failed', 'expired')
                 WHERE wl.profile_identity = @pi AND wl.status = 'active'
-                GROUP BY wl.worker_role
+                GROUP BY wl.worker_role, wl.capacity
                 """;
             laneCmd.AddParameterWithValue("@pi", profileIdentity);
 
@@ -1984,6 +1992,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 await using var relReader = await relCmd.ExecuteReaderAsync();
                 while (await relReader.ReadAsync())
                     releasedCount++;
+                await relReader.CloseAsync();
 
                 await using var availCmd = conn.CreateCommand();
                 availCmd.CommandText = """
@@ -2696,6 +2705,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
 
             var capacity = reader.GetInt32(0);
             var status = reader.GetString(1);
+            await reader.CloseAsync();
             if (status != WorkerPoolStates.LaneActive)
                 return false;
 
@@ -3005,7 +3015,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
             // Compute actual duration on terminal transition
             if (WorkerPoolStates.IsOrchLeaseTerminal(input.NewState))
             {
-                setClauses.Add("actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER)");
+                setClauses.Add("actual_duration_seconds = CAST(EXTRACT(EPOCH FROM ((CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - created_at::timestamp)) AS INTEGER)");
             }
 
             // Record cleanup evidence if provided on terminal transition
@@ -3125,7 +3135,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 cmd.CommandText = $"""
                     UPDATE orchestrator_leases
                     SET state = '{WorkerPoolStates.OrchLeaseExpired}',
-                        actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER),
+                        actual_duration_seconds = CAST(EXTRACT(EPOCH FROM ((CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - created_at::timestamp)) AS INTEGER),
                         updated_at = datetime('now')
                     WHERE id = @id
                       AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})
@@ -3147,7 +3157,7 @@ public sealed class WorkerPoolRepository : IWorkerPoolRepository
                 cmd.CommandText = $"""
                     UPDATE orchestrator_leases
                     SET state = '{WorkerPoolStates.OrchLeaseDegraded}',
-                        actual_duration_seconds = CAST((julianday('now') - julianday(created_at)) * 86400 AS INTEGER),
+                        actual_duration_seconds = CAST(EXTRACT(EPOCH FROM ((CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - created_at::timestamp)) AS INTEGER),
                         updated_at = datetime('now')
                     WHERE id = @id
                       AND state IN ({string.Join(", ", WorkerPoolStates.OrchLeaseNonTerminalStates.Select(s => $"'{s}'"))})

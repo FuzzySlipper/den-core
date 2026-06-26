@@ -389,17 +389,25 @@ public class WorkerPoolRepositoryTests : IAsyncLifetime
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = $"""
+                CREATE OR REPLACE FUNCTION fail_worker_assignment_completion_fn()
+                RETURNS trigger AS $$
+                BEGIN
+                    IF OLD.id = {lease.Id} AND NEW.state = 'completed' THEN
+                        RAISE EXCEPTION 'forced assignment update failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+
                 CREATE TRIGGER fail_worker_assignment_completion
                 BEFORE UPDATE OF state ON worker_assignments
-                WHEN OLD.id = {lease.Id} AND NEW.state = 'completed'
-                BEGIN
-                    SELECT RAISE(ABORT, 'forced assignment update failure');
-                END;
+                FOR EACH ROW
+                EXECUTE FUNCTION fail_worker_assignment_completion_fn();
                 """;
             await cmd.ExecuteNonQueryAsync();
         }
 
-        await Assert.ThrowsAsync<Exception>(() =>
+        await Assert.ThrowsAnyAsync<Exception>(() =>
             _repo.TransitionAssignmentStateAsync(lease.Id, WorkerPoolStates.Completed));
 
         var assignment = await _repo.GetAssignmentAsync(lease.Id);

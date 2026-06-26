@@ -26,7 +26,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
 
     private const string DiffColumns = """
         id, project_id, task_id, workspace_id, root_path, path, base_ref, head_ref,
-        max_bytes, staged, diff, truncated, binary, warnings, source_instance_id,
+        max_bytes, staged, diff, truncated, is_binary, warnings, source_instance_id,
         source_display_name, observed_at, received_at, updated_at
         """;
 
@@ -174,7 +174,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
         cmd.CommandText = $"""
             INSERT INTO desktop_diff_snapshots (
                 project_id, task_id, workspace_id, root_path, path, base_ref, head_ref,
-                diff_key, max_bytes, staged, diff, truncated, binary, warnings,
+                diff_key, max_bytes, staged, diff, truncated, is_binary, warnings,
                 source_instance_id, source_display_name, observed_at, received_at, updated_at
             ) VALUES (
                 @projectId, @taskId, @workspaceId, @rootPath, @path, @baseRef, @headRef,
@@ -192,7 +192,7 @@ public sealed class DesktopSnapshotRepository : IDesktopSnapshotRepository
                 staged = excluded.staged,
                 diff = excluded.diff,
                 truncated = excluded.truncated,
-                binary = excluded.binary,
+                is_binary = excluded.is_binary,
                 warnings = excluded.warnings,
                 source_instance_id = excluded.source_instance_id,
                 source_display_name = excluded.source_display_name,

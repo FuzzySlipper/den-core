@@ -11,12 +11,19 @@ internal sealed class DatabaseInitializer : IDatabaseInitializer, IAsyncDisposab
 
     public DatabaseInitializer(string ignoredDatabasePath, NullLogger<DatabaseInitializer> ignoredLogger)
     {
-        _adminConnectionString = Environment.GetEnvironmentVariable(PostgresTestDb.ConnectionStringEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(_adminConnectionString))
+        var adminConnectionString = Environment.GetEnvironmentVariable(PostgresTestDb.ConnectionStringEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(adminConnectionString))
             throw new InvalidOperationException($"Set {PostgresTestDb.ConnectionStringEnvironmentVariable} to run Postgres-backed repository tests.");
+
+        var adminBuilder = new NpgsqlConnectionStringBuilder(adminConnectionString)
+        {
+            Pooling = false
+        };
+        _adminConnectionString = adminBuilder.ConnectionString;
 
         var builder = new NpgsqlConnectionStringBuilder(_adminConnectionString)
         {
+            Pooling = false,
             SearchPath = _schemaName
         };
         ConnectionString = builder.ConnectionString;

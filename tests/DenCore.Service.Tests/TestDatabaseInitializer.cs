@@ -50,9 +50,15 @@ internal sealed class DatabaseInitializer : IDatabaseInitializer, IAsyncDisposab
     private static SchemaLease GetOrCreateLease(string leaseKey) =>
         Leases.GetOrAdd(leaseKey, static _ =>
         {
-            var adminConnectionString = Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable);
-            if (string.IsNullOrWhiteSpace(adminConnectionString))
+            var rawAdminConnectionString = Environment.GetEnvironmentVariable(ConnectionStringEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(rawAdminConnectionString))
                 throw new InvalidOperationException($"Set {ConnectionStringEnvironmentVariable} to run Postgres-backed service tests.");
+
+            var adminBuilder = new NpgsqlConnectionStringBuilder(rawAdminConnectionString)
+            {
+                Pooling = false
+            };
+            var adminConnectionString = adminBuilder.ConnectionString;
 
             var schemaName = $"den_core_test_{Guid.NewGuid():N}";
             using var admin = new NpgsqlConnection(adminConnectionString);
@@ -65,6 +71,7 @@ internal sealed class DatabaseInitializer : IDatabaseInitializer, IAsyncDisposab
 
             var builder = new NpgsqlConnectionStringBuilder(adminConnectionString)
             {
+                Pooling = false,
                 SearchPath = schemaName
             };
             return new SchemaLease(adminConnectionString, schemaName, builder.ConnectionString);

@@ -337,7 +337,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             WHERE id = @id
             """;
         cmd.AddParameterWithValue("@id", thread.Id);
-        var ex = await Assert.ThrowsAsync<Exception>(() =>
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -430,7 +430,7 @@ public class DiscussionRepositoryTests : IAsyncLifetime
             VALUES (@threadId, 'agent', 'test', 'invalid_kind')
             """;
         cmd.AddParameterWithValue("@threadId", thread.Id);
-        var ex = await Assert.ThrowsAsync<Exception>(() =>
+        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
             cmd.ExecuteNonQueryAsync());
         Assert.Contains("CHECK", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

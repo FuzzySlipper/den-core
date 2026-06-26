@@ -253,7 +253,7 @@ public class DispatchRepositoryTests : IAsyncLifetime
         entry.ProjectId = "nonexistent-project";
         entry.DedupKey = DispatchEntry.BuildDedupKey(entry.TriggerType, entry.TriggerId, entry.TargetAgent);
 
-        await Assert.ThrowsAsync<Exception>(
+        await Assert.ThrowsAnyAsync<Exception>(
             () => _repo.CreateIfAbsentAsync(entry));
     }
 

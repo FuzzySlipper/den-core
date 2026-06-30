@@ -1,4 +1,3 @@
-using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
 using DenCore.Services;
@@ -55,93 +54,54 @@ public class MessageToolsTests
     }
 
     [Fact]
-    public async Task SendMessage_UnknownIntent_StoresGeneralAndPreservesRequestedIntent()
+    public async Task SendMessage_IsTombstonedAfterMessagesCutover()
     {
         var repo = new FakeMessageRepo();
         var detection = new FakeDispatchDetection();
-
-        await MessageTools.SendMessage(
-            repo, detection, NullLogger<MessageTools>.Instance,
-            project_id: "proj", sender: "codex", content: "Planning update",
-            intent: "planning_update");
-
-        Assert.NotNull(repo.LastCreated);
-        Assert.Equal(MessageIntent.General, repo.LastCreated!.Intent);
-        Assert.NotNull(repo.LastCreated.Metadata);
-        var meta = repo.LastCreated.Metadata!.Value;
-        Assert.True(meta.TryGetProperty("requested_intent", out var ri));
-        Assert.Equal("planning_update", ri.GetString());
-    }
-
-    [Fact]
-    public async Task SendMessage_CanonicalIntent_BehaviorUnchanged()
-    {
-        var repo = new FakeMessageRepo();
-        var detection = new FakeDispatchDetection();
-
-        await MessageTools.SendMessage(
-            repo, detection, NullLogger<MessageTools>.Instance,
-            project_id: "proj", sender: "codex", content: "Status update",
-            intent: "status_update");
-
-        Assert.NotNull(repo.LastCreated);
-        Assert.Equal(MessageIntent.StatusUpdate, repo.LastCreated!.Intent);
-    }
-
-    [Fact]
-    public async Task SendMessage_MissingIntent_DerivesFromMetadataType()
-    {
-        var repo = new FakeMessageRepo();
-        var detection = new FakeDispatchDetection();
-        var metadata = JsonSerializer.Deserialize<JsonElement>(
-            """{"type":"review_request","recipient":"pi"}""");
-
-        await MessageTools.SendMessage(
-            repo, detection, NullLogger<MessageTools>.Instance,
-            project_id: "proj", sender: "codex", content: "Please review",
-            metadata: metadata);
-
-        Assert.NotNull(repo.LastCreated);
-        Assert.Equal(MessageIntent.ReviewRequest, repo.LastCreated!.Intent);
-    }
-
-    [Fact]
-    public async Task SendMessage_UnknownIntentWithRecognizedMetadataType_DerivesFromMetadataTypeAndPreservesLabel()
-    {
-        var repo = new FakeMessageRepo();
-        var detection = new FakeDispatchDetection();
-        var metadata = JsonSerializer.Deserialize<JsonElement>(
-            """{"type":"review_request","recipient":"pi"}""");
-
-        await MessageTools.SendMessage(
-            repo, detection, NullLogger<MessageTools>.Instance,
-            project_id: "proj", sender: "codex", content: "Please review",
-            metadata: metadata, intent: "diagnostic_update");
-
-        Assert.NotNull(repo.LastCreated);
-        Assert.Equal(MessageIntent.ReviewRequest, repo.LastCreated!.Intent);
-        var meta = repo.LastCreated.Metadata!.Value;
-        Assert.True(meta.TryGetProperty("requested_intent", out var ri));
-        Assert.Equal("diagnostic_update", ri.GetString());
-        Assert.True(meta.TryGetProperty("type", out var typeEl));
-        Assert.Equal("review_request", typeEl.GetString());
-    }
-
-    [Fact]
-    public async Task SendMessage_CanonicalIntentWithConflictingMetadataType_StillThrows()
-    {
-        // This tests that canonical/metadata conflict validation is preserved
-        var repo = new FakeMessageRepo();
-        var detection = new FakeDispatchDetection();
-        var metadata = JsonSerializer.Deserialize<JsonElement>(
-            """{"type":"review_feedback"}""");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             MessageTools.SendMessage(
                 repo, detection, NullLogger<MessageTools>.Instance,
-                project_id: "proj", sender: "codex", content: "Feedback",
-                metadata: metadata, intent: "review_request"));
+                project_id: "proj", sender: "codex", content: "Planning update"));
 
-        Assert.Contains("conflicts", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("moved from den-core to den-services/messages", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(repo.LastCreated);
+    }
+
+    [Fact]
+    public async Task SendUserNotification_IsTombstonedAfterMessagesCutover()
+    {
+        var repo = new FakeMessageRepo();
+        var detection = new FakeDispatchDetection();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            MessageTools.SendUserNotification(
+                repo, detection, NullLogger<MessageTools>.Instance,
+                project_id: "proj", sender: "codex", content: "Attention"));
+
+        Assert.Contains("send_user_notification", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(repo.LastCreated);
+    }
+
+    [Fact]
+    public async Task MarkRead_IsTombstonedAfterMessagesCutover()
+    {
+        var repo = new FakeMessageRepo();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            MessageTools.MarkRead(repo, agent: "codex", message_ids: "1,2"));
+
+        Assert.Contains("mark_read", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task MarkNotificationsRead_IsTombstonedAfterMessagesCutover()
+    {
+        var repo = new FakeMessageRepo();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            MessageTools.MarkNotificationsRead(repo, agent: "codex", notification_ids: "1,2"));
+
+        Assert.Contains("mark_notifications_read", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

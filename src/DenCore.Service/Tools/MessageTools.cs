@@ -28,6 +28,8 @@ public sealed class MessageTools
         [Description("Optional canonical intent, e.g. review_feedback or handoff.")] string? intent = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
+        ThrowMigratedWriteTombstone("send_message");
+
         var (parsedIntent, rawIntent) = ParseIntent(intent);
         var normalizedMetadata = NormalizeMetadata(metadata);
 
@@ -81,6 +83,8 @@ public sealed class MessageTools
         [Description("Optional urgency hint: low, normal, or high. Defaults to normal.")] string? urgency = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
+        ThrowMigratedWriteTombstone("send_user_notification");
+
         var normalizedUrgency = urgency?.ToLowerInvariant() switch
         {
             "low" => "low",
@@ -204,6 +208,8 @@ public sealed class MessageTools
         [Description("Your agent identity.")] string agent,
         [Description("Comma-separated message IDs to mark as read.")] string message_ids)
     {
+        ThrowMigratedWriteTombstone("mark_read");
+
         var ids = message_ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(int.Parse).ToArray();
         var count = await repo.MarkReadAsync(agent, ids);
@@ -253,6 +259,8 @@ public sealed class MessageTools
         [Description("Project ID for mark-all scope. Required when mark_all is true.")] string? scope_project_id = null,
         [Description("Optional task ID to narrow mark-all scope to a specific task.")] int? scope_task_id = null)
     {
+        ThrowMigratedWriteTombstone("mark_notifications_read");
+
         var isMarkAll = string.Equals(mark_all, "true", StringComparison.OrdinalIgnoreCase);
 
         // Parse explicit IDs if provided
@@ -289,6 +297,13 @@ public sealed class MessageTools
         }
 
         return JsonSerializer.Serialize(new { error = "Must provide either notification_ids or mark_all with scope" }, JsonOpts.Default);
+    }
+
+    private static void ThrowMigratedWriteTombstone(string toolName)
+    {
+        throw new InvalidOperationException(
+            $"{toolName} has moved from den-core to den-services/messages after the MCP route cutover. " +
+            "Use the stable den-services MCP endpoint or the messages service API; Core message writes are tombstoned.");
     }
 
     private static (MessageIntent? canonical, string? raw) ParseIntent(string? intent)

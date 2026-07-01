@@ -3,6 +3,7 @@ using DenCore.Mcp;
 using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
+using DenCore.Service;
 using ModelContextProtocol.Server;
 
 namespace DenCore.Service.Tools;
@@ -62,8 +63,9 @@ public sealed class SpaceTools
         [Description("Space ID.")] string space_id,
         [Description("Your agent identity, for unread message count.")] string? agent = null)
     {
-        var stats = await repo.GetWithStatsAsync(space_id, agent);
-        return JsonSerializer.Serialize(stats, JsonOpts.Default);
+        var project = await repo.GetByIdAsync(space_id)
+            ?? throw new KeyNotFoundException($"Space '{space_id}' not found");
+        return JsonSerializer.Serialize(LegacyProjectSummaryTombstone.Create(project, "get_space"), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "curator", "planner", "runner", "worker-coder", "worker-reviewer")]

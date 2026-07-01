@@ -1,5 +1,6 @@
 using DenCore.Data;
 using DenCore.Models;
+using DenCore.Service;
 
 namespace DenCore.Service.Routes;
 
@@ -33,15 +34,13 @@ public static class SpaceRoutes
 
         group.MapGet("/{id}", async (IProjectRepository repo, string id, string? agent) =>
         {
-            try
-            {
-                var stats = await repo.GetWithStatsAsync(id, agent);
-                return Results.Ok(stats);
-            }
-            catch (KeyNotFoundException)
-            {
+            var project = await repo.GetByIdAsync(id);
+            if (project is null)
                 return Results.NotFound(new { error = $"Space '{id}' not found" });
-            }
+
+            return Results.Json(
+                LegacyProjectSummaryTombstone.Create(project, "get_space"),
+                statusCode: StatusCodes.Status410Gone);
         });
 
         // PATCH /api/spaces/{id}/visibility - update visibility (normal/hidden/archived)

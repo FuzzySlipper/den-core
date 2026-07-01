@@ -3,6 +3,7 @@ using DenCore.Mcp;
 using System.Text.Json;
 using DenCore.Data;
 using DenCore.Models;
+using DenCore.Service;
 using ModelContextProtocol.Server;
 
 namespace DenCore.Service.Tools;
@@ -50,8 +51,9 @@ public sealed class ProjectTools
         [Description("Project ID.")] string project_id,
         [Description("Your agent identity, for unread message count.")] string? agent = null)
     {
-        var stats = await repo.GetWithStatsAsync(project_id, agent);
-        return JsonSerializer.Serialize(stats, JsonOpts.Default);
+        var project = await repo.GetByIdAsync(project_id)
+            ?? throw new KeyNotFoundException($"Project '{project_id}' not found");
+        return JsonSerializer.Serialize(LegacyProjectSummaryTombstone.Create(project, "get_project"), JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]

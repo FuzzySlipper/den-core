@@ -218,7 +218,26 @@ public sealed class SpaceApiTests : IAsyncLifetime
     // ─── GET /api/spaces/{id} ────────────────────────────────────────────
 
     [Fact]
-    public async Task GetSpace_ReturnsStats()
+    public async Task GetProject_ReturnsRetiredSummaryTombstone()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var scope = _factory.Services.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IProjectRepository>();
+        await repo.CreateAsync(new Project { Id = $"project-summary-{suffix}", Name = "Project Summary" });
+
+        var response = await _client.GetAsync($"/api/projects/project-summary-{suffix}?agent=codex");
+
+        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("legacy_project_summary_retired", doc.RootElement.GetProperty("error").GetString());
+        Assert.Equal($"project-summary-{suffix}", doc.RootElement.GetProperty("project").GetProperty("id").GetString());
+        Assert.True(doc.RootElement.GetProperty("successor_sources").TryGetProperty("task_counts_by_status", out _));
+        Assert.False(doc.RootElement.TryGetProperty("task_counts_by_status", out _));
+        Assert.False(doc.RootElement.TryGetProperty("unread_message_count", out _));
+    }
+
+    [Fact]
+    public async Task GetSpace_ReturnsRetiredSummaryTombstone()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         using var scope = _factory.Services.CreateScope();
@@ -226,10 +245,14 @@ public sealed class SpaceApiTests : IAsyncLifetime
         await repo.CreateAsync(new Project { Id = $"space-stats-{suffix}", Name = "Space Stats" });
 
         var response = await _client.GetAsync($"/api/spaces/space-stats-{suffix}");
-        response.EnsureSuccessStatusCode();
 
+        Assert.Equal(System.Net.HttpStatusCode.Gone, response.StatusCode);
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("legacy_project_summary_retired", doc.RootElement.GetProperty("error").GetString());
         Assert.Equal($"space-stats-{suffix}", doc.RootElement.GetProperty("project").GetProperty("id").GetString());
+        Assert.True(doc.RootElement.GetProperty("successor_sources").TryGetProperty("unread_message_count", out _));
+        Assert.False(doc.RootElement.TryGetProperty("task_counts_by_status", out _));
+        Assert.False(doc.RootElement.TryGetProperty("unread_message_count", out _));
     }
 
     [Fact]

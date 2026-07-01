@@ -16,7 +16,7 @@ public sealed class TaskTools
 {
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "create_task"), Description("Create a new task or subtask in a project.")]
+    [McpServerTool(Name = "create_task"), Description("TOMBSTONED IN CORE: task creation moved to den-services/tasks after the MCP route cutover.")]
     public static async Task<string> CreateTask(
         ITaskRepository repo,
         [Description("Project ID.")] string project_id,
@@ -30,6 +30,8 @@ public sealed class TaskTools
         [Description("Parent task ID to create this as a subtask.")] int? parent_id = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
+        ThrowMigratedWriteTombstone("create_task");
+
         var parsedTags = ToolArgumentJson.ParseStringArray(tags, "tags");
         var depIds = depends_on?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(int.Parse).ToArray();
@@ -52,7 +54,7 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "update_task"), Description("Update a task's fields. Records changes in audit history. When setting status to 'blocked', blocker_summary and blocker_reason are required.")]
+    [McpServerTool(Name = "update_task"), Description("TOMBSTONED IN CORE: task updates moved to den-services/tasks after the MCP route cutover.")]
     public static async Task<string> UpdateTask(
         ITaskRepository repo,
         IDispatchDetectionService detection,
@@ -75,6 +77,8 @@ public sealed class TaskTools
         [Description("Optional when status=blocked. Whether human input is required vs planner can replan. Default: false.")] bool? blocker_requires_human_input = null,
         [Description("If true, return full JSON record instead of concise summary.")] bool verbose = false)
     {
+        ThrowMigratedWriteTombstone("update_task");
+
         var current = await repo.GetByIdAsync(task_id)
             ?? throw new KeyNotFoundException($"Task {task_id} not found");
         var oldStatus = current.Status.ToDbValue();
@@ -554,24 +558,28 @@ public sealed class TaskTools
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "add_dependency"), Description("Add a dependency between tasks. Rejects if it would create a cycle.")]
+    [McpServerTool(Name = "add_dependency"), Description("TOMBSTONED IN CORE: task dependency writes moved to den-services/tasks after the MCP route cutover.")]
     public static async Task<string> AddDependency(
         ITaskRepository repo,
         [Description("The task that is blocked.")] int task_id,
         [Description("The task it depends on.")] int depends_on)
     {
+        ThrowMigratedWriteTombstone("add_dependency");
+
         await repo.AddDependencyAsync(task_id, depends_on);
         return JsonSerializer.Serialize(new { message = $"Task {task_id} now depends on task {depends_on}." }, JsonOpts.Default);
     }
 
     [McpToolProfile("admin-current", "planner", "runner", "worker-coder", "worker-reviewer")]
     [McpToolBundle("task")]
-    [McpServerTool(Name = "remove_dependency"), Description("Remove a dependency between tasks.")]
+    [McpServerTool(Name = "remove_dependency"), Description("TOMBSTONED IN CORE: task dependency writes moved to den-services/tasks after the MCP route cutover.")]
     public static async Task<string> RemoveDependency(
         ITaskRepository repo,
         [Description("The task that was blocked.")] int task_id,
         [Description("The task it depended on.")] int depends_on)
     {
+        ThrowMigratedWriteTombstone("remove_dependency");
+
         await repo.RemoveDependencyAsync(task_id, depends_on);
         return JsonSerializer.Serialize(new { message = $"Removed dependency: task {task_id} no longer depends on task {depends_on}." }, JsonOpts.Default);
     }
@@ -705,6 +713,13 @@ public sealed class TaskTools
             throw new InvalidOperationException(
                 $"Follow-up task {followUpTaskId.Value} must be in the same project as review finding {reviewFindingId}.");
         }
+    }
+
+    private static void ThrowMigratedWriteTombstone(string toolName)
+    {
+        throw new InvalidOperationException(
+            $"{toolName} has moved from den-core to den-services/tasks after the MCP route cutover. " +
+            "Use the stable den-services MCP endpoint or the tasks service API; Core task/dependency writes are tombstoned.");
     }
 
     /// <summary>

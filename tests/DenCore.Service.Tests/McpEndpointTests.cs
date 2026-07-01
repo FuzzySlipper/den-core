@@ -28,7 +28,7 @@ public sealed class McpEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PostMcp_CreateTaskAcceptsNativeArrayTags()
+    public async Task PostMcp_CreateTaskReturnsTasksCutoverTombstone()
     {
         var sessionId = await InitializeMcpSessionAsync();
         var projectId = $"mcp-native-tags-{Guid.NewGuid():N}";
@@ -49,9 +49,8 @@ public sealed class McpEndpointTests : IAsyncLifetime
         });
 
         Assert.DoesNotContain("Cannot get the value of a token type 'StartArray'", createTask);
-        Assert.DoesNotContain("\"isError\":true", createTask);
-        Assert.Contains("desktop", createTask);
-        Assert.Contains("electron", createTask);
+        Assert.Contains("\"isError\":true", createTask);
+        Assert.Contains("create_task has moved from den-core to den-services/tasks", createTask);
     }
 
     [Fact]
